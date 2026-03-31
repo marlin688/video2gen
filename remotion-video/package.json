@@ -1,0 +1,33 @@
+{
+  "name": "remotion-video",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "npx remotion studio src/index.ts",
+    "render": "npx remotion render src/index.ts V2GVideo out/video.mp4",
+    "build": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@remotion/cli": "^4.0.441",
+    "@remotion/layout-utils": "^4.0.441",
+    "@remotion/media": "^4.0.441",
+    "@remotion/player": "^4.0.441",
+    "@remotion/transitions": "^4.0.441",
+    "@remotion/zod-types": "^4.0.441",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "remotion": "^4.0.441",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@remotion/bundler": "^4.0.441",
+    "@remotion/renderer": "^4.0.441",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^6.0.2"
+  }
+}

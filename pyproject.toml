@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video2gen"
+version = "0.1.0"
+description = "YouTube 二创视频流水线: 选片 → 下载翻译 → AI脚本 → TTS配音 → 视频合成"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.3.1",
+    "python-dotenv>=1.2.2",
+    "edge-tts>=6.1",
+]
+
+[project.scripts]
+v2g = "v2g.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+v2g = ["prompts/*.md"]

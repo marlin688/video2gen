@@ -125,7 +125,9 @@ def generate_recording_from_screenshots(
         return None
 
     # 读取 TTS 时长作为目标时长
-    timing_path = output_dir / "voiceover_timing.json"
+    timing_path = output_dir / "voiceover" / "timing.json"
+    if not timing_path.exists():
+        timing_path = output_dir / "voiceover_timing.json"
     if timing_path.exists():
         timing = json.loads(timing_path.read_text(encoding="utf-8"))
         duration = timing.get(str(seg_id), {}).get("duration", 15.0)

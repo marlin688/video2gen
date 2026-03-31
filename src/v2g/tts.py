@@ -156,7 +156,8 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
         return state
 
     output_dir = cfg.output_dir / video_id
-    segments_dir = output_dir / "voiceover_segments"
+    voiceover_dir = output_dir / "voiceover"
+    segments_dir = voiceover_dir / "segments"
     segments_dir.mkdir(parents=True, exist_ok=True)
 
     # 读取脚本
@@ -207,12 +208,13 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
             raise click.ClickException(state.last_error)
 
     # 保存时长信息
-    timing_path = output_dir / "voiceover_timing.json"
+    timing_path = voiceover_dir / "timing.json"
     timing_path.write_text(json.dumps(timing, ensure_ascii=False, indent=2), encoding="utf-8")
+    state.voiceover_timing = str(timing_path)
 
     # 合并音频
     if segment_files:
-        voiceover_path = output_dir / "voiceover.mp3"
+        voiceover_path = voiceover_dir / "full.mp3"
         click.echo("   🔗 合并音频...")
         _concat_segments(segment_files, voiceover_path)
         total_duration = sum(t["duration"] for t in timing.values())

@@ -250,13 +250,11 @@ def run_script(cfg: Config, video_id: str, model: str) -> PipelineState:
     _generate_recording_guide(script_data, recording_guide_path)
     state.recording_guide = str(recording_guide_path)
 
-    # 创建素材目录
-    (output_dir / "recordings").mkdir(exist_ok=True)
+    # 创建素材目录（按需创建，不预创建空目录）
     (output_dir / "slides").mkdir(exist_ok=True)
-    (output_dir / "clips").mkdir(exist_ok=True)
-    state.recordings_dir = str(output_dir / "recordings")
+    (output_dir / "recordings").mkdir(exist_ok=True)
     state.slides_dir = str(output_dir / "slides")
-    state.clips_dir = str(output_dir / "clips")
+    state.recordings_dir = str(output_dir / "recordings")
 
     state.scripted = True
     state.last_error = ""
@@ -369,13 +367,10 @@ def run_multi_script(cfg, project_id: str, model: str) -> "PipelineState":
     _generate_recording_guide(script_data, recording_guide_path)
     state.recording_guide = str(recording_guide_path)
 
-    (output_dir / "recordings").mkdir(exist_ok=True)
     (output_dir / "slides").mkdir(exist_ok=True)
-    (output_dir / "clips").mkdir(exist_ok=True)
-    (output_dir / "screenshots").mkdir(exist_ok=True)
-    state.recordings_dir = str(output_dir / "recordings")
+    (output_dir / "recordings").mkdir(exist_ok=True)
     state.slides_dir = str(output_dir / "slides")
-    state.clips_dir = str(output_dir / "clips")
+    state.recordings_dir = str(output_dir / "recordings")
 
     state.scripted = True
     state.last_error = ""

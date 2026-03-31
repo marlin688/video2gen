@@ -6,78 +6,157 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 video2gen (v2g) is an automated pipeline for creating derivative (二创) video content from YouTube source videos using AI. It combines a Python backend (pipeline orchestration, LLM scripting, TTS) with a TypeScript/React frontend (Remotion video rendering).
 
+## Directory Structure
+
+```
+sources/{video_id}/              ← 输入素材 (下载的视频 + 字幕)
+    video.mp4, subtitle_en.srt, subtitle_zh.srt
+
+output/{project_id}/             ← 项目工作目录
+    checkpoint.json              ← 流水线状态
+    script.json, script.md       ← 脚本 (顶层方便引用)
+    recording_guide.md
+    voiceover/                   ← TTS 配音
+        full.mp3                 ← 合并后完整音轨
+        timing.json              ← 时间轴
+        segments/seg_*.mp3       ← 分段音频
+    slides/slide_*.png           ← 幻灯片图片
+    recordings/seg_*.mp4         ← 录屏素材
+    clips/seg_*.mp4              ← FFmpeg 中间产物
+    screenshots/                 ← recorder 中间产物
+    final/                       ← 最终交付物
+        video.mp4                ← 最终视频
+        subtitles.srt            ← SRT 字幕
+```
+
 ## Commands
 
 ### Python
 
 ```bash
-pip install -e .              # Install in dev mode
-v2g run <video_id_or_url>     # Full pipeline with human review checkpoints
-v2g select --csv trending.csv # Stage 1: interactive video selection
-v2g prepare <video_id>        # Stage 2: download + subtitle generation
-v2g script <video_id>         # Stage 3: AI script generation
-v2g review <video_id>         # Human review checkpoint
-v2g tts <video_id>            # Stage 4: text-to-speech
-v2g slides <video_id>         # Stage 5a: slide image generation
-v2g assemble <video_id>       # Stage 5b: final video composition
-v2g multi "url1;url2" --topic "topic"  # Multi-source synthesis
-v2g status <video_id>         # Check pipeline progress
+pip install -e .                          # Install in dev mode
+v2g run <video_id_or_url>                 # Full single-video pipeline (FFmpeg backend)
+v2g select --csv trending.csv             # Stage 1: interactive video selection
+v2g prepare <video_id_or_url>             # Stage 2: download → sources/{video_id}/
+v2g script <video_id>                     # Stage 3: AI script generation
+v2g review <video_id>                     # Human review checkpoint
+v2g tts <video_id> [--voice] [--rate]     # Stage 4: TTS → voiceover/
+v2g slides <video_id> [--model]           # Stage 5a: slide image generation
+v2g record <video_id>                     # Screenshots → video (material B fallback)
+v2g assemble <video_id>                   # Stage 5b: FFmpeg → final/video.mp4
+v2g multi "url1;url2" --topic "topic" [--project-id]  # Multi-source pipeline (Remotion backend)
+v2g status <video_id>                     # Check pipeline progress
 ```
 
 ### Remotion (from `remotion-video/`)
 
 ```bash
 npm run dev                   # Remotion studio (interactive preview)
-npm run build                 # TypeScript type-check
-npm run render                # Render video composition
+npm run build                 # TypeScript type-check only (tsc --noEmit)
+npm run render                # Dev render with empty props (not production)
+node render.mjs <project_id>  # Production render → final/video.mp4 + final/subtitles.srt
 ```
+
+Production rendering is done via `render.mjs`, not `npm run render`. It auto-cleans `public/` cache after rendering.
 
 ## Architecture
 
-### Pipeline Stages (Python — `src/v2g/`)
+### Dual Rendering Backends
 
-The pipeline is a linear sequence of stages, each independently runnable via CLI. State is persisted in `output/{video_id}/checkpoint.json` enabling resumption at any point.
+The pipeline has **two independent video rendering paths** that diverge at Stage 5b:
 
 ```
-CLI (cli.py) → Pipeline (pipeline.py)
-  Stage 1: Selector   — pick video from trending CSV
-  Stage 2: Preparer   — download video + generate subtitles (delegates to lecture2note)
-  Stage 3: ScriptWriter — LLM generates script.json with segments
-  ── Human Review Checkpoint ──
-  Stage 4: TTS        — edge-tts or MiniMax → voiceover.mp3 + timing.json
-  Stage 5a: Slides    — Pillow/AI image gen → slide PNGs
-  Stage 5b: Editor    — FFmpeg composition or Remotion render → final.mp4
+Single-video (v2g run):
+  prepare → script → [review] → tts → slides → record → assemble (FFmpeg) → final/video.mp4
+
+Multi-source (v2g multi):
+  multi-prepare → multi-script → [review] → tts → slides → Remotion (render.mjs) → final/video.mp4
 ```
+
+- **FFmpeg path** (`editor.py`): direct video composition with ASS subtitle burn-in. Output: `output/{video_id}/final/video.mp4`
+- **Remotion path** (`render.mjs`): declarative React rendering with animated components. Output: `output/{video_id}/final/video.mp4` + `final/subtitles.srt`
+
+### Python-to-Remotion Bridge
+
+`render.mjs` is the bridge between Python output and Remotion rendering:
+1. Reads `script.json` and `voiceover/timing.json` from `output/{video_id}/`
+2. Parses `checkpoint.json` to detect single vs multi-source mode
+3. Finds source videos in `sources/{video_id}/` (fallback: `output/subtitle/`)
+4. Auto-transcodes source videos (AV1/VP9 → H.264) if needed
+5. Copies assets into `remotion-video/public/` (auto-cleaned after render)
+6. Generates `final/subtitles.srt` and renders `final/video.mp4`
+
+Composition ID is hardcoded as `V2GVideo` in `Root.tsx`. Resolution is 1920x1080 @ 30fps.
 
 ### Three Material Types
 
 Each script segment specifies one of three material types:
-- **A (PPT slides)** — AI-generated slide images with 6 layout modes (code, compare, metric, grid, steps, standard)
-- **B (Screen recording)** — User-provided screen captures following generated instructions
-- **C (Source clip)** — Trimmed + speed-adjusted clips from the original YouTube video
+- **A (PPT slides)** — AI-generated slide images. Layout detection happens in TypeScript (`SlideSegment.tsx` `detectLayout()`), not Python. 6 layout modes: code, compare, metric, grid, steps, standard.
+- **B (Screen recording)** — User-provided screen captures, or screenshots auto-converted via `v2g record`. Missing recordings fall back to `TerminalDemoSegment` (animated Claude Code TUI simulation) in Remotion, or a placeholder card in FFmpeg.
+- **C (Source clip)** — Trimmed + speed-adjusted clips from original video. Capped at 10 seconds, bottom 15% cropped to remove hardcoded subtitles.
 
 Target ratio: A ~40%, B ~40%, C ~20%.
 
+### Pipeline State
+
+State persists in `output/{video_id}/checkpoint.json` (`PipelineState` dataclass in `checkpoint.py`). Stage flags (`selected`, `downloaded`, `scripted`, `tts_done`, `slides_done`, `assembled`, etc.) enable resuming at any stage. Multi-source mode adds `project_id`, `topic`, and `sources[]` (list of `SourceVideo` with per-source paths and `prepared` flag).
+
+### Input/Output Separation
+
+- **Input materials** (`sources/`): Downloaded source videos and subtitles, organized by video ID
+- **Working files** (`output/{project}/`): Script, voiceover, slides, recordings — grouped by type
+- **Final deliverables** (`output/{project}/final/`): Only `video.mp4` and `subtitles.srt`
+- **Remotion staging** (`remotion-video/public/`): Temporary asset cache, auto-cleaned after render
+
+### Key Data Files
+
+- `script.json` — LLM-generated script with segments (id, type, material, narration_zh, slide_content/recording_instruction/source timing). Multi-source mode adds `sources_used`, `total_duration_hint`.
+- `voiceover/timing.json` — `{segment_id: {file, duration, text_length}}` mapping from TTS output.
+- `recording_guide.md` — Extracted material B instructions for the user.
+- `final/subtitles.srt` — SRT subtitles (Remotion backend) or `final/subtitles.ass` (FFmpeg backend).
+
 ### LLM Router (`llm.py`)
 
-Routes to Claude, GPT, or Gemini based on model name prefix. Supports configurable base URL for proxies.
+Routes by model name prefix:
+- `gemini*` → Google Generative AI SDK
+- `gpt*`, `o1*`, `o3*`, `o4*` → OpenAI SDK (optional Anthropic proxy fallback)
+- All others → Anthropic Claude SDK (streaming via httpx)
 
-### Video Rendering (TypeScript — `remotion-video/src/`)
+Platform proxy system (`config.py` `_apply_platform()`) maps platform-specific env vars (e.g. `ITSSX_API_KEY`) to standard `ANTHROPIC_*` variables.
 
-Remotion compositions render the final video declaratively:
-- `VideoComposition.tsx` — main container, sequences segments via `<Series>`
-- `SlideSegment.tsx` — renders material A with layout detection
+### TTS Dual Engine (`tts.py`)
+
+- **edge-tts** (default, free): Microsoft Edge TTS
+- **MiniMax Speech** (paid, high quality): requires `TTS_MINMAX_KEY`
+- Switch via `TTS_ENGINE` env var. Each segment rendered separately to `voiceover_segments/seg_{id}.mp3`.
+
+### Prompt Engineering
+
+`src/v2g/prompts/` contains three LLM prompt templates:
+- `script_system.md` — single-source script generation rules
+- `script_multi_system.md` — multi-source synthesis rules
+- `slide_system.md` — slide content and layout generation
+
+### Remotion Components (`remotion-video/src/`)
+
+- `VideoComposition.tsx` — main container, sequences segments via `<Series>`, handles material B fallback to `TerminalDemoSegment`
+- `SlideSegment.tsx` — material A with 6 layout modes, glassmorphism design, animated backgrounds
 - `SourceClipSegment.tsx` — material C with speed-matching to TTS duration
 - `RecordingSegment.tsx` — material B video playback
-- `SubtitleOverlay.tsx` — frame-synced subtitle display across all segments
-- `render.mjs` — Node.js orchestrator that reads script/timing data and invokes Remotion renderer
-
-### Key Data Flow
-
-`script.json` (LLM output) + `voiceover_timing.json` (TTS output) are the two central data files that bridge Python stages to the Remotion renderer. The `ScriptSegment` and `TimingMap` types in `types.ts` define their schemas.
+- `TerminalDemoSegment.tsx` — Claude Code TUI simulation (material B fallback when no recording)
+- `SubtitleOverlay.tsx` — frame-synced subtitle display (currently unused, subtitles are separate SRT)
+- `types.ts` — `ScriptSegment`, `TimingMap`, `VideoCompositionProps` type definitions
 
 ### External Dependencies
 
-- **lecture2note** — sibling project (`../lecture2note/`) used for video download and subtitle generation
+- **lecture2note** — sibling project (`../lecture2note/`) for video download and subtitle generation
 - **youtube-trending** — sibling project (`../youtube-trending/`) provides trending video CSV data
-- Configuration via `.env` file (see `.env.example`)
+
+### Key Environment Variables
+
+See `.env.example` for the full list. Notable variables:
+- `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` — LLM provider keys
+- `TTS_ENGINE` — `edge` (default) or `minimax`
+- `TTS_MINMAX_KEY`, `TTS_MINIMAX_VOICE_ID` — MiniMax TTS config
+- `GPT_API_KEY`, `GPT_BASE_URL` — OpenAI-compatible API config
+- `REMOTION_CHROME_EXECUTABLE` — override Chrome path for Remotion rendering

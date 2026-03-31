@@ -12,10 +12,8 @@ from v2g.checkpoint import PipelineState, SourceVideo
 
 def _extract_video_id(video_id_or_url: str) -> str:
     """从 URL 或纯 ID 提取 video_id。"""
-    # 如果已经是纯 ID（11 位字母数字+连字符+下划线）
     if re.match(r"^[\w-]{11}$", video_id_or_url):
         return video_id_or_url
-    # 尝试从 URL 提取
     patterns = [
         r"(?:v=|youtu\.be/|embed/)([^&?/]+)",
     ]
@@ -30,6 +28,42 @@ def _build_youtube_url(video_id: str) -> str:
     return f"https://www.youtube.com/watch?v={video_id}"
 
 
+def _find_source_dir(video_id: str, cfg: Config) -> Path:
+    """查找视频素材目录，按优先级搜索多个可能的位置。"""
+    candidates = [
+        cfg.sources_dir / video_id,                   # sources/{video_id} (新路径)
+        Path("output/subtitle") / video_id,           # output/subtitle/{video_id} (旧路径，向后兼容)
+        cfg.l2n_output_dir / video_id,                # l2n 配置路径
+    ]
+    for d in candidates:
+        if d.exists() and any(d.iterdir()):
+            return d
+    return candidates[0]  # 默认新路径
+
+
+def _ensure_source_dir(video_id: str, cfg: Config) -> Path:
+    """确保 sources/{video_id}/ 目录存在，如果素材在旧路径则迁移。"""
+    new_dir = cfg.sources_dir / video_id
+    if new_dir.exists() and any(new_dir.iterdir()):
+        return new_dir
+
+    # 检查旧路径是否有素材
+    old_candidates = [
+        Path("output/subtitle") / video_id,
+        cfg.l2n_output_dir / video_id,
+    ]
+    for old_dir in old_candidates:
+        if old_dir.exists() and any(old_dir.iterdir()):
+            # 将旧路径软链接到新路径（避免重复占用磁盘）
+            new_dir.parent.mkdir(parents=True, exist_ok=True)
+            if not new_dir.exists():
+                new_dir.symlink_to(old_dir.resolve())
+            return new_dir
+
+    new_dir.mkdir(parents=True, exist_ok=True)
+    return new_dir
+
+
 def run_prepare(cfg: Config, video_id_or_url: str, model: str,
                 whisper_model: str = "medium", use_whisper: bool = True) -> PipelineState:
     """执行 Stage 2: 下载 + 字幕翻译。"""
@@ -40,19 +74,6 @@ def run_prepare(cfg: Config, video_id_or_url: str, model: str,
     state.video_id = video_id
     state.video_url = url
     state.selected = True
-
-    # l2n 使用 CWD 相对的 output/subtitle/ 目录
-    # 检查两个可能的位置: CWD 下的和 l2n_output_dir 配置的
-    def _find_video_dir() -> Path:
-        """查找视频输出目录（兼容 l2n 的相对路径行为）。"""
-        candidates = [
-            Path("output/subtitle") / video_id,  # CWD 相对路径 (l2n 默认行为)
-            cfg.l2n_output_dir / video_id,        # 配置的 l2n 输出目录
-        ]
-        for d in candidates:
-            if d.exists() and any(d.iterdir()):
-                return d
-        return candidates[0]  # 默认返回第一个
 
     # 1) 生成字幕
     if not state.subtitled:
@@ -71,10 +92,11 @@ def run_prepare(cfg: Config, video_id_or_url: str, model: str,
             state.save(cfg.output_dir)
             raise click.ClickException(state.last_error)
 
-        video_dir = _find_video_dir()
+        # l2n 可能把文件写到 output/subtitle/，确保迁移到 sources/
+        source_dir = _ensure_source_dir(video_id, cfg)
         state.subtitled = True
-        state.en_srt = str((video_dir / "subtitle_en.srt").resolve())
-        state.zh_srt = str((video_dir / "subtitle_zh.srt").resolve())
+        state.en_srt = str((source_dir / "subtitle_en.srt").resolve())
+        state.zh_srt = str((source_dir / "subtitle_zh.srt").resolve())
     else:
         click.echo("⏭️  字幕已存在，跳过")
 
@@ -84,15 +106,15 @@ def run_prepare(cfg: Config, video_id_or_url: str, model: str,
         try:
             from l2n.downloader import download_video, _find_existing_video
 
-            video_dir = _find_video_dir()
-            existing = _find_existing_video(video_dir) if video_dir.exists() else None
+            source_dir = _ensure_source_dir(video_id, cfg)
+            existing = _find_existing_video(source_dir) if source_dir.exists() else None
             if existing and not str(existing).endswith(".part"):
                 click.echo(f"   ⏭️ 视频已存在: {existing.name}")
                 state.source_video = str(existing.resolve())
             else:
                 download_video(url)
-                video_dir = _find_video_dir()
-                existing = _find_existing_video(video_dir)
+                source_dir = _ensure_source_dir(video_id, cfg)
+                existing = _find_existing_video(source_dir)
                 if existing:
                     state.source_video = str(existing.resolve())
         except Exception as e:
@@ -107,18 +129,6 @@ def run_prepare(cfg: Config, video_id_or_url: str, model: str,
     state.last_error = ""
     state.save(cfg.output_dir)
     return state
-
-
-def _find_video_dir_for(video_id: str, cfg: Config) -> Path:
-    """查找视频输出目录。"""
-    candidates = [
-        Path("output/subtitle") / video_id,
-        cfg.l2n_output_dir / video_id,
-    ]
-    for d in candidates:
-        if d.exists() and any(d.iterdir()):
-            return d
-    return candidates[0]
 
 
 def run_multi_prepare(cfg: Config, urls: list[str], project_id: str,
@@ -167,9 +177,9 @@ def run_multi_prepare(cfg: Config, urls: list[str], project_id: str,
                 use_whisper=use_whisper,
                 whisper_model=whisper_model,
             )
-            video_dir = _find_video_dir_for(src.video_id, cfg)
-            src.en_srt_path = str((video_dir / "subtitle_en.srt").resolve())
-            src.zh_srt_path = str((video_dir / "subtitle_zh.srt").resolve())
+            source_dir = _ensure_source_dir(src.video_id, cfg)
+            src.en_srt_path = str((source_dir / "subtitle_en.srt").resolve())
+            src.zh_srt_path = str((source_dir / "subtitle_zh.srt").resolve())
             click.echo(f"   ✅ 字幕完成")
         except Exception as e:
             click.echo(f"   ❌ 字幕失败: {e}")
@@ -182,14 +192,14 @@ def run_multi_prepare(cfg: Config, urls: list[str], project_id: str,
         try:
             click.echo(f"   📥 下载视频...")
             from l2n.downloader import download_video, _find_existing_video
-            video_dir = _find_video_dir_for(src.video_id, cfg)
-            existing = _find_existing_video(video_dir) if video_dir.exists() else None
+            source_dir = _ensure_source_dir(src.video_id, cfg)
+            existing = _find_existing_video(source_dir) if source_dir.exists() else None
             if existing and not str(existing).endswith(".part"):
                 src.source_video_path = str(existing.resolve())
             else:
                 download_video(src.video_url)
-                video_dir = _find_video_dir_for(src.video_id, cfg)
-                existing = _find_existing_video(video_dir)
+                source_dir = _ensure_source_dir(src.video_id, cfg)
+                existing = _find_existing_video(source_dir)
                 if existing:
                     src.source_video_path = str(existing.resolve())
             click.echo(f"   ✅ 视频完成")

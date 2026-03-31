@@ -14,6 +14,7 @@ class Config:
     # 路径
     trending_csv: Path = field(default_factory=lambda: Path("../youtube-trending/data/latest.csv"))
     l2n_output_dir: Path = field(default_factory=lambda: Path("../lecture2note/output/subtitle"))
+    sources_dir: Path = field(default_factory=lambda: Path("sources"))
     output_dir: Path = field(default_factory=lambda: Path("output"))
 
     # TTS
@@ -44,6 +45,7 @@ class Config:
         cfg = cls(
             trending_csv=Path(os.environ.get("TRENDING_CSV_PATH", str(defaults.trending_csv))),
             l2n_output_dir=Path(os.environ.get("L2N_OUTPUT_DIR", str(defaults.l2n_output_dir))),
+            sources_dir=Path(os.environ.get("SOURCES_DIR", str(defaults.sources_dir))),
             tts_voice=os.environ.get("TTS_VOICE", defaults.tts_voice),
             tts_rate=os.environ.get("TTS_RATE", defaults.tts_rate),
             script_model=os.environ.get("SCRIPT_MODEL", defaults.script_model),

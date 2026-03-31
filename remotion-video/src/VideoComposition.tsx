@@ -6,6 +6,7 @@
  */
 
 import { AbsoluteFill, Sequence, Series, staticFile } from "remotion";
+import React, { useMemo } from "react";
 import { Audio } from "@remotion/media";
 
 import type { VideoCompositionProps, ScriptSegment } from "./types";
@@ -14,7 +15,6 @@ import { SourceClipSegment } from "./components/SourceClipSegment";
 import { PlaceholderSegment } from "./components/PlaceholderSegment";
 import { RecordingSegment } from "./components/RecordingSegment";
 import { TerminalDemoSegment } from "./components/TerminalDemoSegment";
-import { SubtitleOverlay } from "./components/SubtitleOverlay";
 
 export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
   const {
@@ -30,9 +30,26 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
   } = props;
   const segments = script.segments;
 
+  // 预计算素材 A 段总数及每个 segment 的 slide 序号
+  const totalSlides = useMemo(
+    () => segments.filter((s) => s.material === "A").length,
+    [segments]
+  );
+  const slideIndexMap = useMemo(() => {
+    const map = new Map<number, number>();
+    let idx = 0;
+    for (const seg of segments) {
+      if (seg.material === "A") {
+        idx++;
+        map.set(seg.id, idx);
+      }
+    }
+    return map;
+  }, [segments]);
+
   const renderSegment = (seg: ScriptSegment) => {
     switch (seg.material) {
-      case "A":
+      case "A": {
         return (
           <SlideSegment
             slideContent={
@@ -41,8 +58,11 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
                 bullet_points: [],
               }
             }
+            segmentId={slideIndexMap.get(seg.id) || 1}
+            totalSlides={totalSlides}
           />
         );
+      }
       case "B": {
         const recFile = `${recordingsDir}/seg_${seg.id}.mp4`;
         const hasRecording = availableRecordings.includes(seg.id);
@@ -92,9 +112,6 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
           );
         })}
       </Series>
-
-      {/* 字幕叠加层（覆盖整个时间线） */}
-      <SubtitleOverlay segments={segments} timing={timing} />
 
       {/* 配音音轨 */}
       <Sequence from={0}>

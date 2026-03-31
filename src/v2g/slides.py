@@ -78,86 +78,83 @@ def _generate_slide_html(slide_content: dict, seg_id: int, width: int, height: i
 body {{
     width: {width}px;
     height: {height}px;
-    background: #0b0f1a;
-    background-image:
-        radial-gradient(ellipse at 15% 80%, rgba(0, 120, 255, 0.08) 0%, transparent 50%),
-        radial-gradient(ellipse at 85% 20%, rgba(0, 212, 255, 0.06) 0%, transparent 50%);
+    background: #0a0e1a;
     font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", sans-serif;
     color: #e0e0e0;
-    padding: 70px 100px;
+    padding: 48px 64px;
     overflow: hidden;
     position: relative;
 }}
-/* 顶部装饰线 */
+/* 顶部强调线 */
 body::before {{
     content: "";
     position: absolute;
-    top: 0; left: 80px; right: 80px;
+    top: 0; left: 0; right: 0;
     height: 3px;
-    background: linear-gradient(90deg, transparent, #00d4ff, #00ff88, transparent);
-    border-radius: 2px;
+    background: linear-gradient(90deg, #00e5ff, #00e676, transparent);
 }}
 .title {{
-    font-size: 58px;
-    font-weight: 800;
+    font-size: 54px;
+    font-weight: 900;
     color: #ffffff;
-    margin-bottom: 50px;
+    margin-bottom: 40px;
     line-height: 1.3;
     letter-spacing: 2px;
     position: relative;
-    padding-left: 24px;
+    padding-left: 22px;
 }}
 .title::before {{
     content: "";
     position: absolute;
     left: 0;
-    top: 8px;
-    bottom: 8px;
+    top: 6px;
+    bottom: 6px;
     width: 5px;
-    background: linear-gradient(180deg, #00d4ff, #00ff88);
+    background: #00e5ff;
     border-radius: 3px;
+    box-shadow: 0 0 12px #00e5ff88;
 }}
 .bullets {{
     list-style: none;
-    margin-top: 10px;
+    margin-top: 8px;
 }}
 .bullets li {{
     display: flex;
     align-items: flex-start;
-    margin-bottom: 24px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
-    padding: 20px 28px;
-    transition: all 0.3s;
+    margin-bottom: 18px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    padding: 18px 24px;
+    border-left: 4px solid #00e5ff;
 }}
 .bullets li .num {{
     flex-shrink: 0;
-    width: 44px;
-    height: 44px;
-    background: linear-gradient(135deg, #00d4ff, #0088cc);
+    width: 40px;
+    height: 40px;
+    background: #00e5ff;
     color: #fff;
-    font-size: 22px;
-    font-weight: 700;
+    font-size: 18px;
+    font-weight: 800;
     border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-right: 22px;
+    margin-right: 18px;
     margin-top: 2px;
 }}
 .bullets li .text {{
-    font-size: 36px;
-    line-height: 1.6;
-    color: #d0d0d0;
+    font-size: 32px;
+    line-height: 1.5;
+    color: #ffffff;
 }}
 .chart-hint {{
-    margin-top: 36px;
-    font-size: 28px;
-    color: #666;
+    margin-top: 24px;
+    font-size: 24px;
+    color: #607d8b;
     font-style: italic;
-    padding-left: 24px;
-    border-left: 2px solid #333;
+    padding-left: 22px;
+    border-left: 2px solid #00e5ff44;
 }}
 </style>
 </head>

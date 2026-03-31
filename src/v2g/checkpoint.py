@@ -56,11 +56,12 @@ class PipelineState:
     zh_srt: str = ""
     script_json: str = ""
     recording_guide: str = ""
-    voiceover: str = ""
+    voiceover: str = ""          # voiceover/full.mp3
+    voiceover_timing: str = ""   # voiceover/timing.json
     slides_dir: str = ""
     recordings_dir: str = ""
     clips_dir: str = ""
-    final_video: str = ""
+    final_video: str = ""        # final/video.mp4
 
     last_error: str = ""
 

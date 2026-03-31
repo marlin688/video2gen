@@ -45,6 +45,8 @@
 - **出现时机**: "理论讲解"部分
 - 必须提供 `slide_content` 字段
 - slide_content 的 bullet_points 必须用纯文本，不要使用 emoji 符号
+- bullet_points 至少 3 条，追求信息密度，宁多勿少
+- 标题控制在 4-12 字，需要有信息量（如"Plan Mode 三步操作"而非"Plan Mode"）
 
 **关键原则: 卡片内容必须和解说词互补，而非重复。**
 - 解说词 = 讲故事、讲感受、讲为什么
@@ -116,7 +118,7 @@
       "material": "A",
       "narration_zh": "解说词...",
       "slide_content": {
-        "title": "卡片标题（8字以内）",
+        "title": "卡片标题（4-12字，要有信息量和冲击力）",
         "bullet_points": ["要点1（纯文本，不用emoji）", "要点2", "要点3"],
         "chart_hint": "可选的图表/对比描述"
       },

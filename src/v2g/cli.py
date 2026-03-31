@@ -13,7 +13,7 @@ pass_config = click.make_pass_decorator(Config, ensure=True)
 @click.option("--env", default=None, help=".env 文件路径")
 @click.pass_context
 def main(ctx, env):
-    """video2gen - YouTube 二���视频流水线"""
+    """video2gen - YouTube 二创视频流水线"""
     ctx.ensure_object(dict)
     ctx.obj = Config.load(env)
 
@@ -42,11 +42,12 @@ def select(cfg: Config, csv_path, category, min_views, limit):
 @click.option("--no-whisper", is_flag=True, help="使用 YouTube 字幕替代 Whisper")
 @click.pass_obj
 def prepare(cfg: Config, video_id_or_url, model, whisper_model, no_whisper):
-    """Stage 2: 下载视频 + 生成字幕翻译"""
+    """Stage 2: 下载视频 + 生成字幕翻译 → sources/{video_id}/"""
     from v2g.preparer import run_prepare
     model = model or cfg.script_model
     state = run_prepare(cfg, video_id_or_url, model, whisper_model, not no_whisper)
     click.echo(f"\n✅ 准备完成: {state.video_id}")
+    click.echo(f"   素材目录: sources/{state.video_id}/")
     click.echo(f"   下一步: v2g script {state.video_id}")
 
 
@@ -59,9 +60,10 @@ def script(cfg: Config, video_id, model):
     from v2g.scriptwriter import run_script
     model = model or cfg.script_model
     state = run_script(cfg, video_id, model)
-    click.echo(f"\n✅ 脚本已生成: output/{video_id}/script.md")
+    click.echo(f"\n✅ 脚本已生成:")
+    click.echo(f"   脚本: output/{video_id}/script.md")
     click.echo(f"   录屏指南: output/{video_id}/recording_guide.md")
-    click.echo(f"   请审阅脚本并将录屏文件放入 output/{video_id}/recordings/")
+    click.echo(f"   录屏放入: output/{video_id}/recordings/")
     click.echo(f"   完成后运行: v2g review {video_id}")
 
 
@@ -88,7 +90,7 @@ def review(cfg: Config, video_id):
     state.script_reviewed = True
     state.last_error = ""
     state.save(cfg.output_dir)
-    click.echo(f"✅ 脚本���核通过: {video_id}")
+    click.echo(f"✅ 脚本审核通过: {video_id}")
     click.echo(f"   下一步: v2g tts {video_id}")
 
 
@@ -98,12 +100,12 @@ def review(cfg: Config, video_id):
 @click.option("--rate", default=None, help="语速 (默认: +5%)")
 @click.pass_obj
 def tts(cfg: Config, video_id, voice, rate):
-    """Stage 4: TTS 配音"""
+    """Stage 4: TTS 配音 → output/{video_id}/voiceover/"""
     from v2g.tts import run_tts
     voice = voice or cfg.tts_voice
     rate = rate or cfg.tts_rate
     state = run_tts(cfg, video_id, voice, rate)
-    click.echo(f"\n✅ TTS 配音完成: output/{video_id}/voiceover.mp3")
+    click.echo(f"\n✅ TTS 配音完成: output/{video_id}/voiceover/full.mp3")
     click.echo(f"   下一步: v2g slides {video_id}")
 
 
@@ -137,10 +139,10 @@ def record(cfg: Config, video_id):
 @click.argument("video_id")
 @click.pass_obj
 def assemble(cfg: Config, video_id):
-    """Stage 5b: 三素材合成最终视频"""
+    """Stage 5b: 三素材合成最终视频 → output/{video_id}/final/"""
     from v2g.editor import run_assemble
     state = run_assemble(cfg, video_id)
-    click.echo(f"\n✅ 视频合成完成: output/{video_id}/final.mp4")
+    click.echo(f"\n✅ 视频合成完成: output/{video_id}/final/video.mp4")
 
 
 @main.command()
@@ -207,7 +209,7 @@ def multi(cfg: Config, urls, topic, project_id, model, whisper_model):
 
     click.echo(f"\n✅ Python 端完成!")
     click.echo(f"   下一步 Remotion 渲染:")
-    click.echo(f"   cd remotion-video && node render.mjs {project_id} --output-dir ../output")
+    click.echo(f"   cd remotion-video && node render.mjs {project_id}")
 
 
 @main.command()
@@ -243,7 +245,7 @@ def status(cfg: Config, video_id):
         ("subtitled", "字幕翻译"),
         ("scripted", "AI 脚本"),
         ("script_reviewed", "脚本审核 ✋"),
-        ("tts_done", "TTS ��音"),
+        ("tts_done", "TTS 配音"),
         ("slides_done", "PPT 图文"),
         ("assembled", "视频合成"),
         ("final_reviewed", "成片审核 ✋"),
@@ -263,6 +265,13 @@ def status(cfg: Config, video_id):
         click.echo(f"\n   📁 录屏素材: {len(files)} 个文件")
     else:
         click.echo(f"\n   📁 录屏素材: 未就绪")
+
+    # 最终输出
+    final_dir = cfg.output_dir / video_id / "final"
+    if final_dir.exists():
+        finals = [f.name for f in final_dir.iterdir() if not f.name.startswith(".")]
+        if finals:
+            click.echo(f"   📁 最终输出: {', '.join(finals)}")
 
 
 if __name__ == "__main__":

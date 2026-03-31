@@ -81,7 +81,7 @@ def run_pipeline(cfg: Config, video_id_or_url: str, model: str,
     click.echo("\n" + "=" * 50)
     click.echo("🎉 流水线完成!")
     click.echo("=" * 50)
-    click.echo(f"   最终视频: output/{video_id}/final.mp4")
+    click.echo(f"   最终视频: output/{video_id}/final/video.mp4")
 
     if state.final_video:
         from pathlib import Path

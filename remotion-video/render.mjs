@@ -3,10 +3,17 @@
  * video2gen Remotion 渲染脚本
  *
  * 用法:
- *   node render.mjs <video_id> [--output-dir <path>]
+ *   node render.mjs <video_id> [--output-dir <path>] [--sources-dir <path>]
  *
- * 自动从 v2g output 目录读取 script.json、voiceover_timing.json，
- * 将素材文件链接到 public/，然后调用 Remotion 渲染。
+ * 目录结构:
+ *   sources/{video_id}/          — 输入素材 (视频 + 字幕)
+ *   output/{project_id}/         — 项目工作目录
+ *     voiceover/full.mp3         — TTS 配音
+ *     voiceover/timing.json      — 时间轴
+ *     slides/                    — 幻灯片
+ *     recordings/                — 录屏
+ *     final/video.mp4            — 最终视频
+ *     final/subtitles.srt        — SRT 字幕
  */
 
 import { bundle } from "@remotion/bundler";
@@ -34,7 +41,7 @@ try {
 const args = process.argv.slice(2);
 const videoId = args[0];
 if (!videoId) {
-  console.error("用法: node render.mjs <video_id> [--output-dir <path>]");
+  console.error("用法: node render.mjs <video_id> [--output-dir <path>] [--sources-dir <path>]");
   process.exit(1);
 }
 
@@ -43,12 +50,23 @@ const v2gOutputDir = outputDirIdx !== -1
   ? args[outputDirIdx + 1]
   : path.resolve(__dirname, "..", "output");
 
+const sourcesDirIdx = args.indexOf("--sources-dir");
+const sourcesDir = sourcesDirIdx !== -1
+  ? args[sourcesDirIdx + 1]
+  : path.resolve(__dirname, "..", "sources");
+
 const videoDir = path.join(v2gOutputDir, videoId);
-const subtitleDir = path.join(v2gOutputDir, "subtitle", videoId);
+const finalDir = path.join(videoDir, "final");
+fs.mkdirSync(finalDir, { recursive: true });
 
 // 检查必要文件
 const scriptPath = path.join(videoDir, "script.json");
-const timingPath = path.join(videoDir, "voiceover_timing.json");
+
+// 查找 timing.json（新路径优先，向后兼容旧路径）
+let timingPath = path.join(videoDir, "voiceover", "timing.json");
+if (!fs.existsSync(timingPath)) {
+  timingPath = path.join(videoDir, "voiceover_timing.json");
+}
 
 if (!fs.existsSync(scriptPath)) {
   console.error(`脚本不存在: ${scriptPath}`);
@@ -64,19 +82,14 @@ const publicDir = path.join(__dirname, "public");
 fs.mkdirSync(publicDir, { recursive: true });
 
 // 辅助: 硬拷贝文件到 public（Remotion 不支持 symlink）
-// 如果源文件大小不同则覆盖（避免用旧项目的缓存）
 function copyAsset(src, dst) {
   const absSrc = path.resolve(src);
   if (!fs.existsSync(absSrc)) return;
   if (fs.existsSync(dst)) {
     const srcStat = fs.statSync(absSrc);
     const dstStat = fs.statSync(dst);
-    if (srcStat.isDirectory()) {
-      // 目录: 如果已存在就跳过（不好比较）
-      return;
-    }
-    if (srcStat.size === dstStat.size) return; // 大小相同则跳过
-    // 大小不同，覆盖
+    if (srcStat.isDirectory()) return;
+    if (srcStat.size === dstStat.size) return;
     console.log(`   覆盖: ${path.basename(dst)} (${dstStat.size} → ${srcStat.size})`);
   }
   if (fs.statSync(absSrc).isDirectory()) {
@@ -88,8 +101,12 @@ function copyAsset(src, dst) {
   }
 }
 
-// 复制配音文件
-copyAsset(path.join(videoDir, "voiceover.mp3"), path.join(publicDir, "voiceover.mp3"));
+// 复制配音文件（新路径优先，向后兼容旧路径）
+let voiceoverSrc = path.join(videoDir, "voiceover", "full.mp3");
+if (!fs.existsSync(voiceoverSrc)) {
+  voiceoverSrc = path.join(videoDir, "voiceover.mp3");
+}
+copyAsset(voiceoverSrc, path.join(publicDir, "voiceover.mp3"));
 
 // 复制 slides 目录
 copyAsset(path.join(videoDir, "slides"), path.join(publicDir, "slides"));
@@ -142,6 +159,24 @@ function prepareSourceVideo(srcPath, destName) {
   }
 }
 
+/**
+ * 查找源视频文件: 依次在 sources/{video_id}/, output/subtitle/{video_id}/ 中搜索
+ */
+function findSourceVideo(videoId) {
+  const searchDirs = [
+    path.join(sourcesDir, videoId),                             // sources/{video_id} (新路径)
+    path.join(v2gOutputDir, "subtitle", videoId),               // output/subtitle/{video_id} (旧路径)
+  ];
+  for (const dir of searchDirs) {
+    if (!fs.existsSync(dir)) continue;
+    const vFiles = fs.readdirSync(dir).filter(
+      f => [".mp4", ".webm", ".mkv"].some(ext => f.endsWith(ext)) && !f.endsWith(".part")
+    );
+    if (vFiles.length > 0) return path.join(dir, vFiles[0]);
+  }
+  return null;
+}
+
 if (fs.existsSync(checkpointPath)) {
   const cp = JSON.parse(fs.readFileSync(checkpointPath, "utf-8"));
 
@@ -153,15 +188,9 @@ if (fs.existsSync(checkpointPath)) {
       const destName = `source_${i}.mp4`;
       let videoPath = src.source_video_path;
 
-      // fallback: 在 subtitle 目录找
+      // fallback: 在 sources/ 或 output/subtitle/ 目录找
       if (!videoPath || !fs.existsSync(videoPath)) {
-        const subDir = path.join(v2gOutputDir, "subtitle", src.video_id);
-        if (fs.existsSync(subDir)) {
-          const vFiles = fs.readdirSync(subDir).filter(
-            f => [".mp4", ".webm", ".mkv"].some(ext => f.endsWith(ext)) && !f.endsWith(".part")
-          );
-          if (vFiles.length > 0) videoPath = path.join(subDir, vFiles[0]);
-        }
+        videoPath = findSourceVideo(src.video_id);
       }
 
       if (videoPath && fs.existsSync(videoPath)) {
@@ -181,13 +210,11 @@ if (fs.existsSync(checkpointPath)) {
   }
 }
 
-// fallback: subtitle 目录
-if (sourceVideoFiles.length === 0 && fs.existsSync(subtitleDir)) {
-  const vFiles = fs.readdirSync(subtitleDir).filter(
-    f => [".mp4", ".webm", ".mkv"].some(ext => f.endsWith(ext)) && !f.endsWith(".part")
-  );
-  if (vFiles.length > 0) {
-    prepareSourceVideo(path.join(subtitleDir, vFiles[0]), "source_0.mp4");
+// fallback: 在 sources/ 目录直接搜索
+if (sourceVideoFiles.length === 0) {
+  const videoPath = findSourceVideo(videoId);
+  if (videoPath) {
+    prepareSourceVideo(videoPath, "source_0.mp4");
     sourceVideoFiles.push("source_0.mp4");
     sourceChannels.push("");
   }
@@ -228,6 +255,93 @@ const inputProps = {
   availableRecordings,
 };
 
+// ═══ SRT 字幕生成 ═══
+
+function splitNarration(text, durationSec) {
+  const parts = text.split(/(?<=[。！？；])/).filter(p => p.trim());
+  if (parts.length === 0) return [{ text, start: 0, end: durationSec }];
+
+  const merged = [];
+  for (const p of parts) {
+    if (merged.length > 0 && merged[merged.length - 1].length < 6) {
+      merged[merged.length - 1] += p;
+    } else {
+      merged.push(p.trim());
+    }
+  }
+
+  const final = [];
+  for (const m of merged) {
+    if (m.length <= 36) {
+      final.push(m);
+    } else {
+      const subs = m.split(/(?<=[，,])/).filter(s => s.trim());
+      let buf = "";
+      for (const s of subs) {
+        if (buf.length + s.length <= 36) {
+          buf += s;
+        } else {
+          if (buf) final.push(buf);
+          buf = s;
+        }
+      }
+      if (buf) final.push(buf);
+    }
+  }
+
+  const totalChars = final.reduce((a, f) => a + f.length, 0) || 1;
+  const entries = [];
+  let t = 0;
+  for (const txt of final) {
+    const dur = (durationSec * txt.length) / totalChars;
+    entries.push({ text: txt, start: t, end: t + dur });
+    t += dur;
+  }
+  return entries;
+}
+
+function formatSrtTime(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.round((sec % 1) * 1000);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
+}
+
+function generateSrt(script, timing) {
+  const lines = [];
+  let idx = 1;
+  let currentTime = 0;
+
+  for (const seg of script.segments) {
+    const t = timing[String(seg.id)];
+    if (!t) continue;
+    const duration = t.duration;
+
+    if (seg.narration_zh) {
+      const entries = splitNarration(seg.narration_zh, duration);
+      for (const e of entries) {
+        const absStart = currentTime + e.start;
+        const absEnd = currentTime + e.end;
+        lines.push(`${idx}`);
+        lines.push(`${formatSrtTime(absStart)} --> ${formatSrtTime(absEnd)}`);
+        lines.push(e.text);
+        lines.push("");
+        idx++;
+      }
+    }
+
+    currentTime += duration;
+  }
+  return lines.join("\n");
+}
+
+// 生成 SRT 字幕到 final/ 目录
+const srtContent = generateSrt(script, timing);
+const srtPath = path.join(finalDir, "subtitles.srt");
+fs.writeFileSync(srtPath, srtContent, "utf-8");
+console.log(`📝 字幕文件: ${srtPath}`);
+
 console.log("🎬 Remotion 渲染");
 console.log(`   视频 ID: ${videoId}`);
 console.log(`   段落数: ${script.segments.length}`);
@@ -253,8 +367,8 @@ async function main() {
   console.log(`   分辨率: ${composition.width}x${composition.height}`);
   console.log(`   时长: ${composition.durationInFrames} 帧 (${(composition.durationInFrames / 30).toFixed(1)}s)`);
 
-  // 3. 渲染
-  const outputPath = path.join(videoDir, "final_remotion.mp4");
+  // 3. 渲染到 final/ 目录
+  const outputPath = path.join(finalDir, "video.mp4");
   console.log(`🎨 渲染中... → ${outputPath}`);
 
   await renderMedia({
@@ -271,9 +385,29 @@ async function main() {
     },
   });
 
-  console.log(`\n✅ 渲染完成: ${outputPath}`);
+  console.log(`\n✅ 渲染完成!`);
   const stats = fs.statSync(outputPath);
-  console.log(`   文件大小: ${(stats.size / 1024 / 1024).toFixed(1)}MB`);
+  console.log(`   视频: ${outputPath} (${(stats.size / 1024 / 1024).toFixed(1)}MB)`);
+  console.log(`   字幕: ${srtPath}`);
+
+  // 4. 清理 public/ 缓存（避免跨项目污染）
+  console.log("🧹 清理 public/ 缓存...");
+  const cleanTargets = ["voiceover.mp3", "slides", "recordings"];
+  // 清理源视频缓存
+  for (const f of fs.readdirSync(publicDir)) {
+    if (f.startsWith("source_") && f.endsWith(".mp4")) cleanTargets.push(f);
+    if (f.startsWith("src-video")) cleanTargets.push(f);
+  }
+  for (const target of cleanTargets) {
+    const p = path.join(publicDir, target);
+    if (!fs.existsSync(p)) continue;
+    if (fs.statSync(p).isDirectory()) {
+      fs.rmSync(p, { recursive: true });
+    } else {
+      fs.unlinkSync(p);
+    }
+  }
+  console.log("   ✅ 已清理");
 }
 
 main().catch((err) => {

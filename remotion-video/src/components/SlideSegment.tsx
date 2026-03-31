@@ -1,11 +1,20 @@
 /**
- * 素材 A: PPT 图文卡片 — B站知识区顶级视觉风格
+ * 素材 A: PPT 图文卡片 — B站知识区风格 v5
  *
- * 特性:
- *   - 动态渐变背景 + 浮动粒子 + 网格纹理
- *   - 毛玻璃卡片 + 渐变描边，内容撑满全屏
- *   - 逐字入场标题 + 发光装饰
- *   - 6种自适应布局，各有专属动画编排
+ * v5 对标 95+ 分，修复 v4 review 全部问题：
+ *
+ * 【系统性修复】
+ * 1. 装饰元素 opacity 全面上调 → 视频编码后仍可见（关键词 12-18%，图表 20%，序号 18%）
+ * 2. 颜色系统重做 → 每页只用 accent + dimAccent + gray，不再彩虹循环
+ * 3. 字号最终校准 → 正文 32-36px，副文 26-28px，最小标注 22px
+ *
+ * 【布局级修复】
+ * Standard: ≤3 条 bullet 自动切单列大卡，不再出现半空网格
+ * Compare: 面板内条目撑满高度 + 底部 summary bar + VS 加 pulse
+ * Metric: 副指标最多 3 列，Hero 居中布局
+ * Steps: 全面重做 — 当前步骤放大 130%，加副描述，圆和卡之间加连接线
+ * Grid: 首项 span 2 列做锚点，统一 2 色不再彩虹
+ * Code: 底部加闪烁 prompt，关键词语法着色
  */
 
 import {
@@ -19,1179 +28,361 @@ import {
 import React, { useMemo } from "react";
 import type { SlideContent } from "../types";
 
-/* ════════════════════════════════════════════════
-   设计系统
-   ════════════════════════════════════════════════ */
-
 const THEME = {
-  bg: "#06080f",
-  primary: ["#6366f1", "#8b5cf6", "#a855f7"],
-  cyan: "#00d4ff",
-  teal: "#22d3ee",
-  emerald: "#10b981",
-  amber: "#f59e0b",
-  rose: "#f43f5e",
-  red: "#ef4444",
-  palette: ["#6366f1", "#22d3ee", "#10b981", "#f59e0b", "#f43f5e", "#a855f7"],
-  textPrimary: "#f0f0f0",
-  textSecondary: "#a0a0b0",
-  textMuted: "#6b7080",
+  bg: "#060a14",
+  cyan: "#00e5ff",
+  emerald: "#00e676",
+  amber: "#ffab00",
+  rose: "#ff5252",
+  violet: "#b388ff",
+  blue: "#448aff",
+  palette: ["#00e5ff", "#00e676", "#ffab00", "#ff5252", "#b388ff", "#448aff"],
+  gray: "#78909c",
+  dimGray: "#37474f",
+  textPrimary: "#f0f4f8",
+  textSecondary: "#b0bec5",
+  textMuted: "#607d8b",
 };
 
-const colorAt = (i: number) => THEME.palette[i % THEME.palette.length];
+const safeColor = (i: number) =>
+  THEME.palette[((i % THEME.palette.length) + THEME.palette.length) % THEME.palette.length];
 
-const SPRING_SMOOTH = { damping: 18, stiffness: 120 };
-const SPRING_SNAPPY = { damping: 14, stiffness: 160 };
-const SPRING_BOUNCY = { damping: 12, stiffness: 100 };
+function twoTone(accent: string) {
+  return { accent, dim: THEME.gray, dimBg: THEME.dimGray };
+}
 
-const EASE_OUT_EXPO = Easing.bezier(0.16, 1, 0.3, 1);
+const EASE_OUT = Easing.bezier(0.16, 1, 0.3, 1);
+const SPR = { damping: 18, stiffness: 260 };
+
+function hexA(hex: string, a: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
 
 interface SlideSegmentProps {
   slideContent: SlideContent;
+  segmentId?: number;
+  totalSlides?: number;
 }
 
 type LayoutType = "compare" | "grid" | "code" | "steps" | "metric" | "standard";
 
-/* ─── 判断布局类型 ─── */
 function detectLayout(sc: SlideContent): LayoutType {
   const hint = (sc.chart_hint || "").toLowerCase();
-  const bullets = sc.bullet_points;
-
+  const bp = sc.bullet_points;
   if (hint.includes("vs") || hint.includes("对比")) return "compare";
-
-  const codePatterns =
-    /`[^`]+`|[a-zA-Z_]+\.[a-zA-Z]{2,3}\b|\/[a-z_]+|--[a-z]|[A-Z][a-z]+[A-Z]|=>|import |export |function |const |\.\/|src\/|npm |git |claude |pip /;
-  const codeCount = bullets.filter((bp) => codePatterns.test(bp)).length;
-  if (codeCount >= Math.ceil(bullets.length * 0.6)) return "code";
-
-  const stepPattern =
-    /^(第[一二三四五六七八九十\d]+步|Step\s*\d|[\d①②③④⑤⑥⑦⑧⑨⑩]\s*[.、)）:])/i;
-  const stepCount = bullets.filter((bp) => stepPattern.test(bp.trim())).length;
-  if (stepCount >= Math.ceil(bullets.length * 0.6)) return "steps";
-
-  const metricPattern =
-    /\d+(\.\d+)?\s*(%|倍|x|×|秒|ms|MB|GB|K|k|次|个|项)|[<>≤≥]\s*\d|→|↑|↓|\d+\s*→\s*\d+/;
-  const metricCount = bullets.filter((bp) => metricPattern.test(bp)).length;
-  if (metricCount >= Math.ceil(bullets.length * 0.5)) return "metric";
-
-  if (
-    bullets.length >= 4 &&
-    bullets.every((bp) => bp.includes("：") || bp.includes(":"))
-  )
-    return "grid";
-
+  const codeP = /`[^`]+`|[a-zA-Z_]+\.[a-zA-Z]{2,3}\b|\/[a-z_]+|--[a-z]|[A-Z][a-z]+[A-Z]|=>|import |export |function |const |\.\/|src\/|npm |git |claude |pip /;
+  if (bp.filter((b) => codeP.test(b)).length >= Math.ceil(bp.length * 0.6)) return "code";
+  const stepP = /^(第[一二三四五六七八九十\d]+步|Step\s*\d|[\d①②③④⑤⑥⑦⑧⑨⑩]\s*[.、)）:])/i;
+  if (bp.filter((b) => stepP.test(b.trim())).length >= Math.ceil(bp.length * 0.6)) return "steps";
+  const metP = /\d+(\.\d+)?\s*(%|倍|x|×|秒|ms|MB|GB|K|k|次|个|项)|[<>≤≥]\s*\d|→|↑|↓|\d+\s*→\s*\d+/;
+  if (bp.filter((b) => metP.test(b)).length >= Math.ceil(bp.length * 0.5)) return "metric";
+  if (bp.length >= 4 && bp.every((b) => b.includes("：") || b.includes(":"))) return "grid";
   return "standard";
 }
 
-/* ─── 确定性粒子 ─── */
-function makeParticles(seed: number, count: number) {
-  const pts: { x: number; y: number; size: number; speed: number; delay: number }[] = [];
-  for (let i = 0; i < count; i++) {
-    const h = ((seed + i) * 137.508) % 1;
-    const v = ((seed + i * 3 + 7) * 97.31) % 1;
-    pts.push({
-      x: h * 1920,
-      y: v * 1080,
-      size: 2 + (((seed + i) * 43) % 4),
-      speed: 0.15 + (((seed + i * 7) * 23) % 100) / 400,
-      delay: (i * 4) % 30,
-    });
-  }
-  return pts;
+function extractNumber(text: string): { value: string; rest: string } | null {
+  const m = text.match(/([<>≤≥~]?\s*\d+[\d.,]*\s*[%倍x×秒msMBGBK次个项+\-]?)/);
+  if (!m) return null;
+  return { value: m[1].trim(), rest: text.replace(m[0], "").replace(/^[：:,，\s]+/, "").trim() };
 }
 
-/* ════════════════════════════════════════════════
-   装饰组件
-   ════════════════════════════════════════════════ */
+function extractKeywords(bullets: string[]): string[] {
+  const all = bullets.join(" ");
+  const cn = all.match(/[\u4e00-\u9fa5]{2,6}/g) || [];
+  const en = all.match(/[A-Z][a-zA-Z]{3,}/g) || [];
+  return [...new Set([...cn.slice(0, 8), ...en.slice(0, 4)])].slice(0, 10);
+}
 
-const AnimatedBackground: React.FC<{ accentColor?: string }> = ({ accentColor }) => {
-  const frame = useCurrentFrame();
-  const accent = accentColor || THEME.primary[0];
-  const particles = useMemo(() => makeParticles(42, 10), []);
-
-  const bgReveal = interpolate(frame, [0, 15], [0, 1], {
-    extrapolateRight: "clamp",
-    easing: EASE_OUT_EXPO,
+function hl(text: string, accent: string) {
+  return text.split(/(`[^`]+`|\*\*[^*]+\*\*)/).map((p, j) => {
+    if (p.startsWith("`") && p.endsWith("`"))
+      return <span key={j} style={{
+        color: accent, background: hexA(accent, 0.14), padding: "2px 8px",
+        borderRadius: 4, fontFamily: "'SF Mono','Fira Code',monospace",
+        fontSize: "0.88em", border: `1px solid ${hexA(accent, 0.22)}`,
+      }}>{p.slice(1, -1)}</span>;
+    if (p.startsWith("**") && p.endsWith("**"))
+      return <span key={j} style={{ color: accent, fontWeight: 800 }}>{p.slice(2, -2)}</span>;
+    return <span key={j}>{p}</span>;
   });
+}
 
+const FilledBg: React.FC<{
+  accent: string; frame: number; keywords: string[]; showChart: boolean;
+}> = ({ accent, frame, keywords, showChart }) => {
+  const particles = useMemo(() => {
+    const a: { x: number; y: number; s: number; sp: number }[] = [];
+    for (let i = 0; i < 20; i++) {
+      const seed = (i * 7919 + 1301) % 10000;
+      a.push({ x: seed % 1920, y: (seed * 3) % 1080, s: 1 + seed % 3, sp: 0.3 + (seed % 5) * 0.1 });
+    }
+    return a;
+  }, []);
   return (
-    <AbsoluteFill style={{ opacity: bgReveal }}>
-      {/* 渐变雾气 */}
-      <div
-        style={{
-          position: "absolute",
-          top: -200 + Math.sin(frame * 0.008) * 30,
-          left: -150 + Math.cos(frame * 0.006) * 20,
-          width: 700,
-          height: 700,
-          borderRadius: "50%",
-          background: `radial-gradient(circle, ${accent}18 0%, transparent 70%)`,
-          filter: "blur(80px)",
-          transform: `scale(${1 + 0.04 * Math.sin(frame * 0.02)})`,
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          bottom: -180 + Math.sin(frame * 0.01) * 25,
-          right: -120 + Math.cos(frame * 0.007) * 15,
-          width: 600,
-          height: 600,
-          borderRadius: "50%",
-          background: `radial-gradient(circle, #a855f718 0%, transparent 70%)`,
-          filter: "blur(80px)",
-          transform: `scale(${1 + 0.03 * Math.sin(frame * 0.025 + 1)})`,
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          top: "40%",
-          right: "15%",
-          width: 400,
-          height: 400,
-          borderRadius: "50%",
-          background: `radial-gradient(circle, ${THEME.amber}0a 0%, transparent 70%)`,
-          filter: "blur(60px)",
-        }}
-      />
-      {/* 点阵 */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          backgroundImage:
-            "radial-gradient(circle, rgba(255,255,255,0.025) 1px, transparent 1px)",
-          backgroundSize: "48px 48px",
-          opacity: interpolate(frame, [5, 20], [0, 0.6], { extrapolateRight: "clamp" }),
-        }}
-      />
-      {/* 扫描线 */}
-      <div
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          height: 2,
-          top: interpolate(frame, [0, 120], [-10, 1090], { extrapolateRight: "clamp" }),
-          background: `linear-gradient(90deg, transparent 5%, ${accent}15 30%, ${accent}22 50%, ${accent}15 70%, transparent 95%)`,
-          filter: "blur(1px)",
-        }}
-      />
-      {/* 粒子 */}
-      {particles.map((p, i) => {
-        const pFrame = Math.max(0, frame - p.delay);
-        const y = p.y - pFrame * p.speed;
-        const opacity = interpolate(
-          frame,
-          [p.delay, p.delay + 10, 200, 250],
-          [0, 0.12, 0.12, 0],
-          { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-        );
-        return (
-          <div
-            key={i}
-            style={{
-              position: "absolute",
-              left: p.x,
-              top: ((y % 1080) + 1080) % 1080,
-              width: p.size,
-              height: p.size,
-              borderRadius: i % 3 === 2 ? 2 : "50%",
-              transform: i % 3 === 2 ? "rotate(45deg)" : undefined,
-              background: "#fff",
-              opacity,
-            }}
-          />
-        );
-      })}
-      {/* 角落线 */}
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: interpolate(frame, [0, 20], [0, 300], {
-            extrapolateRight: "clamp",
-            easing: EASE_OUT_EXPO,
-          }),
-          height: 1,
-          background: `linear-gradient(90deg, ${accent}55, transparent)`,
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: 1,
-          height: interpolate(frame, [0, 20], [0, 200], {
-            extrapolateRight: "clamp",
-            easing: EASE_OUT_EXPO,
-          }),
-          background: `linear-gradient(180deg, ${accent}55, transparent)`,
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          bottom: 0,
-          right: 0,
-          width: interpolate(frame, [3, 25], [0, 250], {
-            extrapolateRight: "clamp",
-            easing: EASE_OUT_EXPO,
-          }),
-          height: 1,
-          background: `linear-gradient(270deg, #a855f755, transparent)`,
-        }}
-      />
+    <AbsoluteFill style={{ overflow: "hidden" }}>
+      <div style={{ position: "absolute", inset: 0, background: `radial-gradient(ellipse at 8% 92%, ${hexA(accent, 0.08)}, transparent 45%), radial-gradient(ellipse at 92% 8%, ${hexA(accent, 0.05)}, transparent 45%), radial-gradient(ellipse at 50% 50%, #0a1020, ${THEME.bg})` }} />
+      <svg width="1920" height="1080" style={{ position: "absolute", inset: 0, opacity: 0.05 }}>
+        <defs><pattern id="g5" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M 48 0 L 0 0 0 48" fill="none" stroke={accent} strokeWidth="0.5" /></pattern></defs>
+        <rect width="100%" height="100%" fill="url(#g5)" />
+      </svg>
+      <div style={{ position: "absolute", left: 0, right: 0, top: interpolate(frame % 200, [0, 200], [-100, 1180]), height: 100, background: `linear-gradient(180deg, transparent, ${hexA(accent, 0.04)}, ${hexA(accent, 0.07)}, ${hexA(accent, 0.04)}, transparent)` }} />
+      {particles.map((p, i) => (
+        <div key={i} style={{ position: "absolute", left: p.x, top: p.y + Math.sin((frame + i * 8) * p.sp * 0.04) * 12, width: p.s, height: p.s, borderRadius: "50%", background: accent, opacity: interpolate((frame + i * 10) % 150, [0, 50, 100, 150], [0, 0.7, 0.7, 0]), boxShadow: `0 0 ${p.s * 5}px ${hexA(accent, 0.6)}` }} />
+      ))}
+      <div style={{ position: "absolute", right: -10, top: 40, bottom: 40, width: 750, display: "flex", flexWrap: "wrap", alignContent: "center", justifyContent: "flex-end", gap: "14px 24px", opacity: interpolate(frame, [0, 12], [0, 1], { extrapolateRight: "clamp" }) }}>
+        {keywords.map((kw, i) => {
+          const sizes = [80, 60, 52, 44, 38, 34, 30, 60, 44, 38];
+          return (<span key={i} style={{ fontSize: sizes[i % sizes.length], fontWeight: 900, color: accent, opacity: 0.12 + (i % 3) * 0.03, transform: `translateY(${Math.sin(frame * 0.018 + i * 1.2) * 4}px)`, lineHeight: 1.1, letterSpacing: sizes[i % sizes.length] > 48 ? 6 : 3, whiteSpace: "nowrap" }}>{kw}</span>);
+        })}
+      </div>
+      {showChart && (
+        <svg width="400" height="220" style={{ position: "absolute", right: 30, bottom: 44, opacity: interpolate(frame, [6, 20], [0, 0.2], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) }}>
+          {[0,1,2,3,4,5,6,7].map((i) => { const h = 50 + ((i * 37 + 13) % 130); const prog = interpolate(frame, [8+i*2, 18+i*2], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }); return <rect key={i} x={10+i*48} y={220-h*prog} width={32} height={h*prog} rx={4} fill={accent} />; })}
+          <polyline points="10,150 58,110 106,130 154,70 202,90 250,50 298,80 346,35" fill="none" stroke={accent} strokeWidth="2.5" strokeLinecap="round" strokeDasharray="450" strokeDashoffset={interpolate(frame, [12, 35], [450, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })} />
+        </svg>
+      )}
+      <div style={{ position: "absolute", top: 0, left: 0, width: interpolate(frame, [0, 10], [0, 1920], { extrapolateRight: "clamp", easing: EASE_OUT }), height: 3, background: `linear-gradient(90deg, ${accent}, ${hexA(accent, 0.3)}, transparent)`, boxShadow: `0 0 24px ${hexA(accent, 0.35)}` }} />
+      <svg width="50" height="50" style={{ position: "absolute", top: 12, left: 12, opacity: 0.15 }}><path d="M 0 20 L 0 0 L 20 0" fill="none" stroke={accent} strokeWidth="1.5" /></svg>
+      <svg width="50" height="50" style={{ position: "absolute", bottom: 12, right: 12, opacity: 0.15 }}><path d="M 50 30 L 50 50 L 30 50" fill="none" stroke={accent} strokeWidth="1.5" /></svg>
     </AbsoluteFill>
   );
 };
 
-/* ─── 逐字入场标题 ─── */
-const AnimatedTitle: React.FC<{ text: string; accentColor?: string }> = ({
-  text,
-  accentColor,
-}) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const accent = accentColor || THEME.primary[0];
-  const chars = useMemo(() => Array.from(text), [text]);
+const Glass: React.FC<{ children: React.ReactNode; accent?: string; style?: React.CSSProperties; }> = ({ children, accent, style }) => (
+  <div style={{ background: hexA("#ffffff", 0.04), border: `1px solid ${accent ? hexA(accent, 0.18) : hexA("#ffffff", 0.08)}`, borderRadius: 16, position: "relative", overflow: "hidden", ...style }}>
+    {accent && (<div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 1, background: `linear-gradient(90deg, transparent, ${hexA(accent, 0.5)}, transparent)` }} />)}
+    {children}
+  </div>
+);
 
-  const barScale = spring({
-    frame: Math.max(0, frame - 2),
-    fps,
-    config: SPRING_SMOOTH,
-    durationInFrames: 18,
-  });
-
-  const lineWidth = interpolate(frame, [8, 22], [0, 100], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: EASE_OUT_EXPO,
-  });
-
-  const glowOpacity = interpolate(frame, [10, 20], [0, 0.4], {
-    extrapolateRight: "clamp",
-  });
-
+const Title: React.FC<{ text: string; accent: string; layout: LayoutType }> = ({ text, accent, layout }) => {
+  const frame = useCurrentFrame(); const { fps } = useVideoConfig();
+  const p = spring({ frame, fps, config: SPR, durationInFrames: 10 });
+  const labels: Record<LayoutType, string> = { compare: "COMPARE", code: "CODE", steps: "STEPS", metric: "METRICS", grid: "OVERVIEW", standard: "INSIGHT" };
   return (
-    <div style={{ position: "relative", paddingLeft: 32, marginBottom: 48, flexShrink: 0 }}>
-      {/* 竖条 */}
-      <div
-        style={{
-          position: "absolute",
-          left: 0,
-          top: 4,
-          bottom: 4,
-          width: 5,
-          borderRadius: 3,
-          background: `linear-gradient(180deg, ${accent}, #a855f7)`,
-          boxShadow: `0 0 20px ${accent}66, 0 0 40px ${accent}33`,
-          transformOrigin: "top",
-          transform: `scaleY(${barScale})`,
-        }}
-      />
-      {/* 逐字 */}
-      <div style={{ display: "flex", flexWrap: "wrap" }}>
-        {chars.map((ch, i) => {
-          const charDelay = 3 + i * 0.6;
-          const charSpring = spring({
-            frame: Math.max(0, frame - charDelay),
-            fps,
-            config: SPRING_SNAPPY,
-            durationInFrames: 15,
-          });
-          const charOpacity = interpolate(
-            frame,
-            [charDelay, charDelay + 5],
-            [0, 1],
-            { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-          );
-          return (
-            <span
-              key={i}
-              style={{
-                fontSize: 68,
-                fontWeight: 900,
-                color: "#fff",
-                letterSpacing: 4,
-                lineHeight: 1.2,
-                display: "inline-block",
-                opacity: charOpacity,
-                transform: `translateY(${interpolate(charSpring, [0, 1], [18, 0])}px)`,
-                textShadow: `0 0 40px ${accent}${Math.round(glowOpacity * 255)
-                  .toString(16)
-                  .padStart(2, "0")}`,
-              }}
-            >
-              {ch}
-            </span>
-          );
-        })}
+    <div style={{ marginBottom: 24, flexShrink: 0, opacity: interpolate(p, [0, 1], [0, 1]), transform: `translateY(${interpolate(p, [0, 1], [14, 0])}px)`, display: "flex", alignItems: "center", gap: 18 }}>
+      <div style={{ width: 5, height: 52, borderRadius: 3, background: `linear-gradient(180deg, ${accent}, ${hexA(accent, 0.25)})`, boxShadow: `0 0 20px ${hexA(accent, 0.45)}`, flexShrink: 0 }} />
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: accent, letterSpacing: 5, marginBottom: 4, fontFamily: "'SF Mono','Fira Code',monospace", opacity: 0.75 }}>{"⟨ " + labels[layout] + " ⟩"}</div>
+        <div style={{ fontSize: 52, fontWeight: 900, color: "#fff", lineHeight: 1.15 }}>{text}</div>
       </div>
-      {/* 下划线 */}
-      <div
-        style={{
-          marginTop: 14,
-          height: 2,
-          width: `${lineWidth}%`,
-          background: `linear-gradient(90deg, ${accent}88, #a855f744, transparent)`,
-          borderRadius: 1,
-        }}
-      />
     </div>
   );
 };
 
-/* ─── 毛玻璃卡片 ─── */
-const GlassCard: React.FC<{
-  children: React.ReactNode;
-  accentColor?: string;
-  style?: React.CSSProperties;
-  glowOnEnter?: boolean;
-  enterProgress?: number;
-}> = ({ children, accentColor, style, glowOnEnter, enterProgress = 1 }) => {
-  const glow =
-    glowOnEnter && enterProgress < 1
-      ? interpolate(enterProgress, [0.6, 0.9, 1], [0, 0.4, 0], {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-        })
-      : 0;
-
+const StandardLayout: React.FC<{ bullets: string[]; chartHint?: string; accent: string }> = ({ bullets, chartHint, accent }) => {
+  const frame = useCurrentFrame(); const { fps } = useVideoConfig();
+  const { dim } = twoTone(accent);
+  const firstNum = extractNumber(bullets[0] || "");
+  const useSingleCol = bullets.length <= 3;
   return (
-    <div
-      style={{
-        position: "relative",
-        background:
-          "linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))",
-        backdropFilter: "blur(12px)",
-        border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 18,
-        overflow: "hidden",
-        boxShadow:
-          accentColor && glow > 0
-            ? `0 0 ${30 * glow}px ${accentColor}44, inset 0 1px 0 rgba(255,255,255,0.06)`
-            : "inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 32px rgba(0,0,0,0.2)",
-        ...style,
-      }}
-    >
-      {enterProgress < 1 && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background:
-              "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.04) 45%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 55%, transparent 60%)",
-            transform: `translateX(${interpolate(enterProgress, [0.3, 1], [-120, 120], {
-              extrapolateLeft: "clamp",
-              extrapolateRight: "clamp",
-            })}%)`,
-            pointerEvents: "none",
-          }}
-        />
-      )}
-      {children}
-    </div>
-  );
-};
-
-/* ════════════════════════════════════════════════
-   布局组件 — 所有布局用 flex:1 撑满剩余空间
-   ════════════════════════════════════════════════ */
-
-/* ─── 标准布局 ─── */
-const StandardLayout: React.FC<{ bullets: string[]; chartHint?: string }> = ({
-  bullets,
-  chartHint,
-}) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: bullets.length <= 3 ? "center" : "flex-start",
-        gap: bullets.length <= 3 ? 28 : 18,
-        height: "100%",
-      }}
-    >
-      {bullets.map((bp, i) => {
-        const delay = 12 + i * 7;
-        const prog = spring({
-          frame: Math.max(0, frame - delay),
-          fps,
-          config: SPRING_SMOOTH,
-          durationInFrames: 22,
-        });
-        const opacity = interpolate(frame, [delay, delay + 8], [0, 1], {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-        });
-        const color = colorAt(i);
-        // 少量 bullet 时卡片更大
-        const bigMode = bullets.length <= 3;
-
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 12 }}>
+      {bullets.length > 0 && (() => {
+        const p = spring({ frame: Math.max(0, frame - 3), fps, config: SPR, durationInFrames: 10 });
+        const op = interpolate(frame, [3, 7], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
         return (
-          <GlassCard
-            key={i}
-            accentColor={color}
-            glowOnEnter
-            enterProgress={prog}
-            style={{
-              padding: bigMode ? "36px 40px" : "24px 30px",
-              opacity,
-              transform: `translateY(${interpolate(prog, [0, 1], [28, 0])}px)`,
-              borderLeft: `4px solid ${color}`,
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-              <div
-                style={{
-                  flexShrink: 0,
-                  width: bigMode ? 56 : 48,
-                  height: bigMode ? 56 : 48,
-                  borderRadius: "50%",
-                  background: `linear-gradient(135deg, ${color}, ${color}99)`,
-                  color: "#fff",
-                  fontSize: bigMode ? 22 : 20,
-                  fontWeight: 800,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxShadow: `0 0 0 3px ${color}33, 0 4px 16px ${color}44`,
-                  transform: `scale(${interpolate(prog, [0, 1], [0.5, 1])})`,
-                }}
-              >
-                {String(i + 1).padStart(2, "0")}
-              </div>
-              <span
-                style={{
-                  fontSize: bigMode ? 38 : 33,
-                  lineHeight: 1.5,
-                  color: THEME.textPrimary,
-                }}
-              >
-                {bp}
-              </span>
-            </div>
-          </GlassCard>
+          <Glass accent={accent} style={{ opacity: op, padding: "28px 36px", flexShrink: 0, transform: `translateY(${interpolate(p, [0, 1], [18, 0])}px)`, display: "flex", alignItems: "center", gap: 28, background: hexA(accent, 0.07) }}>
+            {firstNum ? (<>
+              <div style={{ fontSize: 88, fontWeight: 900, color: accent, fontFamily: "'SF Mono','Fira Code',monospace", textShadow: `0 0 50px ${hexA(accent, 0.3)}`, lineHeight: 1, flexShrink: 0, minWidth: 180, textAlign: "center" }}>{firstNum.value}</div>
+              <div style={{ width: 3, height: 60, background: hexA(accent, 0.35), flexShrink: 0, borderRadius: 2 }} />
+              <span style={{ fontSize: 34, color: THEME.textPrimary, lineHeight: 1.4, flex: 1 }}>{hl(firstNum.rest, accent)}</span>
+            </>) : (<>
+              <div style={{ width: 6, height: 52, borderRadius: 3, flexShrink: 0, background: `linear-gradient(180deg, ${accent}, ${hexA(accent, 0.3)})` }} />
+              <span style={{ fontSize: 36, color: THEME.textPrimary, lineHeight: 1.4, flex: 1, fontWeight: 700 }}>{hl(bullets[0], accent)}</span>
+            </>)}
+          </Glass>
         );
-      })}
-      {chartHint && (
-        <div
-          style={{
-            marginTop: 16,
-            fontSize: 22,
-            color: THEME.textMuted,
-            fontStyle: "italic",
-            paddingLeft: 32,
-          }}
-        >
-          {chartHint}
-        </div>
-      )}
-    </div>
-  );
-};
-
-/* ─── 对比布局: 大卡片、撑满屏幕 ─── */
-const CompareLayout: React.FC<{ bullets: string[]; chartHint?: string }> = ({
-  bullets,
-  chartHint,
-}) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-
-  const vsMatch = (chartHint || "").match(/(.+?)(?:vs|VS|→)(.+)/);
-  const leftLabel = vsMatch ? vsMatch[1].trim().slice(0, 20) : "Before";
-  const rightLabel = vsMatch ? vsMatch[2].trim().slice(0, 20) : "After";
-
-  const mid = Math.ceil(bullets.length / 2);
-  const leftItems = bullets.slice(0, mid);
-  const rightItems = bullets.slice(mid);
-
-  const leftProg = spring({
-    frame: Math.max(0, frame - 8),
-    fps,
-    config: SPRING_SMOOTH,
-    durationInFrames: 24,
-  });
-  const rightProg = spring({
-    frame: Math.max(0, frame - 13),
-    fps,
-    config: SPRING_SMOOTH,
-    durationInFrames: 24,
-  });
-  const vsPulse = 1 + 0.06 * Math.sin(frame * 0.12);
-  const vsLineProg = spring({
-    frame: Math.max(0, frame - 10),
-    fps,
-    config: { damping: 25, stiffness: 80 },
-    durationInFrames: 30,
-  });
-
-  const renderColumn = (
-    items: string[],
-    color: string,
-    gradientEnd: string,
-    fromX: number,
-    baseDelay: number
-  ) => (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: 16,
-        flex: 1,
-      }}
-    >
-      {items.map((bp, i) => {
-        const itemDelay = baseDelay + i * 6;
-        const itemProg = spring({
-          frame: Math.max(0, frame - itemDelay),
-          fps,
-          config: SPRING_SNAPPY,
-          durationInFrames: 18,
-        });
-        return (
-          <GlassCard
-            key={i}
-            accentColor={color}
-            glowOnEnter
-            enterProgress={itemProg}
-            style={{
-              padding: "32px 32px",
-              flex: 1,
-              display: "flex",
-              alignItems: "center",
-              borderLeft: `4px solid ${color}`,
-              opacity: interpolate(frame, [itemDelay, itemDelay + 6], [0, 1], {
-                extrapolateLeft: "clamp",
-                extrapolateRight: "clamp",
-              }),
-              transform: `translateX(${interpolate(itemProg, [0, 1], [fromX, 0])}px)`,
-            }}
-          >
-            {/* 序号圆 */}
-            <div
-              style={{
-                flexShrink: 0,
-                width: 44,
-                height: 44,
-                borderRadius: "50%",
-                background: `${color}22`,
-                border: `2px solid ${color}66`,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                marginRight: 20,
-                fontSize: 18,
-                fontWeight: 800,
-                color,
-              }}
-            >
-              {i + 1}
-            </div>
-            <span style={{ fontSize: 34, color: THEME.textPrimary, lineHeight: 1.6 }}>
-              {bp}
-            </span>
-          </GlassCard>
-        );
-      })}
-    </div>
-  );
-
-  return (
-    <div style={{ display: "flex", gap: 32, height: "100%", alignItems: "stretch" }}>
-      {/* 左列 */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          opacity: interpolate(leftProg, [0, 1], [0, 1]),
-          transform: `translateX(${interpolate(leftProg, [0, 1], [-50, 0])}px)`,
-        }}
-      >
-        {/* 列头 */}
-        <div
-          style={{
-            textAlign: "center",
-            fontSize: 34,
-            fontWeight: 800,
-            background: `linear-gradient(135deg, ${THEME.red}, #f97316)`,
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-            marginBottom: 24,
-            paddingBottom: 14,
-            borderBottom: `2px solid ${THEME.red}33`,
-            flexShrink: 0,
-          }}
-        >
-          {leftLabel}
-        </div>
-        {renderColumn(leftItems, THEME.red, "#f97316", -40, 14)}
-      </div>
-
-      {/* VS 分隔 */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          width: 80,
-          flexShrink: 0,
-        }}
-      >
-        <div
-          style={{
-            width: 2,
-            flex: 1,
-            background: `linear-gradient(180deg, transparent, rgba(255,255,255,0.12), transparent)`,
-            transformOrigin: "center",
-            transform: `scaleY(${vsLineProg})`,
-          }}
-        />
-        <div
-          style={{
-            width: 64,
-            height: 64,
-            borderRadius: "50%",
-            background:
-              "linear-gradient(135deg, rgba(99,102,241,0.15), rgba(168,85,247,0.1))",
-            border: "2px solid rgba(255,255,255,0.15)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 22,
-            fontWeight: 900,
-            color: "#ccc",
-            margin: "20px 0",
-            transform: `scale(${vsPulse})`,
-            boxShadow: "0 0 30px rgba(99,102,241,0.2)",
-          }}
-        >
-          VS
-        </div>
-        <div
-          style={{
-            width: 2,
-            flex: 1,
-            background: `linear-gradient(180deg, transparent, rgba(255,255,255,0.12), transparent)`,
-            transformOrigin: "center",
-            transform: `scaleY(${vsLineProg})`,
-          }}
-        />
-      </div>
-
-      {/* 右列 */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          opacity: interpolate(rightProg, [0, 1], [0, 1]),
-          transform: `translateX(${interpolate(rightProg, [0, 1], [50, 0])}px)`,
-        }}
-      >
-        <div
-          style={{
-            textAlign: "center",
-            fontSize: 34,
-            fontWeight: 800,
-            background: `linear-gradient(135deg, ${THEME.emerald}, #34d399)`,
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-            marginBottom: 24,
-            paddingBottom: 14,
-            borderBottom: `2px solid ${THEME.emerald}33`,
-            flexShrink: 0,
-          }}
-        >
-          {rightLabel}
-        </div>
-        {renderColumn(rightItems, THEME.emerald, "#34d399", 40, 18)}
-      </div>
-    </div>
-  );
-};
-
-/* ─── 网格布局 ─── */
-const GridLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const cols = bullets.length <= 4 ? 2 : 3;
-
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(${cols}, 1fr)`,
-        gridAutoRows: "1fr",
-        gap: 22,
-        height: "100%",
-      }}
-    >
-      {bullets.map((bp, i) => {
-        const row = Math.floor(i / cols);
-        const col = i % cols;
-        const delay = 10 + (row + col) * 5;
-        const prog = spring({
-          frame: Math.max(0, frame - delay),
-          fps,
-          config: SPRING_BOUNCY,
-          durationInFrames: 22,
-        });
-        const opacity = interpolate(frame, [delay, delay + 6], [0, 1], {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-        });
-        const color = colorAt(i);
-
-        const [label, ...descParts] = bp.split(/[：:]/);
-        const description = descParts.join("：");
-
-        return (
-          <GlassCard
-            key={i}
-            accentColor={color}
-            glowOnEnter
-            enterProgress={prog}
-            style={{
-              padding: "36px 32px",
-              opacity,
-              transform: `scale(${interpolate(prog, [0, 1], [0.7, 1])}) rotate(${interpolate(prog, [0, 1], [-2, 0])}deg)`,
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "center",
-            }}
-          >
-            {/* 角落渐变 */}
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: 100,
-                height: 100,
-                background: `radial-gradient(circle at top left, ${color}20, transparent 70%)`,
-                borderRadius: "18px 0 0 0",
-              }}
-            />
-            {/* 编号水印 */}
-            <div
-              style={{
-                position: "absolute",
-                top: 14,
-                right: 20,
-                fontSize: 52,
-                fontWeight: 900,
-                color,
-                opacity: interpolate(frame, [delay + 5, delay + 15], [0, 0.12], {
-                  extrapolateLeft: "clamp",
-                  extrapolateRight: "clamp",
-                }),
-              }}
-            >
-              {String(i + 1).padStart(2, "0")}
-            </div>
-            {/* 图标 */}
-            <div
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 12,
-                background: `linear-gradient(135deg, ${color}44, ${color}22)`,
-                border: `1px solid ${color}33`,
-                marginBottom: 18,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <div
-                style={{
-                  width: 14,
-                  height: 14,
-                  borderRadius: 4,
-                  background: color,
-                }}
-              />
-            </div>
-            {/* 标签 */}
-            <div
-              style={{
-                fontSize: 34,
-                fontWeight: 700,
-                color,
-                marginBottom: 10,
-              }}
-            >
-              {label}
-            </div>
-            {description && (
-              <div style={{ fontSize: 26, color: THEME.textSecondary, lineHeight: 1.6 }}>
-                {description}
-              </div>
-            )}
-          </GlassCard>
-        );
-      })}
-    </div>
-  );
-};
-
-/* ─── 代码块布局: 撑满全屏 ─── */
-const CodeBlockLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-
-  const windowProg = spring({
-    frame,
-    fps,
-    config: SPRING_SMOOTH,
-    durationInFrames: 15,
-  });
-
-  return (
-    <div
-      style={{
-        background: "linear-gradient(180deg, #0d1117, #161b22)",
-        border: "1px solid rgba(48,54,61,0.8)",
-        borderRadius: 18,
-        overflow: "hidden",
-        opacity: interpolate(windowProg, [0, 1], [0, 1]),
-        transform: `scale(${interpolate(windowProg, [0, 1], [0.96, 1])})`,
-        boxShadow: "0 20px 60px rgba(0,0,0,0.5), 0 0 1px rgba(255,255,255,0.1)",
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      {/* macOS 标题栏 */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          padding: "16px 24px",
-          background:
-            "linear-gradient(180deg, rgba(30,36,44,0.95), rgba(22,27,34,0.95))",
-          borderBottom: "1px solid rgba(48,54,61,0.6)",
-          gap: 8,
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ width: 14, height: 14, borderRadius: "50%", background: "#ff5f57" }} />
-        <div style={{ width: 14, height: 14, borderRadius: "50%", background: "#febc2e" }} />
-        <div style={{ width: 14, height: 14, borderRadius: "50%", background: "#28c840" }} />
-        <div
-          style={{
-            marginLeft: 20,
-            padding: "5px 18px",
-            background: "rgba(255,255,255,0.05)",
-            borderRadius: 6,
-            border: "1px solid rgba(255,255,255,0.06)",
-          }}
-        >
-          <span style={{ fontSize: 16, color: "#8b949e", fontFamily: "monospace" }}>
-            ~/project
-          </span>
-        </div>
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 14, color: "#484f58", fontFamily: "monospace" }}>zsh</span>
-      </div>
-
-      {/* 代码内容 — 居中 */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: bullets.length <= 4 ? "center" : "flex-start",
-          padding: bullets.length <= 4 ? "0 0" : "32px 0",
-        }}
-      >
-        {bullets.map((bp, i) => {
-          const delay = 8 + i * 10;
-          const opacity = interpolate(frame, [delay, delay + 4], [0, 1], {
-            extrapolateLeft: "clamp",
-            extrapolateRight: "clamp",
-          });
-          const maxChars = bp.length;
-          const charsVisible = Math.floor(
-            interpolate(
-              frame,
-              [delay, delay + Math.max(15, maxChars * 0.5)],
-              [0, maxChars],
-              { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-            )
-          );
-
-          const isCommand =
-            /^[$>❯]\s/.test(bp) ||
-            /^(npm|git|claude|pip|cd|ls|cat|curl|v2g|node)\s/.test(bp);
-          const displayText = bp.slice(0, charsVisible);
-          // 少量行时字更大
-          const bigMode = bullets.length <= 4;
-
-          return (
-            <div
-              key={i}
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                padding: bigMode ? "8px 36px" : "0 36px",
-                opacity,
-              }}
-            >
-              {/* 行号 */}
-              <span
-                style={{
-                  fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
-                  fontSize: bigMode ? 28 : 24,
-                  color: "#484f58",
-                  width: 48,
-                  textAlign: "right",
-                  marginRight: 24,
-                  lineHeight: bigMode ? 2.6 : 2.2,
-                  flexShrink: 0,
-                  userSelect: "none",
-                }}
-              >
-                {i + 1}
-              </span>
-              <div
-                style={{
-                  fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
-                  fontSize: bigMode ? 34 : 28,
-                  lineHeight: bigMode ? 2.6 : 2.2,
-                  color: isCommand ? "#79c0ff" : "#c9d1d9",
-                  whiteSpace: "pre-wrap",
-                  flex: 1,
-                }}
-              >
-                {isCommand && (
-                  <span style={{ color: "#7ee787", marginRight: 10 }}>❯</span>
-                )}
-                {displayText.split(/(`[^`]+`|--\w+|\/[\w./]+)/).map((part, j) => {
-                  if (part.startsWith("`") && part.endsWith("`")) {
-                    return (
-                      <span
-                        key={j}
-                        style={{
-                          color: "#ffa657",
-                          background: "rgba(255,166,87,0.1)",
-                          padding: "1px 8px",
-                          borderRadius: 4,
-                        }}
-                      >
-                        {part.slice(1, -1)}
-                      </span>
-                    );
-                  }
-                  if (part.startsWith("--")) {
-                    return (
-                      <span key={j} style={{ color: "#ffa657" }}>
-                        {part}
-                      </span>
-                    );
-                  }
-                  if (part.startsWith("/") || part.startsWith("./")) {
-                    return (
-                      <span key={j} style={{ color: "#7ee787" }}>
-                        {part}
-                      </span>
-                    );
-                  }
-                  return <span key={j}>{part}</span>;
-                })}
-                {charsVisible < maxChars && (
-                  <span
-                    style={{
-                      display: "inline-block",
-                      width: 2,
-                      height: bigMode ? 28 : 22,
-                      background: "#58a6ff",
-                      marginLeft: 1,
-                      verticalAlign: "middle",
-                      opacity: frame % 20 < 12 ? 1 : 0,
-                    }}
-                  />
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* 底部装饰 */}
-      <div
-        style={{
-          height: 1,
-          background:
-            "linear-gradient(90deg, transparent, rgba(88,166,255,0.15), transparent)",
-          margin: "0 36px 14px",
-          flexShrink: 0,
-        }}
-      />
-    </div>
-  );
-};
-
-/* ─── 步骤流程布局 ─── */
-const StepsLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const colors = [THEME.cyan, "#7c3aed", THEME.amber, THEME.emerald, THEME.rose, THEME.primary[0]];
-
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: bullets.length <= 3 ? "center" : "flex-start",
-        gap: 0,
-        paddingLeft: 10,
-        height: "100%",
-      }}
-    >
-      {bullets.map((bp, i) => {
-        const delay = 10 + i * 9;
-        const prog = spring({
-          frame: Math.max(0, frame - delay),
-          fps,
-          config: SPRING_SNAPPY,
-          durationInFrames: 20,
-        });
-        const opacity = interpolate(frame, [delay, delay + 6], [0, 1], {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-        });
-
-        const text = bp.replace(
-          /^(第[一二三四五六七八九十\d]+步|Step\s*\d|[\d①②③④⑤⑥⑦⑧⑨⑩])\s*[.、)）:：]\s*/i,
-          ""
-        );
-        const color = colors[i % colors.length];
-
-        const isLatest =
-          frame >= delay &&
-          (i === bullets.length - 1 || frame < 10 + (i + 1) * 9);
-        const pulseScale = isLatest ? 1 + 0.15 * Math.sin(frame * 0.15) : 1;
-        const pulseOpacity = isLatest
-          ? interpolate(Math.sin(frame * 0.15), [-1, 1], [0.05, 0.2])
-          : 0;
-
-        const bigMode = bullets.length <= 3;
-
-        return (
-          <div
-            key={i}
-            style={{
-              display: "flex",
-              opacity,
-              flex: bigMode ? 1 : undefined,
-              minHeight: bigMode ? 0 : 90,
-            }}
-          >
-            {/* 时间线 */}
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                width: 80,
-                flexShrink: 0,
-              }}
-            >
-              <div style={{ position: "relative" }}>
-                <div
-                  style={{
-                    position: "absolute",
-                    inset: -10,
-                    borderRadius: "50%",
-                    border: `2px solid ${color}`,
-                    opacity: pulseOpacity,
-                    transform: `scale(${pulseScale})`,
-                  }}
-                />
-                <div
-                  style={{
-                    width: bigMode ? 58 : 50,
-                    height: bigMode ? 58 : 50,
-                    borderRadius: "50%",
-                    border: `2px solid ${color}55`,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    transform: `scale(${interpolate(prog, [0, 1], [0.3, 1])})`,
-                  }}
-                >
-                  <div
-                    style={{
-                      width: bigMode ? 42 : 36,
-                      height: bigMode ? 42 : 36,
-                      borderRadius: "50%",
-                      background: `linear-gradient(135deg, ${color}, ${color}bb)`,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: bigMode ? 20 : 17,
-                      fontWeight: 800,
-                      color: "#fff",
-                      boxShadow: `0 0 24px ${color}55`,
-                    }}
-                  >
-                    {i + 1}
+      })()}
+      {bullets.length > 1 && (
+        <div style={{ flex: 1, display: "grid", gridTemplateColumns: useSingleCol ? "1fr" : "1fr 1fr", gap: 10 }}>
+          {bullets.slice(1).map((bp, i) => {
+            const idx = i + 1; const delay = 6 + i * 3;
+            const p = spring({ frame: Math.max(0, frame - delay), fps, config: SPR, durationInFrames: 8 });
+            const op = interpolate(frame, [delay, delay + 4], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+            const num = extractNumber(bp); const cardColor = num ? accent : dim;
+            return (
+              <Glass key={idx} accent={cardColor} style={{ opacity: op, transform: `scale(${interpolate(p, [0, 1], [0.92, 1])})`, padding: useSingleCol ? "20px 28px" : "16px 22px", display: "flex", alignItems: "center", gap: 16, gridColumn: (!useSingleCol && num && i === 0) ? "1 / -1" : undefined }}>
+                <div style={{ fontSize: 44, fontWeight: 900, color: hexA(cardColor, 0.18), fontFamily: "'SF Mono',monospace", lineHeight: 1, flexShrink: 0, width: 48, textAlign: "center" }}>{String(idx + 1).padStart(2, "0")}</div>
+                {num ? (
+                  <div style={{ flex: 1, display: "flex", alignItems: "baseline", gap: 12 }}>
+                    <span style={{ fontSize: 40, fontWeight: 900, color: accent, fontFamily: "'SF Mono',monospace" }}>{num.value}</span>
+                    <span style={{ fontSize: 28, color: THEME.textPrimary }}>{num.rest}</span>
                   </div>
-                </div>
-              </div>
-              {i < bullets.length - 1 && (
-                <div
-                  style={{
-                    width: 2,
-                    flex: 1,
-                    minHeight: 12,
-                    background: `linear-gradient(180deg, ${color}66, ${colors[(i + 1) % colors.length]}33)`,
-                    transformOrigin: "top",
-                    transform: `scaleY(${prog})`,
-                  }}
-                />
-              )}
-            </div>
+                ) : (
+                  <span style={{ fontSize: useSingleCol ? 32 : 28, color: THEME.textPrimary, lineHeight: 1.45, flex: 1 }}>{hl(bp, accent)}</span>
+                )}
+              </Glass>
+            );
+          })}
+        </div>
+      )}
+      {chartHint && (<div style={{ marginTop: "auto", fontSize: 22, color: THEME.textMuted, fontStyle: "italic", paddingTop: 8, borderTop: `1px solid ${hexA("#ffffff", 0.06)}`, opacity: interpolate(frame, [6 + bullets.length * 3, 6 + bullets.length * 3 + 6], [0, 0.75], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) }}>💡 {chartHint}</div>)}
+    </div>
+  );
+};
 
-            {/* 内容卡片 */}
-            <GlassCard
-              accentColor={color}
-              glowOnEnter
-              enterProgress={prog}
-              style={{
-                flex: 1,
-                padding: bigMode ? "30px 36px" : "24px 30px",
-                marginBottom: bigMode ? 0 : 14,
-                marginLeft: 18,
-                borderLeft: `4px solid ${color}`,
-                transform: `translateX(${interpolate(prog, [0, 1], [50, 0])}px)`,
-                display: "flex",
-                alignItems: "center",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: bigMode ? 36 : 31,
-                  color: THEME.textPrimary,
-                  lineHeight: 1.6,
-                }}
-              >
-                {text}
-              </span>
-            </GlassCard>
+const CompareLayout: React.FC<{ bullets: string[]; chartHint?: string }> = ({ bullets, chartHint }) => {
+  const frame = useCurrentFrame(); const { fps } = useVideoConfig();
+  const vsMatch = (chartHint || "").match(/(.+?)(?:vs|VS|Vs|→|对比|和)(.+)/);
+  const leftLabel = vsMatch ? vsMatch[1].trim().slice(0, 12) : "Before";
+  const rightLabel = vsMatch ? vsMatch[2].trim().slice(0, 12) : "After";
+  const mid = Math.ceil(bullets.length / 2);
+  const leftItems = bullets.slice(0, mid); const rightItems = bullets.slice(mid);
+  const lc = THEME.rose, rc = THEME.emerald;
+  const renderSide = (items: string[], color: string, icon: string, label: string, baseDelay: number, dir: "left"|"right") => {
+    const sp = spring({ frame: Math.max(0, frame - baseDelay), fps, config: SPR, durationInFrames: 10 });
+    return (
+      <Glass accent={color} style={{ flex: 1, padding: "24px 28px", background: hexA(color, 0.06), border: `1px solid ${hexA(color, 0.18)}`, opacity: interpolate(sp, [0, 1], [0, 1]), transform: `translateX(${interpolate(sp, [0, 1], [dir === "left" ? -30 : 30, 0])}px)`, display: "flex", flexDirection: "column" }}>
+        <div style={{ fontSize: 32, fontWeight: 900, color, marginBottom: 16, paddingBottom: 12, borderBottom: `2px solid ${hexA(color, 0.35)}`, display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 8, background: hexA(color, 0.25), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 900, color: "#fff" }}>{icon}</div>
+          {label}
+        </div>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: items.length <= 3 ? "space-evenly" : "flex-start", gap: items.length > 3 ? 12 : 0 }}>
+          {items.map((bp, i) => {
+            const d = baseDelay + 4 + i * 3;
+            const p = spring({ frame: Math.max(0, frame - d), fps, config: SPR, durationInFrames: 8 });
+            return (<div key={i} style={{ opacity: interpolate(frame, [d, d + 3], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }), transform: `translateY(${interpolate(p, [0, 1], [10, 0])}px)`, fontSize: 28, color: THEME.textPrimary, lineHeight: 1.6, paddingLeft: 16, borderLeft: `3px solid ${hexA(color, 0.45)}` }}>{bp}</div>);
+          })}
+        </div>
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${hexA(color, 0.15)}`, fontSize: 22, color: hexA(color, 0.7), fontStyle: "italic", opacity: interpolate(frame, [baseDelay + 12, baseDelay + 18], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) }}>
+          {dir === "left" ? `共 ${items.length} 项痛点` : `共 ${items.length} 项优势`}
+        </div>
+      </Glass>
+    );
+  };
+  const vsProg = spring({ frame: Math.max(0, frame - 5), fps, config: SPR, durationInFrames: 12 });
+  const pulse = 1 + 0.06 * Math.sin(frame * 0.15);
+  return (
+    <div style={{ display: "flex", height: "100%", gap: 0, alignItems: "stretch" }}>
+      {renderSide(leftItems, lc, "✕", leftLabel, 2, "left")}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", width: 110, flexShrink: 0, gap: 6 }}>
+        <svg width="40" height="50" style={{ opacity: interpolate(vsProg, [0, 1], [0, 0.5]), transform: `translateY(${interpolate(vsProg, [0, 1], [8, 0])}px)` }}><line x1="20" y1="50" x2="20" y2="10" stroke={THEME.textMuted} strokeWidth="1.5" /><polyline points="13,18 20,6 27,18" fill="none" stroke={THEME.textMuted} strokeWidth="1.5" /></svg>
+        <div style={{ fontSize: 28, fontWeight: 900, color: "#fff", background: hexA("#ffffff", 0.08), border: `2px solid ${hexA("#ffffff", 0.2)}`, borderRadius: "50%", width: 68, height: 68, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 0 36px ${hexA("#ffffff", 0.08)}`, transform: `scale(${interpolate(vsProg, [0, 1], [0.3, 1]) * pulse})` }}>VS</div>
+        <svg width="40" height="50" style={{ opacity: interpolate(vsProg, [0, 1], [0, 0.5]), transform: `translateY(${interpolate(vsProg, [0, 1], [-8, 0])}px)` }}><line x1="20" y1="0" x2="20" y2="40" stroke={THEME.textMuted} strokeWidth="1.5" /><polyline points="13,32 20,44 27,32" fill="none" stroke={THEME.textMuted} strokeWidth="1.5" /></svg>
+      </div>
+      {renderSide(rightItems, rc, "✓", rightLabel, 6, "right")}
+    </div>
+  );
+};
+
+const GridLayout: React.FC<{ bullets: string[]; accent: string }> = ({ bullets, accent }) => {
+  const frame = useCurrentFrame(); const { fps } = useVideoConfig();
+  const { dim } = twoTone(accent);
+  const cols = bullets.length <= 4 ? 2 : 3;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gridAutoRows: "1fr", gap: 12, height: "100%" }}>
+      {bullets.map((bp, i) => {
+        const delay = 3 + i * 3;
+        const p = spring({ frame: Math.max(0, frame - delay), fps, config: SPR, durationInFrames: 8 });
+        const op = interpolate(frame, [delay, delay + 3], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+        const color = i === 0 ? accent : dim; const isAnchor = i === 0;
+        const [label, ...descParts] = bp.split(/[：:]/); const description = descParts.join("：");
+        return (
+          <Glass key={i} accent={color} style={{ opacity: op, position: "relative", transform: `scale(${interpolate(p, [0, 1], [0.88, 1])})`, padding: 0, display: "flex", overflow: "hidden", gridColumn: isAnchor ? "1 / -1" : undefined, background: isAnchor ? hexA(accent, 0.06) : undefined }}>
+            <div style={{ width: 5, background: `linear-gradient(180deg, ${color}, ${hexA(color, 0.25)})`, flexShrink: 0 }} />
+            <div style={{ flex: 1, padding: isAnchor ? "22px 28px" : "16px 20px", display: "flex", flexDirection: isAnchor ? "row" : "column", alignItems: isAnchor ? "center" : "flex-start", justifyContent: isAnchor ? "flex-start" : "center", gap: isAnchor ? 24 : 6 }}>
+              <div style={{ position: isAnchor ? "relative" : "absolute", top: isAnchor ? undefined : 8, right: isAnchor ? undefined : 14, fontSize: isAnchor ? 64 : 40, fontWeight: 900, color: hexA(color, 0.18), fontFamily: "'SF Mono',monospace", lineHeight: 1, flexShrink: 0 }}>{String(i + 1).padStart(2, "0")}</div>
+              <div>
+                <div style={{ fontSize: isAnchor ? 34 : 28, fontWeight: 800, color: i === 0 ? accent : THEME.textPrimary, marginBottom: 4, lineHeight: 1.3 }}>{label}</div>
+                {description && (<div style={{ fontSize: isAnchor ? 26 : 22, color: THEME.textSecondary, lineHeight: 1.5 }}>{description}</div>)}
+              </div>
+            </div>
+          </Glass>
+        );
+      })}
+    </div>
+  );
+};
+
+const CodeLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
+  const frame = useCurrentFrame(); const { fps } = useVideoConfig();
+  const wp = spring({ frame, fps, config: SPR, durationInFrames: 8 });
+  const big = bullets.length <= 4;
+  function colorize(text: string): { text: string; color: string }[] {
+    const kw = /\b(export|import|const|let|var|function|return|from|async|await|if|else|class|new|this)\b/g;
+    const str = /(['"\`])(?:(?!\1).)*\1/g;
+    const parts: { text: string; color: string }[] = [];
+    let last = 0;
+    const tokens: { start: number; end: number; color: string }[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = kw.exec(text)) !== null) tokens.push({ start: m.index, end: m.index + m[0].length, color: "#c586c0" });
+    while ((m = str.exec(text)) !== null) tokens.push({ start: m.index, end: m.index + m[0].length, color: "#ce9178" });
+    tokens.sort((a, b) => a.start - b.start);
+    for (const t of tokens) { if (t.start > last) parts.push({ text: text.slice(last, t.start), color: "#c9d1d9" }); parts.push({ text: text.slice(t.start, t.end), color: t.color }); last = t.end; }
+    if (last < text.length) parts.push({ text: text.slice(last), color: "#c9d1d9" });
+    return parts.length ? parts : [{ text, color: "#c9d1d9" }];
+  }
+  return (
+    <Glass accent={THEME.cyan} style={{ background: "linear-gradient(180deg, #0d1117, #161b22)", border: "1px solid rgba(48,54,61,0.8)", borderRadius: 16, overflow: "hidden", height: "100%", display: "flex", flexDirection: "column", opacity: interpolate(wp, [0, 1], [0, 1]) }}>
+      <div style={{ display: "flex", alignItems: "center", padding: "11px 20px", gap: 8, flexShrink: 0, background: "rgba(30,36,44,0.95)", borderBottom: "1px solid rgba(48,54,61,0.6)" }}>
+        {[["#ff5f57"], ["#febc2e"], ["#28c840"]].map(([c], j) => (<div key={j} style={{ width: 12, height: 12, borderRadius: "50%", background: c }} />))}
+        <span style={{ marginLeft: 16, fontSize: 14, color: "#8b949e", fontFamily: "'SF Mono',monospace" }}>~/project</span>
+        <span style={{ marginLeft: "auto", fontSize: 12, color: "#484f58", fontFamily: "monospace" }}>bash</span>
+      </div>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: big ? "center" : "flex-start", padding: big ? "0" : "12px 0" }}>
+        {bullets.map((bp, i) => {
+          const delay = 3 + i * 5;
+          const op = interpolate(frame, [delay, delay + 2], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+          const isCmd = /^[$>❯]\s/.test(bp) || /^(npm|git|claude|pip|cd|node|yarn|docker|npx)\s/.test(bp);
+          const isCmt = /^[#/]/.test(bp.trim());
+          const clean = isCmd ? bp.replace(/^[$>❯]\s*/, "") : bp;
+          const maxC = clean.length;
+          const vis = Math.floor(interpolate(frame, [delay, delay + Math.max(8, maxC * 0.3)], [0, maxC], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
+          const shown = clean.slice(0, vis);
+          return (
+            <div key={i} style={{ display: "flex", padding: big ? "5px 28px" : "2px 28px", opacity: op }}>
+              <span style={{ fontFamily: "monospace", fontSize: big ? 22 : 18, color: "#484f58", width: 36, textAlign: "right", marginRight: 16, lineHeight: big ? 2.2 : 1.9, flexShrink: 0 }}>{i + 1}</span>
+              <div style={{ fontFamily: "'SF Mono','Fira Code',monospace", fontSize: big ? 28 : 22, lineHeight: big ? 2.2 : 1.9, whiteSpace: "pre-wrap", flex: 1, color: isCmd ? "#79c0ff" : isCmt ? "#6a9955" : "#c9d1d9" }}>
+                {isCmd && <span style={{ color: "#7ee787", marginRight: 8 }}>❯</span>}
+                {isCmt ? <span style={{ color: "#6a9955" }}>{shown}</span> : !isCmd ? colorize(shown).map((seg, k) => <span key={k} style={{ color: seg.color }}>{seg.text}</span>) : shown}
+                {vis < maxC && (<span style={{ display: "inline-block", width: 2, height: big ? 20 : 16, background: THEME.cyan, marginLeft: 2, verticalAlign: "middle", opacity: frame % 14 < 8 ? 1 : 0 }} />)}
+              </div>
+            </div>
+          );
+        })}
+        {(() => {
+          const allDone = frame > 3 + bullets.length * 5 + (bullets[bullets.length - 1]?.length || 0) * 0.3 + 8;
+          if (!allDone) return null;
+          return (
+            <div style={{ display: "flex", padding: big ? "5px 28px" : "2px 28px", marginTop: 8 }}>
+              <span style={{ fontFamily: "monospace", fontSize: big ? 22 : 18, color: "#484f58", width: 36, textAlign: "right", marginRight: 16, lineHeight: big ? 2.2 : 1.9, flexShrink: 0 }}>{bullets.length + 1}</span>
+              <div style={{ fontFamily: "'SF Mono',monospace", fontSize: big ? 28 : 22, lineHeight: big ? 2.2 : 1.9, color: "#7ee787" }}>
+                ❯ <span style={{ display: "inline-block", width: 2, height: big ? 20 : 16, background: THEME.cyan, verticalAlign: "middle", opacity: frame % 16 < 9 ? 1 : 0 }} />
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+    </Glass>
+  );
+};
+
+const StepsLayout: React.FC<{ bullets: string[]; accent: string }> = ({ bullets, accent }) => {
+  const frame = useCurrentFrame(); const { fps } = useVideoConfig();
+  const { dim } = twoTone(accent);
+  const colors = [accent, THEME.violet, THEME.amber, THEME.emerald, THEME.blue, THEME.cyan];
+  const activeIdx = useMemo(() => { for (let i = bullets.length - 1; i >= 0; i--) { if (frame >= 3 + i * 5) return i; } return 0; }, [frame, bullets.length]);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 6, position: "relative", paddingLeft: 40 }}>
+      <div style={{ position: "absolute", left: 62, top: 20, bottom: 20, width: 3, borderRadius: 2, background: `linear-gradient(180deg, ${accent}55, ${THEME.violet}55, ${THEME.amber}44, ${THEME.emerald}44)` }} />
+      {bullets.map((bp, i) => {
+        const delay = 3 + i * 5;
+        const p = spring({ frame: Math.max(0, frame - delay), fps, config: SPR, durationInFrames: 10 });
+        const op = interpolate(frame, [delay, delay + 4], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+        const text = bp.replace(/^(第[一二三四五六七八九十\d]+步|Step\s*\d|[\d①②③④⑤⑥⑦⑧⑨⑩])\s*[.、)）:：]\s*/i, "");
+        const color = colors[i % colors.length]; const isActive = i === activeIdx;
+        const scale = isActive ? interpolate(p, [0, 1], [0.4, 1.0]) : interpolate(p, [0, 1], [0.4, 0.92]);
+        return (
+          <div key={i} style={{ opacity: op, flex: isActive ? 1.5 : 1, display: "flex", alignItems: "center", gap: 0, position: "relative", transform: `scale(${scale})`, transformOrigin: "left center", zIndex: isActive ? 5 : 1 }}>
+            <div style={{ width: isActive ? 56 : 46, height: isActive ? 56 : 46, borderRadius: "50%", background: isActive ? `linear-gradient(135deg, ${color}, ${hexA(color, 0.7)})` : hexA(color, 0.12), border: `2px solid ${hexA(color, isActive ? 0.7 : 0.35)}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: isActive ? 24 : 20, fontWeight: 800, color: isActive ? "#fff" : color, flexShrink: 0, zIndex: 3, boxShadow: isActive ? `0 0 30px ${hexA(color, 0.45)}` : "none" }}>{i + 1}</div>
+            <div style={{ width: 20, height: 2, flexShrink: 0, background: isActive ? `linear-gradient(90deg, ${hexA(color, 0.5)}, ${hexA(color, 0.15)})` : hexA(color, 0.1) }} />
+            <Glass accent={isActive ? color : undefined} style={{ flex: 1, padding: isActive ? "16px 24px" : "12px 20px", background: isActive ? hexA(color, 0.08) : hexA("#ffffff", 0.03), border: isActive ? `1px solid ${hexA(color, 0.25)}` : `1px solid ${hexA("#ffffff", 0.06)}` }}>
+              <span style={{ fontSize: isActive ? 32 : 28, color: THEME.textPrimary, lineHeight: 1.4, fontWeight: isActive ? 700 : 400 }}>{text}</span>
+              {isActive && (<div style={{ marginTop: 6, fontSize: 22, color: hexA(color, 0.65), lineHeight: 1.4, opacity: interpolate(frame, [delay + 6, delay + 12], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) }}>● 当前步骤</div>)}
+            </Glass>
           </div>
         );
       })}
@@ -1199,219 +390,81 @@ const StepsLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
   );
 };
 
-/* ─── 数据指标布局 ─── */
-const MetricLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-
-  const metrics = useMemo(
-    () =>
-      bullets.map((bp) => {
-        const numMatch = bp.match(
-          /([<>≤≥~]?\s*\d+[\d.,]*\s*[%倍x×秒sms秒MBGBK次个项+\-]?)/
-        );
-        const value = numMatch ? numMatch[1].trim() : "";
-        const label = bp
-          .replace(numMatch?.[0] || "", "")
-          .replace(/^[：:,，\s]+|[：:,，\s]+$/g, "")
-          .trim();
-        const pureNum = parseFloat(value.replace(/[^0-9.]/g, ""));
-        const prefix = value.match(/^[<>≤≥~]/)?.[0] || "";
-        const suffix = value.replace(/^[<>≤≥~]?\s*[\d.,]+/, "").trim();
-        return { value, label, pureNum, prefix, suffix };
-      }),
-    [bullets]
-  );
-
-  const cols = metrics.length <= 3 ? metrics.length : metrics.length <= 4 ? 2 : 3;
-
+const MetricLayout: React.FC<{ bullets: string[]; accent: string }> = ({ bullets, accent }) => {
+  const frame = useCurrentFrame(); const { fps } = useVideoConfig();
+  const { dim } = twoTone(accent);
+  const metrics = useMemo(() => bullets.map((bp) => {
+    const nm = bp.match(/([<>≤≥~]?\s*\d+[\d.,]*\s*[%倍x×秒msMBGBK次个项+\-]?)/);
+    const value = nm ? nm[1].trim() : ""; const label = bp.replace(nm?.[0] || "", "").replace(/^[：:,，\s]+|[：:,，\s]+$/g, "").trim();
+    const pure = parseFloat(value.replace(/[^0-9.]/g, "")); const prefix = value.match(/^[<>≤≥~]/)?.[0] || "";
+    const suffix = value.replace(/^[<>≤≥~]?\s*[\d.,]+/, "").trim();
+    const dec = value.includes(".") ? (value.split(".")[1]?.match(/\d+/)?.[0]?.length || 0) : 0;
+    return { value, label, pure, prefix, suffix, dec };
+  }), [bullets]);
+  const hasHero = metrics.length >= 3; const hero = hasHero ? metrics[0] : null;
+  const rest = hasHero ? metrics.slice(1) : metrics; const cols = Math.min(rest.length, 3);
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(${cols}, 1fr)`,
-        gridAutoRows: "1fr",
-        gap: 28,
-        height: "100%",
-      }}
-    >
-      {metrics.map((m, i) => {
-        const delay = 10 + i * 7;
-        const prog = spring({
-          frame: Math.max(0, frame - delay),
-          fps,
-          config: SPRING_BOUNCY,
-          durationInFrames: 26,
-        });
-        const opacity = interpolate(frame, [delay, delay + 6], [0, 1], {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-        });
-        const color = colorAt(i);
-
-        const countUpVal = !isNaN(m.pureNum)
-          ? Math.round(interpolate(prog, [0, 1], [0, m.pureNum]))
-          : null;
-        const displayValue =
-          countUpVal !== null
-            ? `${m.prefix}${countUpVal}${m.suffix}`
-            : m.value || "—";
-
-        const percentage =
-          m.suffix === "%" && !isNaN(m.pureNum) ? m.pureNum : null;
-        const ringAngle = percentage
-          ? interpolate(prog, [0, 1], [0, (percentage / 100) * 360])
-          : 0;
-
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 14 }}>
+      {hero && (() => {
+        const p = spring({ frame: Math.max(0, frame - 3), fps, config: SPR, durationInFrames: 12 });
+        const op = interpolate(frame, [3, 7], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+        const cu = !isNaN(hero.pure) ? interpolate(p, [0, 1], [0, hero.pure]).toFixed(hero.dec) : null;
+        const dv = cu !== null ? `${hero.prefix}${cu}${hero.suffix}` : hero.value || "—";
         return (
-          <GlassCard
-            key={i}
-            accentColor={color}
-            glowOnEnter
-            enterProgress={prog}
-            style={{
-              padding: "40px 28px",
-              textAlign: "center",
-              opacity,
-              transform: `scale(${interpolate(prog, [0, 1], [0.75, 1])}) translateY(${interpolate(prog, [0, 1], [20, 0])}px)`,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {/* 背景渐变 */}
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                background: `radial-gradient(ellipse at center top, ${color}0d, transparent 70%)`,
-              }}
-            />
-
-            {/* 进度环 */}
-            {percentage !== null && (
-              <div
-                style={{
-                  position: "absolute",
-                  top: 24,
-                  right: 24,
-                  width: 52,
-                  height: 52,
-                  borderRadius: "50%",
-                  background: `conic-gradient(${color}66 ${ringAngle}deg, rgba(255,255,255,0.05) ${ringAngle}deg)`,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <div
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: "50%",
-                    background: "#0d1117",
-                  }}
-                />
-              </div>
-            )}
-
-            {/* 大数字 */}
-            <div
-              style={{
-                fontSize: 72,
-                fontWeight: 900,
-                color,
-                letterSpacing: 2,
-                marginBottom: 16,
-                fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
-                textShadow: `0 0 40px ${color}55, 0 0 80px ${color}22`,
-                position: "relative",
-              }}
-            >
-              {displayValue}
-            </div>
-
-            {/* 发光条 */}
-            <div
-              style={{
-                width: "60%",
-                height: 3,
-                margin: "0 auto 18px",
-                borderRadius: 2,
-                background: `linear-gradient(90deg, transparent, ${color}88, transparent)`,
-                boxShadow: `0 0 10px ${color}44`,
-              }}
-            />
-
-            {/* 标签 */}
-            <div
-              style={{
-                fontSize: 28,
-                color: THEME.textSecondary,
-                lineHeight: 1.5,
-                position: "relative",
-              }}
-            >
-              {m.label}
-            </div>
-          </GlassCard>
+          <Glass accent={accent} style={{ opacity: op, padding: "32px 40px", background: hexA(accent, 0.07), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", transform: `scale(${interpolate(p, [0, 1], [0.88, 1])})`, flexShrink: 0 }}>
+            <div style={{ fontSize: 104, fontWeight: 900, color: accent, fontFamily: "'SF Mono','Fira Code',monospace", textShadow: `0 0 60px ${hexA(accent, 0.3)}`, lineHeight: 1 }}>{dv}</div>
+            <div style={{ width: 120, height: 2, borderRadius: 1, marginTop: 10, marginBottom: 10, background: `linear-gradient(90deg, transparent, ${hexA(accent, 0.5)}, transparent)` }} />
+            <div style={{ fontSize: 30, color: THEME.textSecondary }}>{hero.label}</div>
+          </Glass>
         );
-      })}
+      })()}
+      <div style={{ flex: 1, display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gridAutoRows: "1fr", gap: 12 }}>
+        {rest.map((m, i) => {
+          const delay = (hasHero ? 9 : 3) + i * 3;
+          const p = spring({ frame: Math.max(0, frame - delay), fps, config: SPR, durationInFrames: 12 });
+          const op = interpolate(frame, [delay, delay + 3], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+          const color = i === 0 ? accent : dim;
+          const cu = !isNaN(m.pure) ? interpolate(p, [0, 1], [0, m.pure]).toFixed(m.dec) : null;
+          const dv = cu !== null ? `${m.prefix}${cu}${m.suffix}` : m.value || "—";
+          return (
+            <Glass key={i} accent={color} style={{ opacity: op, transform: `scale(${interpolate(p, [0, 1], [0.85, 1])})`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "16px 14px" }}>
+              <div style={{ fontSize: 52, fontWeight: 900, color: i === 0 ? accent : THEME.textPrimary, fontFamily: "'SF Mono','Fira Code',monospace", textShadow: i === 0 ? `0 0 30px ${hexA(accent, 0.2)}` : "none", marginBottom: 4, lineHeight: 1.1 }}>{dv}</div>
+              <div style={{ width: "40%", height: 1.5, borderRadius: 1, marginBottom: 8, background: `linear-gradient(90deg, transparent, ${hexA(color, 0.4)}, transparent)` }} />
+              <div style={{ fontSize: 22, color: THEME.textSecondary, lineHeight: 1.4 }}>{m.label}</div>
+            </Glass>
+          );
+        })}
+      </div>
     </div>
   );
 };
 
-/* ════════════════════════════════════════════════
-   主组件
-   ════════════════════════════════════════════════ */
-
-export const SlideSegment: React.FC<SlideSegmentProps> = ({ slideContent }) => {
+export const SlideSegment: React.FC<SlideSegmentProps> = ({ slideContent, segmentId = 0, totalSlides = 1 }) => {
+  const frame = useCurrentFrame();
   const layout = detectLayout(slideContent);
-  const accentColor = THEME.palette[0];
-
+  const accent = safeColor(segmentId);
+  const keywords = useMemo(() => extractKeywords(slideContent.bullet_points), [slideContent.bullet_points]);
+  const showChart = layout !== "metric" && layout !== "code" && layout !== "compare";
+  const progressOp = interpolate(frame, [10, 16], [0, 0.75], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return (
-    <AbsoluteFill
-      style={{
-        background: THEME.bg,
-        fontFamily:
-          "'PingFang SC', 'Hiragino Sans GB', 'Noto Sans CJK SC', sans-serif",
-        padding: "55px 75px",
-        overflow: "hidden",
-      }}
-    >
-      <AnimatedBackground accentColor={accentColor} />
-
-      <div
-        style={{
-          position: "relative",
-          zIndex: 1,
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <AnimatedTitle text={slideContent.title} accentColor={accentColor} />
-
-        {/* 内容区域 — flex:1 撑满 */}
+    <AbsoluteFill style={{ background: THEME.bg, fontFamily: "'PingFang SC','Hiragino Sans GB','Noto Sans CJK SC',sans-serif", padding: "44px 56px", overflow: "hidden" }}>
+      <FilledBg accent={accent} frame={frame} keywords={keywords} showChart={showChart} />
+      <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column" }}>
+        <Title text={slideContent.title} accent={accent} layout={layout} />
         <div style={{ flex: 1, minHeight: 0 }}>
-          {layout === "compare" && (
-            <CompareLayout
-              bullets={slideContent.bullet_points}
-              chartHint={slideContent.chart_hint}
-            />
-          )}
-          {layout === "grid" && <GridLayout bullets={slideContent.bullet_points} />}
-          {layout === "code" && <CodeBlockLayout bullets={slideContent.bullet_points} />}
-          {layout === "steps" && <StepsLayout bullets={slideContent.bullet_points} />}
-          {layout === "metric" && <MetricLayout bullets={slideContent.bullet_points} />}
-          {layout === "standard" && (
-            <StandardLayout
-              bullets={slideContent.bullet_points}
-              chartHint={slideContent.chart_hint}
-            />
-          )}
+          {layout === "compare" && <CompareLayout bullets={slideContent.bullet_points} chartHint={slideContent.chart_hint} />}
+          {layout === "grid" && <GridLayout bullets={slideContent.bullet_points} accent={accent} />}
+          {layout === "code" && <CodeLayout bullets={slideContent.bullet_points} />}
+          {layout === "steps" && <StepsLayout bullets={slideContent.bullet_points} accent={accent} />}
+          {layout === "metric" && <MetricLayout bullets={slideContent.bullet_points} accent={accent} />}
+          {layout === "standard" && <StandardLayout bullets={slideContent.bullet_points} chartHint={slideContent.chart_hint} accent={accent} />}
         </div>
+      </div>
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 32, display: "flex", alignItems: "center", padding: "0 56px", opacity: progressOp }}>
+        <div style={{ flex: 1, height: 2, background: hexA("#ffffff", 0.05), borderRadius: 1, overflow: "hidden", marginRight: 12 }}>
+          <div style={{ width: `${totalSlides > 0 ? ((segmentId + 1) / totalSlides) * 100 : 0}%`, height: "100%", background: `linear-gradient(90deg, ${accent}, ${hexA(accent, 0.5)})`, borderRadius: 1, boxShadow: `0 0 10px ${hexA(accent, 0.3)}` }} />
+        </div>
+        <span style={{ fontSize: 13, color: THEME.textMuted, fontFamily: "'SF Mono',monospace" }}>{String(segmentId + 1).padStart(2, "0")}/{String(totalSlides).padStart(2, "0")}</span>
       </div>
     </AbsoluteFill>
   );

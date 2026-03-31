@@ -55,22 +55,6 @@ export const SourceClipSegment: React.FC<SourceClipSegmentProps> = ({
         }}
       />
 
-      {/* Source 水印 */}
-      {sourceChannel && (
-        <div
-          style={{
-            position: "absolute",
-            top: 25,
-            left: 30,
-            fontSize: 28,
-            color: "rgba(255,255,255,0.7)",
-            fontFamily: "'PingFang SC', sans-serif",
-            textShadow: "1px 1px 3px rgba(0,0,0,0.8)",
-          }}
-        >
-          Source: {sourceChannel}
-        </div>
-      )}
     </AbsoluteFill>
   );
 };

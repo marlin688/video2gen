@@ -390,7 +390,10 @@ def run_assemble(cfg: Config, video_id: str) -> PipelineState:
 
     # 加载数据
     script_data = json.loads(Path(state.script_json).read_text(encoding="utf-8"))
-    timing_path = output_dir / "voiceover_timing.json"
+    timing_path = output_dir / "voiceover" / "timing.json"
+    if not timing_path.exists():
+        # 向后兼容旧路径
+        timing_path = output_dir / "voiceover_timing.json"
     timing = json.loads(timing_path.read_text(encoding="utf-8"))
 
     segments = script_data.get("segments", [])
@@ -503,12 +506,14 @@ def run_assemble(cfg: Config, video_id: str) -> PipelineState:
     # 生成 ASS 字幕（逐句分段，素材 A 不加字幕）
     click.echo("   📝 生成 ASS 字幕...")
     ass_content = _generate_ass(segments, timing, w, h, skip_material_a=True)
-    ass_path = output_dir / "subtitles.ass"
+    final_dir = output_dir / "final"
+    final_dir.mkdir(parents=True, exist_ok=True)
+    ass_path = final_dir / "subtitles.ass"
     ass_path.write_text(ass_content, encoding="utf-8")
 
     # 最终合成: 视频 + ASS 字幕 + 音频
     click.echo("   🎨 最终合成 (ASS 字幕烧录 + 音频混合)...")
-    final_path = output_dir / "final.mp4"
+    final_path = final_dir / "video.mp4"
     voiceover_path = Path(state.voiceover)
 
     # 使用 ass filter 烧录字幕（需要 libass）

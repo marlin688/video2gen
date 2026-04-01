@@ -209,6 +209,10 @@ def _is_minimax_model(model: str) -> bool:
     return model.lower().startswith("minimax")
 
 
+def _is_zhipu_model(model: str) -> bool:
+    return model.lower().startswith("glm")
+
+
 def _dispatch_agent_loop(
     system_prompt: str,
     user_message: str,
@@ -330,8 +334,13 @@ def _run_agent_loop_openai(
     from openai import OpenAI
     import httpx
 
-    # MiniMax 优先走官方 API，失败 fallback 到 GPT 代理
-    if _is_minimax_model(model):
+    # 各厂商官方 API 路由
+    if _is_zhipu_model(model):
+        base_url = "https://open.bigmodel.cn/api/paas/v4"
+        api_key = os.environ.get("ZHIPU_API_KEY", "")
+        if not api_key:
+            raise click.ClickException("未设置 ZHIPU_API_KEY")
+    elif _is_minimax_model(model):
         minimax_key = os.environ.get("TTS_MINMAX_KEY", "")
         gpt_key = os.environ.get("GPT_API_KEY", "")
         if minimax_key:
@@ -351,16 +360,22 @@ def _run_agent_loop_openai(
     if not api_key:
         raise click.ClickException("未设置 GPT_API_KEY")
 
-    if base_url and not base_url.rstrip("/").endswith("/v1"):
+    # 只对需要 /v1 后缀的平台补充（智谱等已有正确路径的跳过）
+    if base_url and not any(base_url.rstrip("/").endswith(s) for s in ("/v1", "/v4")):
         base_url = base_url.rstrip("/") + "/v1"
 
-    # 清理有问题的代理变量
+    # 清理代理变量（MiniMax/智谱等国内 API 不走本地代理）
     _cleaned = {}
-    for k in list(os.environ):
-        if "proxy" in k.lower():
-            v = os.environ[k]
-            if v and v.rstrip("/").endswith("~"):
+    if _is_minimax_model(model) or _is_zhipu_model(model):
+        for k in list(os.environ):
+            if "proxy" in k.lower() and os.environ[k]:
                 _cleaned[k] = os.environ.pop(k)
+    else:
+        for k in list(os.environ):
+            if "proxy" in k.lower():
+                v = os.environ[k]
+                if v and v.rstrip("/").endswith("~"):
+                    _cleaned[k] = os.environ.pop(k)
 
     client = OpenAI(
         api_key=api_key,
@@ -680,12 +695,19 @@ def run_agent(
         state.last_error = ""
         state.save(cfg.output_dir)
 
-    # ── 完成 ─────────────────────────────────────────────
-    # Print stats
+    # ── Phase 3: B 类素材自动采集 ─────────────────────────
     script_data = json.loads(script_path.read_text(encoding="utf-8"))
     segments = script_data.get("segments", [])
+    b_count = sum(1 for s in segments if s.get("material") == "B")
+
+    if b_count > 0:
+        click.echo(f"\n🖥️ 自动采集 B 类素材 ({b_count} 段)...")
+        from v2g.autocap import run_capture
+        run_capture(cfg, project_id)
+
+    # ── 完成 ─────────────────────────────────────────────
     a = sum(1 for s in segments if s.get("material") == "A")
-    b = sum(1 for s in segments if s.get("material") == "B")
+    b = b_count
     c = sum(1 for s in segments if s.get("material") == "C")
 
     click.echo(f"\n✅ 脚本生成完成:")
@@ -693,8 +715,8 @@ def run_agent(
     click.echo(f"   📄 脚本: output/{project_id}/script.md")
     click.echo(f"   🖥️  录屏指南: output/{project_id}/recording_guide.md")
     click.echo(f"\n💡 下一步:")
-    click.echo(f"   v2g review {project_id}")
     click.echo(f"   v2g tts {project_id}")
+    click.echo(f"   v2g slides {project_id}")
 
 
 # ---------------------------------------------------------------------------

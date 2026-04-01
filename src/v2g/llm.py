@@ -20,9 +20,14 @@ def is_gpt_model(model: str) -> bool:
     return model.startswith("gpt") or model.startswith("o1") or model.startswith("o3") or model.startswith("o4")
 
 
+def is_zhipu_model(model: str) -> bool:
+    """智谱 GLM 系列模型（走官方 API）。"""
+    return model.lower().startswith("glm")
+
+
 def is_openai_compat_model(model: str) -> bool:
-    """走 OpenAI 兼容 API 的模型（MiniMax / DeepSeek / Qwen / GLM 等）。"""
-    prefixes = ("minimax", "deepseek", "qwen", "glm", "abab")
+    """走 OpenAI 兼容 API 的模型（DeepSeek / Qwen 等，通过 GPT 代理）。"""
+    prefixes = ("deepseek", "qwen", "abab")
     return model.lower().startswith(prefixes)
 
 
@@ -38,6 +43,8 @@ def call_llm(system_prompt: str, user_message: str, model: str,
     """
     if is_gemini_model(model):
         return _call_gemini(system_prompt, user_message, model, temperature, max_tokens)
+    if is_zhipu_model(model):
+        return _call_zhipu(system_prompt, user_message, model, temperature, max_tokens)
     if is_minimax_model(model):
         try:
             return _call_minimax(system_prompt, user_message, model, temperature, max_tokens)
@@ -230,4 +237,41 @@ def _call_minimax(system_prompt: str, user_message: str, model: str,
     result = response.choices[0].message.content or ""
     import re as _re
     result = _re.sub(r"<think>.*?</think>", "", result, flags=_re.DOTALL).strip()
+    return result
+
+
+def _call_zhipu(system_prompt: str, user_message: str, model: str,
+                temperature: float, max_tokens: int) -> str:
+    """智谱 GLM 官方 API (OpenAI 兼容格式)。"""
+    from openai import OpenAI
+    import httpx
+
+    api_key = os.environ.get("ZHIPU_API_KEY", "")
+    if not api_key:
+        raise click.ClickException("未设置 ZHIPU_API_KEY")
+
+    # 临时清除所有代理变量（智谱 API 不走本地代理）
+    proxy_vars = {}
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        if key in os.environ:
+            proxy_vars[key] = os.environ.pop(key)
+    try:
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://open.bigmodel.cn/api/paas/v4",
+            http_client=httpx.Client(timeout=httpx.Timeout(600.0, connect=60.0)),
+        )
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    finally:
+        os.environ.update(proxy_vars)
+
+    result = response.choices[0].message.content or ""
     return result

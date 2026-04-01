@@ -230,6 +230,80 @@ def agent_cmd(cfg: Config, project_id, sources, topic, model, duration):
 
 
 @main.command()
+@click.argument("project_id")
+@click.pass_obj
+def capture(cfg: Config, project_id):
+    """自动采集 B 类素材: 素材库检索 → Playwright 截图 → 合成视频"""
+    from v2g.autocap import run_capture
+    run_capture(cfg, project_id)
+
+
+@main.group()
+def material():
+    """素材库管理"""
+    pass
+
+
+@material.command("add")
+@click.argument("file_path", type=click.Path(exists=True))
+@click.option("--keywords", "-k", required=True, help="关键词 (逗号分隔)")
+@click.option("--desc", "-d", default="", help="素材描述")
+@click.pass_obj
+def material_add(cfg, file_path, keywords, desc):
+    """向素材库添加素材"""
+    from v2g.material_library import MaterialLibrary, MaterialEntry
+    from pathlib import Path
+    import shutil
+
+    lib = MaterialLibrary()
+    src = Path(file_path)
+    # 复制到素材库目录
+    dest_dir = lib.root / "recordings"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / src.name
+    if not dest.exists():
+        shutil.copy2(src, dest)
+
+    entry = lib.add(MaterialEntry(
+        type="recording",
+        path=str(dest),
+        keywords=[k.strip() for k in keywords.split(",")],
+        description=desc or src.stem,
+    ))
+    click.echo(f"✅ 已添加: {entry.id} → {dest}")
+
+
+@material.command("search")
+@click.argument("query")
+@click.pass_obj
+def material_search(cfg, query):
+    """搜索素材库"""
+    from v2g.material_library import MaterialLibrary
+    lib = MaterialLibrary()
+    results = lib.search(query, top_k=5)
+    if not results:
+        click.echo("未找到匹配素材")
+        return
+    for r in results:
+        click.echo(f"  [{r.id}] {r.type} | {r.description[:50]} | {', '.join(r.keywords[:3])}")
+
+
+@material.command("list")
+@click.pass_obj
+def material_list(cfg):
+    """列出素材库全部素材"""
+    from v2g.material_library import MaterialLibrary
+    lib = MaterialLibrary()
+    entries = lib.list_all()
+    if not entries:
+        click.echo("素材库为空")
+        return
+    click.echo(f"📦 素材库: {len(entries)} 条")
+    for e in entries:
+        click.echo(f"  [{e.id}] {e.type:10s} | {e.description[:40]} | {', '.join(e.keywords[:3])}")
+
+
+@main.command()
 @click.argument("video_id_or_url")
 @click.option("--model", default=None, help="LLM 模型")
 @click.option("--whisper-model", default="medium", help="Whisper 模型大小")

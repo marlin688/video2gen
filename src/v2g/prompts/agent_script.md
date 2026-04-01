@@ -20,9 +20,16 @@
 
 一个脚本中应包含 2-3 种不同的卡片布局。
 
-### 素材 B: 操作录屏
+### 素材 B: 网页/操作演示（主力素材，占比最高）
 - 必须提供 `recording_instruction` 字段
-- 写成可执行的操作步骤（打开XX，点击YY，输入ZZ，屏幕应显示WW）
+- **关键规则：尽可能在 instruction 中包含具体的 URL**，系统会自动打开网页截图生成素材
+- URL 来源示例：
+  - GitHub 仓库页面（如 `https://github.com/anthropics/claude-code`）
+  - npm/PyPI 包页面（如 `https://www.npmjs.com/package/@anthropic-ai/claude-code`）
+  - 官方文档页面
+  - 在线工具/演示页面
+- 如果知识点涉及某个开源项目、工具、API，**必须**附上其官方页面 URL
+- 没有对应 URL 的终端/IDE 操作也可以，系统会用动画模拟
 - 控制在 80 字以内
 
 ### 素材 C: 原始片段（仅当输入包含字幕时）
@@ -78,6 +85,8 @@
 
 - segments 数量: 8-10 段（不要超过 10 段）
 - 总字数: 500-800 字（3-4 分钟 TTS）
-- 素材比例: 有字幕时 A ~40% B ~40% C ~20%；无字幕时 A ~50% B ~50%
+- 素材比例: 有字幕时 A ≤30% B ≥50% C ~20%；无字幕时 A ≤30% B ≥70%
+- 避免连续两段使用相同素材类型（视觉节奏：A→B→B→A→B→B→A）
+- B 类素材的 recording_instruction 中尽可能包含 URL
 - bullet_points 禁止 emoji
 - 不要编造素材中没有的事实，但可以加入你自己的分析判断

@@ -285,82 +285,151 @@ export const TerminalDemoSegment: React.FC<TerminalDemoSegmentProps> = ({
 
   // 进场动画
   const winProg = spring({ frame, fps, config: { damping: 18, stiffness: 120 }, durationInFrames: 15 });
-  const titleProg = spring({ frame, fps, config: { damping: 20, stiffness: 200 }, durationInFrames: 10 });
-  const subtitleOp = interpolate(frame, [8, 14], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const mascotProg = spring({ frame: Math.max(0, frame - 5), fps, config: { damping: 12, stiffness: 100 }, durationInFrames: 20 });
 
-  // 标题颜色
-  const accentOrange = "#f78166";
+  // 像素角色的颜色
+  const mascotColor = "#c0614a";
+  const mascotHighlight = "#d4826e";
+
+  // 粒子系统（固定种子随机）
+  const particles = useMemo(() => {
+    const seed = segmentId * 37;
+    return Array.from({ length: 12 }, (_, i) => ({
+      x: 860 + ((seed + i * 73) % 200) - 100,
+      y: 20 + ((seed + i * 41) % 60),
+      size: 4 + ((seed + i * 17) % 6),
+      color: ["#f78166", "#e06c75", "#e5c07b", "#56b6c2", "#c678dd", "#98c379"][i % 6],
+      speed: 0.3 + ((seed + i * 29) % 20) / 20,
+      phase: (seed + i * 53) % 100,
+    }));
+  }, [segmentId]);
+
+  // idle 提示语
+  const idleTips = [
+    "whatever you've been putting off — now's a good time.",
+    "the best code is the code you didn't have to write.",
+    "measure twice, cut once. or just let me handle it.",
+    "bugs are just features with commitment issues.",
+  ];
+  const idleTip = idleTips[segmentId % idleTips.length];
+
+  // 极光背景动画参数
+  const auroraShift = frame * 0.3;
 
   return (
     <AbsoluteFill
       style={{
-        background: "#111",
-        padding: "30px 50px",
+        background: "#0a0a1a",
         overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "20px 60px",
       }}
     >
-      {/* 背景 */}
+      {/* ─── 极光渐变背景 ─── */}
       <div style={{
-        position: "absolute", top: -200, left: -100, width: 500, height: 500, borderRadius: "50%",
-        background: "radial-gradient(circle, rgba(150,80,200,0.06) 0%, transparent 70%)", filter: "blur(60px)",
+        position: "absolute", inset: 0, zIndex: 0,
+        background: `
+          radial-gradient(ellipse 120% 60% at 30% 20%,
+            rgba(56, 189, 248, 0.25) 0%, transparent 60%),
+          radial-gradient(ellipse 100% 50% at 70% 80%,
+            rgba(139, 92, 246, 0.2) 0%, transparent 55%),
+          radial-gradient(ellipse 80% 40% at 50% 50%,
+            rgba(59, 130, 246, 0.15) 0%, transparent 50%)
+        `,
+        filter: "blur(40px)",
+        transform: `translateX(${Math.sin(auroraShift * 0.02) * 30}px) translateY(${Math.cos(auroraShift * 0.015) * 20}px)`,
+      }} />
+      {/* 极光流光条纹 */}
+      <div style={{
+        position: "absolute", top: "5%", left: "-10%", width: "120%", height: "35%", zIndex: 0,
+        background: `linear-gradient(
+          ${100 + Math.sin(auroraShift * 0.01) * 15}deg,
+          transparent 20%,
+          rgba(56, 189, 248, 0.08) 35%,
+          rgba(99, 102, 241, 0.12) 50%,
+          rgba(139, 92, 246, 0.08) 65%,
+          transparent 80%
+        )`,
+        filter: "blur(20px)",
+        transform: `translateX(${Math.sin(auroraShift * 0.008) * 50}px)`,
+      }} />
+      <div style={{
+        position: "absolute", bottom: "0%", left: "-10%", width: "120%", height: "40%", zIndex: 0,
+        background: `linear-gradient(
+          ${260 + Math.cos(auroraShift * 0.012) * 10}deg,
+          transparent 25%,
+          rgba(59, 130, 246, 0.1) 40%,
+          rgba(14, 165, 233, 0.08) 55%,
+          transparent 75%
+        )`,
+        filter: "blur(30px)",
+        transform: `translateX(${Math.cos(auroraShift * 0.01) * 40}px)`,
       }} />
 
-      <div style={{
-        position: "relative", zIndex: 1, height: "100%",
-        display: "flex", flexDirection: "column", gap: 16,
-      }}>
-        {/* ─── 标题区域: 序号 + 一级标题 + 副标题 ─── */}
-        <div style={{
-          flexShrink: 0, display: "flex", alignItems: "flex-start", gap: 24,
-          padding: "8px 0",
-          opacity: interpolate(titleProg, [0, 1], [0, 1]),
-          transform: `translateY(${interpolate(titleProg, [0, 1], [20, 0])}px)`,
-        }}>
-          {/* 序号 */}
-          <div style={{
-            fontSize: 72, fontWeight: 900, color: accentOrange, fontFamily: "'SF Mono','Fira Code',monospace",
-            lineHeight: 1, flexShrink: 0, minWidth: 80, opacity: 0.9,
-          }}>
-            {String(segmentId).padStart(2, "0")}
-          </div>
-          <div style={{ flex: 1 }}>
-            {/* 类型标签 */}
-            <div style={{
-              fontSize: 12, fontWeight: 700, color: accentOrange, letterSpacing: 4,
-              marginBottom: 6, fontFamily: "'SF Mono','Fira Code',monospace", opacity: 0.7,
-            }}>
-              TIP
-            </div>
-            {/* 一级标题 */}
-            <div style={{
-              fontSize: 44, fontWeight: 900, color: "#f0f4f8", lineHeight: 1.2,
-              fontFamily: "'PingFang SC','Hiragino Sans GB','Noto Sans CJK SC',sans-serif",
-            }}>
-              {headline.title}
-            </div>
-            {/* 二级副标题 */}
-            <div style={{
-              fontSize: 24, color: "#b0bec5", lineHeight: 1.5, marginTop: 8, opacity: subtitleOp,
-              fontFamily: "'PingFang SC','Hiragino Sans GB',sans-serif",
-            }}>
-              {headline.subtitle}
-            </div>
-          </div>
-        </div>
+      {/* ─── 粒子特效 ─── */}
+      {particles.map((p, i) => {
+        const yOffset = Math.sin((frame * p.speed + p.phase) * 0.1) * 15;
+        const xOffset = Math.cos((frame * p.speed * 0.7 + p.phase) * 0.08) * 10;
+        const opacity = interpolate(
+          Math.sin((frame * 0.05 + p.phase) * 0.5), [-1, 1], [0.3, 0.9]
+        );
+        return (
+          <div key={i} style={{
+            position: "absolute",
+            left: p.x + xOffset,
+            top: p.y + yOffset,
+            width: p.size,
+            height: p.size,
+            borderRadius: p.size > 6 ? 2 : "50%",
+            background: p.color,
+            opacity: opacity * interpolate(mascotProg, [0, 1], [0, 1]),
+            transform: `rotate(${frame * p.speed * 2}deg)`,
+            zIndex: 1,
+          }} />
+        );
+      })}
 
-        {/* ─── 终端窗口 ─── */}
-        <div
+      {/* ─── 像素角色 ─── */}
+      <div style={{
+        position: "relative", zIndex: 2,
+        marginBottom: 12,
+        opacity: interpolate(mascotProg, [0, 1], [0, 1]),
+        transform: `translateY(${interpolate(mascotProg, [0, 1], [-30, 0]) + Math.sin(frame * 0.08) * 3}px) scale(${interpolate(mascotProg, [0, 1], [0.5, 1])})`,
+      }}>
+        <svg width="56" height="56" viewBox="0 0 8 8" style={{ imageRendering: "pixelated" }}>
+          <rect x="2" y="0" width="4" height="1" fill={mascotColor} />
+          <rect x="1" y="1" width="6" height="1" fill={mascotColor} />
+          <rect x="1" y="2" width="6" height="1" fill={mascotColor} />
+          <rect x="2" y="2" width="1" height="1" fill="#1a1a1a" />
+          <rect x="5" y="2" width="1" height="1" fill="#1a1a1a" />
+          <rect x="1" y="3" width="6" height="1" fill={mascotHighlight} />
+          <rect x="2" y="4" width="4" height="1" fill={mascotColor} />
+          <rect x="2" y="5" width="4" height="1" fill={mascotColor} />
+          <rect x="2" y="6" width="1" height="1" fill={mascotColor} />
+          <rect x="5" y="6" width="1" height="1" fill={mascotColor} />
+        </svg>
+      </div>
+
+      {/* ─── 终端窗口 ─── */}
+      <div
           style={{
+            position: "relative", zIndex: 2,
+            width: "100%",
+            maxWidth: 1500,
             flex: 1,
             display: "flex",
             flexDirection: "column",
-            background: CC.bg,
-            border: `1px solid ${CC.border}`,
-            borderRadius: 12,
+            background: "rgba(22, 22, 30, 0.92)",
+            backdropFilter: "blur(20px)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 14,
             overflow: "hidden",
             opacity: interpolate(winProg, [0, 1], [0, 1]),
-            transform: `scale(${interpolate(winProg, [0, 1], [0.97, 1])})`,
-            boxShadow: "0 20px 60px rgba(0,0,0,0.7)",
+            transform: `scale(${interpolate(winProg, [0, 1], [0.95, 1])}) translateY(${interpolate(winProg, [0, 1], [20, 0])}px)`,
+            boxShadow: "0 20px 60px rgba(0,0,0,0.5), 0 0 1px rgba(255,255,255,0.1)",
           }}
         >
         {/* ─── macOS 标题栏 ─── */}
@@ -383,8 +452,9 @@ export const TerminalDemoSegment: React.FC<TerminalDemoSegmentProps> = ({
           <span style={{
             fontSize: 16, color: CC.textSecondary,
             fontFamily: "'SF Mono', monospace",
+            fontWeight: 600,
           }}>
-            · Claude Code
+            Claude Code v2.1.9
           </span>
           <div style={{ flex: 1 }} />
           <div style={{ width: 60 }} />
@@ -575,22 +645,14 @@ export const TerminalDemoSegment: React.FC<TerminalDemoSegmentProps> = ({
             gap: 20,
           }}
         >
-          <span style={{ fontSize: 13, color: CC.green, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: CC.green, display: "inline-block" }} />
-            Claude Code v2.1.74
-          </span>
-          <span style={{ fontSize: 13, color: CC.textMuted, fontFamily: "monospace" }}>
-            Sonnet 4.6
-          </span>
-          <span style={{ fontSize: 13, color: CC.textMuted, fontFamily: "monospace" }}>
-            ~/workspace/project
+          <span style={{ fontSize: 14, color: CC.textMuted, fontFamily: "monospace", fontStyle: "italic" }}>
+            {idleTip}
           </span>
           <div style={{ flex: 1 }} />
           <span style={{ fontSize: 13, color: CC.textMuted, fontFamily: "monospace" }}>
-            23.7k tokens
+            {String(segmentId)}
           </span>
         </div>
-      </div>
       </div>
     </AbsoluteFill>
   );

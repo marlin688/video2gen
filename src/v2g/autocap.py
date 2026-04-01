@@ -111,14 +111,38 @@ def _playwright_capture(instruction: str, screenshots_dir: Path) -> int:
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch()
-            page = browser.new_page(viewport={"width": 1920, "height": 1080})
+            # 使用更真实的浏览器配置减少反爬检测
+            browser = p.chromium.launch(
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                ]
+            )
+            context = browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                user_agent=(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                ),
+                locale="zh-CN",
+            )
+            page = context.new_page()
+            # 覆盖 navigator.webdriver 标记
+            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             for url in urls:
                 try:
                     click.echo(f"      🌐 访问: {url[:60]}")
                     page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                    page.wait_for_timeout(2000)  # 等待 JS 渲染
+                    page.wait_for_timeout(3000)  # 等待 JS 渲染 + 可能的验证
+
+                    # 检测是否被 Cloudflare 等拦截
+                    if _is_blocked_page(page):
+                        click.echo(f"      ⚠️ 被反爬拦截，等待验证通过...")
+                        page.wait_for_timeout(5000)  # 再等一会
+                        if _is_blocked_page(page):
+                            click.echo(f"      ❌ 无法通过验证，跳过此 URL")
+                            continue
 
                     # 首屏截图
                     path = screenshots_dir / f"{count:03d}.png"
@@ -128,7 +152,7 @@ def _playwright_capture(instruction: str, screenshots_dir: Path) -> int:
                     # 滚动截图（捕获页面不同区域）
                     for scroll_step in range(2):
                         page.evaluate("window.scrollBy(0, window.innerHeight * 0.7)")
-                        page.wait_for_timeout(500)
+                        page.wait_for_timeout(800)
                         path = screenshots_dir / f"{count:03d}.png"
                         page.screenshot(path=str(path), type="png")
                         count += 1
@@ -141,6 +165,25 @@ def _playwright_capture(instruction: str, screenshots_dir: Path) -> int:
         click.echo(f"      ⚠️ Playwright 错误: {e}")
 
     return count
+
+
+def _is_blocked_page(page) -> bool:
+    """检测页面是否被 Cloudflare/Captcha 等拦截。"""
+    try:
+        text = page.text_content("body") or ""
+        block_signals = [
+            "security verification",
+            "verifies you are not a bot",
+            "checking your browser",
+            "just a moment",
+            "enable javascript",
+            "captcha",
+            "请完成安全验证",
+        ]
+        text_lower = text.lower()
+        return any(signal in text_lower for signal in block_signals)
+    except Exception:
+        return False
 
 
 def _extract_urls(instruction: str) -> list[str]:

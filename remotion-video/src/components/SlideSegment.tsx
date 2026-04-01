@@ -58,23 +58,27 @@ const SPR = { damping: 18, stiffness: 260 };
  * 交错弹入动画：每个元素依次 spring 进入。
  * 返回 { opacity, transform } style 对象，直接用于 div.style
  */
+/**
+ * 交错弹入动画：每个元素依次 spring 进入。
+ * 间隔足够大 (~0.3-0.5s) 让观众能看到逐个出现的效果。
+ */
 function staggerStyle(
   frame: number,
   fps: number,
   index: number,
-  baseDelay: number = 12,
-  staggerInterval: number = 5,
+  baseDelay: number = 15,
+  staggerInterval: number = 10,
 ): React.CSSProperties {
   const delay = baseDelay + index * staggerInterval;
   const prog = spring({
     frame: Math.max(0, frame - delay),
     fps,
-    config: { damping: 16, stiffness: 180 },
-    durationInFrames: 15,
+    config: { damping: 14, stiffness: 120 },
+    durationInFrames: 20,
   });
   return {
     opacity: prog,
-    transform: `translateY(${interpolate(prog, [0, 1], [28, 0])}px) scale(${interpolate(prog, [0, 1], [0.92, 1])})`,
+    transform: `translateY(${interpolate(prog, [0, 1], [40, 0])}px) scale(${interpolate(prog, [0, 1], [0.85, 1])})`,
   };
 }
 
@@ -475,13 +479,13 @@ const StepsLayout: React.FC<{ bullets: string[]; accent: string }> = ({ bullets,
   const frame = useCurrentFrame(); const { fps } = useVideoConfig();
   const { dim } = twoTone(accent);
   const colors = [accent, THEME.violet, THEME.amber, THEME.emerald, THEME.blue, THEME.cyan];
-  const activeIdx = useMemo(() => { for (let i = bullets.length - 1; i >= 0; i--) { if (frame >= 3 + i * 5) return i; } return 0; }, [frame, bullets.length]);
+  const activeIdx = useMemo(() => { for (let i = bullets.length - 1; i >= 0; i--) { if (frame >= 12 + i * 12) return i; } return 0; }, [frame, bullets.length]);
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 6, position: "relative", paddingLeft: 40 }}>
       <div style={{ position: "absolute", left: 62, top: 20, bottom: 20, width: 3, borderRadius: 2, background: `linear-gradient(180deg, ${accent}55, ${THEME.violet}55, ${THEME.amber}44, ${THEME.emerald}44)` }} />
       {bullets.map((bp, i) => {
-        const delay = 6 + i * 7;
-        const p = spring({ frame: Math.max(0, frame - delay), fps, config: { damping: 14, stiffness: 160 }, durationInFrames: 15 });
+        const delay = 12 + i * 12;
+        const p = spring({ frame: Math.max(0, frame - delay), fps, config: { damping: 14, stiffness: 120 }, durationInFrames: 20 });
         const op = interpolate(frame, [delay, delay + 5], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
         const text = bp.replace(/^(第[一二三四五六七八九十\d]+步|Step\s*\d|[\d①②③④⑤⑥⑦⑧⑨⑩])\s*[.、)）:：]\s*/i, "");
         const color = colors[i % colors.length]; const isActive = i === activeIdx;

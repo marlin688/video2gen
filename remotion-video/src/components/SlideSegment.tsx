@@ -96,6 +96,55 @@ function extractKeywords(bullets: string[]): string[] {
   return [...new Set([...cn.slice(0, 8), ...en.slice(0, 4)])].slice(0, 10);
 }
 
+/** Content-aware SVG icon based on keyword detection */
+const BulletIcon: React.FC<{ text: string; color: string; size?: number }> = ({ text, color, size = 28 }) => {
+  const t = text.toLowerCase();
+  // Detect category from keywords
+  let path: string;
+  if (/速度|快|性能|加速|效率|提升|turbo|fast|speed|perf/i.test(t)) {
+    // Lightning bolt
+    path = "M13 2L3 14h9l-1 10 10-12h-9l1-10z";
+  } else if (/安全|保护|隐私|加密|security|protect|safe|auth/i.test(t)) {
+    // Shield
+    path = "M12 2L3 7v5c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7L12 2zm0 10h7c-.53 4.12-3.28 7.79-7 8.94V12H5V8.26l7-3.89V12z";
+  } else if (/成本|价格|费用|金钱|降本|cost|price|money|budget|\$/i.test(t)) {
+    // Dollar/coin
+    path = "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-1.5c-1.5-.3-2.8-1.2-3-2.7h1.8c.2.9.9 1.4 2.2 1.4 1.4 0 1.8-.7 1.8-1.2 0-.6-.4-1.2-2.1-1.6-2-.5-3.3-1.3-3.3-2.9 0-1.4 1.1-2.4 2.6-2.7V5h2v1.3c1.5.4 2.3 1.5 2.3 2.7h-1.8c-.1-.8-.6-1.3-1.5-1.3-.9 0-1.6.4-1.6 1.2 0 .7.6 1.1 2.1 1.5 2 .5 3.3 1.4 3.3 3 0 1.6-1.2 2.6-2.8 2.9V17z";
+  } else if (/模型|AI|智能|GPT|Claude|LLM|agent|model|机器人/i.test(t)) {
+    // Brain/AI
+    path = "M12 2a9 9 0 00-9 9c0 3.07 1.64 5.64 4 7.28V20h2v-1.1A8.93 8.93 0 0012 20c1.08 0 2.12-.19 3-.53V20h2v-1.72A8.96 8.96 0 0021 11a9 9 0 00-9-9zm-1 14h2v2h-2v-2zm0-2V8h2v6h-2z";
+  } else if (/文件|配置|设置|config|file|setup|document|\.md|\.json|\.yaml/i.test(t)) {
+    // File/document
+    path = "M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zM8 14h8v2H8v-2zm0-3h8v2H8v-2z";
+  } else if (/团队|协作|合作|人员|team|collab|group|member/i.test(t)) {
+    // People/team
+    path = "M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z";
+  } else if (/工具|命令|终端|CLI|terminal|tool|command|npm|git/i.test(t)) {
+    // Terminal
+    path = "M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM7.5 16.5l-1.41-1.41L9.17 12 6.09 8.91 7.5 7.5 12 12l-4.5 4.5zm8.5 0h-4v-2h4v2z";
+  } else if (/时间|秒|分钟|小时|delay|time|duration|ms|latency/i.test(t)) {
+    // Clock
+    path = "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z";
+  } else if (/数据|统计|分析|指标|data|stat|metric|analyt/i.test(t)) {
+    // Chart
+    path = "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z";
+  } else if (/代码|编程|开发|code|dev|program|script|function/i.test(t)) {
+    // Code brackets
+    path = "M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z";
+  } else if (/上传|下载|部署|发布|deploy|upload|download|publish|release/i.test(t)) {
+    // Upload/rocket
+    path = "M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z";
+  } else {
+    // Default: checkmark circle
+    path = "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z";
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} style={{ flexShrink: 0, opacity: 0.85 }}>
+      <path d={path} />
+    </svg>
+  );
+};
+
 function hl(text: string, accent: string) {
   return text.split(/(`[^`]+`|\*\*[^*]+\*\*)/).map((p, j) => {
     if (p.startsWith("`") && p.endsWith("`"))
@@ -158,16 +207,25 @@ const Glass: React.FC<{ children: React.ReactNode; accent?: string; style?: Reac
   </div>
 );
 
-const Title: React.FC<{ text: string; accent: string; layout: LayoutType }> = ({ text, accent, layout }) => {
+const Title: React.FC<{ text: string; accent: string; layout: LayoutType; subtitle?: string }> = ({ text, accent, layout, subtitle }) => {
   const frame = useCurrentFrame(); const { fps } = useVideoConfig();
   const p = spring({ frame, fps, config: SPR, durationInFrames: 10 });
   const labels: Record<LayoutType, string> = { compare: "COMPARE", code: "CODE", steps: "STEPS", metric: "METRICS", grid: "OVERVIEW", standard: "INSIGHT" };
+  const subOp = interpolate(frame, [6, 12], [0, 0.85], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return (
-    <div style={{ marginBottom: 24, flexShrink: 0, opacity: interpolate(p, [0, 1], [0, 1]), transform: `translateY(${interpolate(p, [0, 1], [14, 0])}px)`, display: "flex", alignItems: "center", gap: 18 }}>
-      <div style={{ width: 5, height: 52, borderRadius: 3, background: `linear-gradient(180deg, ${accent}, ${hexA(accent, 0.25)})`, boxShadow: `0 0 20px ${hexA(accent, 0.45)}`, flexShrink: 0 }} />
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: accent, letterSpacing: 5, marginBottom: 4, fontFamily: "'SF Mono','Fira Code',monospace", opacity: 0.75 }}>{"⟨ " + labels[layout] + " ⟩"}</div>
-        <div style={{ fontSize: 52, fontWeight: 900, color: "#fff", lineHeight: 1.15 }}>{text}</div>
+    <div style={{ marginBottom: 20, flexShrink: 0, opacity: interpolate(p, [0, 1], [0, 1]), transform: `translateY(${interpolate(p, [0, 1], [14, 0])}px)` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+        <div style={{ width: 5, height: subtitle ? 68 : 52, borderRadius: 3, background: `linear-gradient(180deg, ${accent}, ${hexA(accent, 0.25)})`, boxShadow: `0 0 20px ${hexA(accent, 0.45)}`, flexShrink: 0 }} />
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: accent, letterSpacing: 5, marginBottom: 4, fontFamily: "'SF Mono','Fira Code',monospace", opacity: 0.75 }}>{"⟨ " + labels[layout] + " ⟩"}</div>
+          <div style={{ fontSize: 52, fontWeight: 900, color: "#fff", lineHeight: 1.15 }}>{text}</div>
+          {subtitle && (
+            <div style={{ fontSize: 24, color: THEME.textSecondary, marginTop: 8, opacity: subOp, lineHeight: 1.4, display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 18, height: 1.5, background: hexA(accent, 0.4), flexShrink: 0, borderRadius: 1 }} />
+              {subtitle}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -205,7 +263,7 @@ const StandardLayout: React.FC<{ bullets: string[]; chartHint?: string; accent: 
             const num = extractNumber(bp); const cardColor = num ? accent : dim;
             return (
               <Glass key={idx} accent={cardColor} style={{ opacity: op, transform: `scale(${interpolate(p, [0, 1], [0.92, 1])})`, padding: useSingleCol ? "20px 28px" : "16px 22px", display: "flex", alignItems: "center", gap: 16, gridColumn: (!useSingleCol && num && i === 0) ? "1 / -1" : undefined }}>
-                <div style={{ fontSize: 44, fontWeight: 900, color: hexA(cardColor, 0.18), fontFamily: "'SF Mono',monospace", lineHeight: 1, flexShrink: 0, width: 48, textAlign: "center" }}>{String(idx + 1).padStart(2, "0")}</div>
+                <BulletIcon text={bp} color={cardColor} size={useSingleCol ? 32 : 28} />
                 {num ? (
                   <div style={{ flex: 1, display: "flex", alignItems: "baseline", gap: 12 }}>
                     <span style={{ fontSize: 40, fontWeight: 900, color: accent, fontFamily: "'SF Mono',monospace" }}>{num.value}</span>
@@ -316,30 +374,64 @@ const CodeLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
     return parts.length ? parts : [{ text, color: "#c9d1d9" }];
   }
   return (
-    <Glass accent={THEME.cyan} style={{ background: "linear-gradient(180deg, #0d1117, #161b22)", border: "1px solid rgba(48,54,61,0.8)", borderRadius: 16, overflow: "hidden", height: "100%", display: "flex", flexDirection: "column", opacity: interpolate(wp, [0, 1], [0, 1]) }}>
-      <div style={{ display: "flex", alignItems: "center", padding: "11px 20px", gap: 8, flexShrink: 0, background: "rgba(30,36,44,0.95)", borderBottom: "1px solid rgba(48,54,61,0.6)" }}>
-        {[["#ff5f57"], ["#febc2e"], ["#28c840"]].map(([c], j) => (<div key={j} style={{ width: 12, height: 12, borderRadius: "50%", background: c }} />))}
-        <span style={{ marginLeft: 16, fontSize: 14, color: "#8b949e", fontFamily: "'SF Mono',monospace" }}>~/project</span>
-        <span style={{ marginLeft: "auto", fontSize: 12, color: "#484f58", fontFamily: "monospace" }}>bash</span>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", borderRadius: 16, overflow: "hidden", border: "1px solid rgba(48,54,61,0.8)", background: "linear-gradient(180deg, #0d1117, #161b22)", opacity: interpolate(wp, [0, 1], [0, 1]) }}>
+      {/* macOS-style title bar with Claude Code branding */}
+      <div style={{ display: "flex", alignItems: "center", padding: "10px 18px", gap: 8, flexShrink: 0, background: "rgba(22,27,34,0.98)", borderBottom: "1px solid rgba(48,54,61,0.6)" }}>
+        {[["#ff5f57"], ["#febc2e"], ["#28c840"]].map(([c], j) => (<div key={j} style={{ width: 13, height: 13, borderRadius: "50%", background: c }} />))}
+        <div style={{ flex: 1, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <span style={{ fontSize: 14, color: "#6e7681", fontFamily: "'SF Mono',monospace" }}>·</span>
+          <span style={{ fontSize: 15, fontWeight: 600, color: "#e6edf3", fontFamily: "'SF Mono','Fira Code',monospace", letterSpacing: 0.5 }}>Claude Code</span>
+        </div>
+        {/* Right-side shortcut hint */}
+        <span style={{ fontSize: 12, color: "#484f58", fontFamily: "monospace", flexShrink: 0 }}>⌥⌘1</span>
       </div>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: big ? "center" : "flex-start", padding: big ? "0" : "12px 0" }}>
+      {/* Tab bar */}
+      <div style={{ display: "flex", alignItems: "stretch", flexShrink: 0, background: "rgba(13,17,23,0.95)", borderBottom: "1px solid rgba(48,54,61,0.4)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 18px", background: "rgba(22,27,34,0.9)", borderRight: "1px solid rgba(48,54,61,0.4)", borderBottom: "2px solid #f78166" }}>
+          <span style={{ fontSize: 12, color: "#f78166" }}>✕</span>
+          <span style={{ fontSize: 13, color: "#e6edf3", fontFamily: "'SF Mono',monospace" }}>✱ Claude Code</span>
+          <span style={{ fontSize: 11, color: "#484f58", fontFamily: "monospace" }}>⊙</span>
+        </div>
+        <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", alignItems: "center", padding: "0 14px", gap: 4 }}>
+          <span style={{ fontSize: 12, color: "#484f58" }}>+</span>
+        </div>
+      </div>
+      {/* Status line — model & workspace */}
+      <div style={{ display: "flex", alignItems: "center", padding: "8px 24px", gap: 12, flexShrink: 0, borderBottom: "1px solid rgba(48,54,61,0.3)" }}>
+        {/* Claude logo placeholder */}
+        <div style={{ width: 28, height: 28, borderRadius: 6, background: "linear-gradient(135deg, #f78166, #da3633)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 900, color: "#fff", flexShrink: 0 }}>C</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "#e6edf3", fontFamily: "'SF Mono',monospace" }}>Sonnet 4.6 · Claude Max</span>
+          <span style={{ fontSize: 12, color: "#6e7681", fontFamily: "'SF Mono',monospace" }}>~/workspace/project</span>
+        </div>
+      </div>
+      {/* Terminal content area */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: big ? "center" : "flex-start", padding: big ? "8px 0" : "12px 0" }}>
         {bullets.map((bp, i) => {
           const delay = 3 + i * 5;
           const op = interpolate(frame, [delay, delay + 2], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
           const isCmd = /^[$>❯]\s/.test(bp) || /^(npm|git|claude|pip|cd|node|yarn|docker|npx)\s/.test(bp);
           const isCmt = /^[#/]/.test(bp.trim());
+          const isOutput = /^[•●○◆▸▹→·]\s/.test(bp) || /^\s{2,}/.test(bp);
           const clean = isCmd ? bp.replace(/^[$>❯]\s*/, "") : bp;
           const maxC = clean.length;
           const vis = Math.floor(interpolate(frame, [delay, delay + Math.max(8, maxC * 0.3)], [0, maxC], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
           const shown = clean.slice(0, vis);
           return (
-            <div key={i} style={{ display: "flex", padding: big ? "5px 28px" : "2px 28px", opacity: op }}>
-              <span style={{ fontFamily: "monospace", fontSize: big ? 22 : 18, color: "#484f58", width: 36, textAlign: "right", marginRight: 16, lineHeight: big ? 2.2 : 1.9, flexShrink: 0 }}>{i + 1}</span>
-              <div style={{ fontFamily: "'SF Mono','Fira Code',monospace", fontSize: big ? 28 : 22, lineHeight: big ? 2.2 : 1.9, whiteSpace: "pre-wrap", flex: 1, color: isCmd ? "#79c0ff" : isCmt ? "#6a9955" : "#c9d1d9" }}>
-                {isCmd && <span style={{ color: "#7ee787", marginRight: 8 }}>❯</span>}
-                {isCmt ? <span style={{ color: "#6a9955" }}>{shown}</span> : !isCmd ? colorize(shown).map((seg, k) => <span key={k} style={{ color: seg.color }}>{seg.text}</span>) : shown}
-                {vis < maxC && (<span style={{ display: "inline-block", width: 2, height: big ? 20 : 16, background: THEME.cyan, marginLeft: 2, verticalAlign: "middle", opacity: frame % 14 < 8 ? 1 : 0 }} />)}
-              </div>
+            <div key={i} style={{ display: "flex", padding: big ? "6px 28px" : "3px 28px", opacity: op, background: isCmd ? "rgba(248,129,102,0.04)" : "transparent" }}>
+              {isCmd ? (
+                <div style={{ fontFamily: "'SF Mono','Fira Code',monospace", fontSize: big ? 28 : 23, lineHeight: big ? 2.1 : 1.85, whiteSpace: "pre-wrap", flex: 1, color: "#e6edf3", paddingLeft: 4 }}>
+                  <span style={{ color: "#f78166", marginRight: 10, fontWeight: 600 }}>❯</span>
+                  {shown}
+                  {vis < maxC && (<span style={{ display: "inline-block", width: 2, height: big ? 20 : 16, background: "#f78166", marginLeft: 2, verticalAlign: "middle", opacity: frame % 14 < 8 ? 1 : 0 }} />)}
+                </div>
+              ) : (
+                <div style={{ fontFamily: "'SF Mono','Fira Code',monospace", fontSize: big ? 26 : 21, lineHeight: big ? 2.1 : 1.85, whiteSpace: "pre-wrap", flex: 1, color: isCmt ? "#6a9955" : isOutput ? "#8b949e" : "#c9d1d9", paddingLeft: isOutput ? 28 : 4 }}>
+                  {isCmt ? <span style={{ color: "#6a9955" }}>{shown}</span> : colorize(shown).map((seg, k) => <span key={k} style={{ color: seg.color }}>{seg.text}</span>)}
+                  {vis < maxC && (<span style={{ display: "inline-block", width: 2, height: big ? 20 : 16, background: THEME.cyan, marginLeft: 2, verticalAlign: "middle", opacity: frame % 14 < 8 ? 1 : 0 }} />)}
+                </div>
+              )}
             </div>
           );
         })}
@@ -347,16 +439,15 @@ const CodeLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
           const allDone = frame > 3 + bullets.length * 5 + (bullets[bullets.length - 1]?.length || 0) * 0.3 + 8;
           if (!allDone) return null;
           return (
-            <div style={{ display: "flex", padding: big ? "5px 28px" : "2px 28px", marginTop: 8 }}>
-              <span style={{ fontFamily: "monospace", fontSize: big ? 22 : 18, color: "#484f58", width: 36, textAlign: "right", marginRight: 16, lineHeight: big ? 2.2 : 1.9, flexShrink: 0 }}>{bullets.length + 1}</span>
-              <div style={{ fontFamily: "'SF Mono',monospace", fontSize: big ? 28 : 22, lineHeight: big ? 2.2 : 1.9, color: "#7ee787" }}>
-                ❯ <span style={{ display: "inline-block", width: 2, height: big ? 20 : 16, background: THEME.cyan, verticalAlign: "middle", opacity: frame % 16 < 9 ? 1 : 0 }} />
+            <div style={{ display: "flex", padding: big ? "6px 28px" : "3px 28px", marginTop: 8 }}>
+              <div style={{ fontFamily: "'SF Mono',monospace", fontSize: big ? 28 : 23, lineHeight: big ? 2.1 : 1.85, color: "#f78166", paddingLeft: 4 }}>
+                ❯ <span style={{ display: "inline-block", width: 2, height: big ? 20 : 16, background: "#f78166", verticalAlign: "middle", opacity: frame % 16 < 9 ? 1 : 0 }} />
               </div>
             </div>
           );
         })()}
       </div>
-    </Glass>
+    </div>
   );
 };
 
@@ -390,6 +481,55 @@ const StepsLayout: React.FC<{ bullets: string[]; accent: string }> = ({ bullets,
   );
 };
 
+/** SVG Arc Gauge for percentage metrics */
+const ArcGauge: React.FC<{ percent: number; progress: number; accent: string; size?: number }> = ({ percent, progress, accent, size = 160 }) => {
+  const r = (size - 16) / 2;
+  const cx = size / 2, cy = size / 2;
+  const circumference = 2 * Math.PI * r;
+  const startAngle = -225; // arc from bottom-left to bottom-right (270° sweep)
+  const sweepFrac = 0.75; // use 270° of the circle
+  const arcLength = circumference * sweepFrac;
+  const filledLength = arcLength * (Math.min(percent, 100) / 100) * progress;
+  return (
+    <svg width={size} height={size} style={{ overflow: "visible" }}>
+      {/* Background track */}
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke={hexA(accent, 0.1)} strokeWidth={8}
+        strokeDasharray={`${arcLength} ${circumference}`}
+        strokeDashoffset={0}
+        strokeLinecap="round"
+        transform={`rotate(${startAngle} ${cx} ${cy})`} />
+      {/* Filled arc */}
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke={accent} strokeWidth={8}
+        strokeDasharray={`${filledLength} ${circumference}`}
+        strokeDashoffset={0}
+        strokeLinecap="round"
+        transform={`rotate(${startAngle} ${cx} ${cy})`}
+        style={{ filter: `drop-shadow(0 0 8px ${hexA(accent, 0.5)})` }} />
+      {/* Glow dot at tip */}
+      {progress > 0.05 && (() => {
+        const angle = (startAngle + (filledLength / circumference) * 360) * (Math.PI / 180);
+        const dx = cx + r * Math.cos(angle);
+        const dy = cy + r * Math.sin(angle);
+        return <circle cx={dx} cy={dy} r={5} fill="#fff" style={{ filter: `drop-shadow(0 0 6px ${accent})` }} />;
+      })()}
+    </svg>
+  );
+};
+
+/** Horizontal animated bar for sub-metric comparison */
+const MetricBar: React.FC<{ value: number; maxValue: number; progress: number; color: string }> = ({ value, maxValue, progress, color }) => {
+  const barWidth = maxValue > 0 ? (value / maxValue) * 100 : 50;
+  return (
+    <div style={{ width: "100%", height: 6, borderRadius: 3, background: hexA(color, 0.1), overflow: "hidden", marginTop: 8 }}>
+      <div style={{
+        width: `${barWidth * progress}%`, height: "100%", borderRadius: 3,
+        background: `linear-gradient(90deg, ${hexA(color, 0.6)}, ${color})`,
+        boxShadow: `0 0 10px ${hexA(color, 0.3)}`,
+      }} />
+    </div>
+  );
+};
+
 const MetricLayout: React.FC<{ bullets: string[]; accent: string }> = ({ bullets, accent }) => {
   const frame = useCurrentFrame(); const { fps } = useVideoConfig();
   const { dim } = twoTone(accent);
@@ -399,10 +539,13 @@ const MetricLayout: React.FC<{ bullets: string[]; accent: string }> = ({ bullets
     const pure = parseFloat(value.replace(/[^0-9.]/g, "")); const prefix = value.match(/^[<>≤≥~]/)?.[0] || "";
     const suffix = value.replace(/^[<>≤≥~]?\s*[\d.,]+/, "").trim();
     const dec = value.includes(".") ? (value.split(".")[1]?.match(/\d+/)?.[0]?.length || 0) : 0;
-    return { value, label, pure, prefix, suffix, dec };
+    const isPercent = suffix.includes("%") || value.includes("%");
+    return { value, label, pure, prefix, suffix, dec, isPercent };
   }), [bullets]);
   const hasHero = metrics.length >= 3; const hero = hasHero ? metrics[0] : null;
   const rest = hasHero ? metrics.slice(1) : metrics; const cols = Math.min(rest.length, 3);
+  // Find max pure value among rest metrics for bar comparison
+  const maxRestValue = useMemo(() => Math.max(...rest.map(m => isNaN(m.pure) ? 0 : m.pure), 1), [rest]);
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 14 }}>
       {hero && (() => {
@@ -411,10 +554,23 @@ const MetricLayout: React.FC<{ bullets: string[]; accent: string }> = ({ bullets
         const cu = !isNaN(hero.pure) ? interpolate(p, [0, 1], [0, hero.pure]).toFixed(hero.dec) : null;
         const dv = cu !== null ? `${hero.prefix}${cu}${hero.suffix}` : hero.value || "—";
         return (
-          <Glass accent={accent} style={{ opacity: op, padding: "32px 40px", background: hexA(accent, 0.07), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", transform: `scale(${interpolate(p, [0, 1], [0.88, 1])})`, flexShrink: 0 }}>
-            <div style={{ fontSize: 104, fontWeight: 900, color: accent, fontFamily: "'SF Mono','Fira Code',monospace", textShadow: `0 0 60px ${hexA(accent, 0.3)}`, lineHeight: 1 }}>{dv}</div>
-            <div style={{ width: 120, height: 2, borderRadius: 1, marginTop: 10, marginBottom: 10, background: `linear-gradient(90deg, transparent, ${hexA(accent, 0.5)}, transparent)` }} />
-            <div style={{ fontSize: 30, color: THEME.textSecondary }}>{hero.label}</div>
+          <Glass accent={accent} style={{ opacity: op, padding: "28px 40px", background: hexA(accent, 0.07), display: "flex", alignItems: "center", justifyContent: "center", gap: 36, transform: `scale(${interpolate(p, [0, 1], [0.88, 1])})`, flexShrink: 0 }}>
+            {/* Arc gauge for percentage hero metrics */}
+            {hero.isPercent && !isNaN(hero.pure) && (
+              <div style={{ flexShrink: 0, position: "relative", width: 160, height: 160 }}>
+                <ArcGauge percent={hero.pure} progress={p} accent={accent} size={160} />
+                <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <span style={{ fontSize: 44, fontWeight: 900, color: accent, fontFamily: "'SF Mono','Fira Code',monospace" }}>{dv}</span>
+                </div>
+              </div>
+            )}
+            <div style={{ textAlign: hero.isPercent ? "left" : "center", flex: hero.isPercent ? 1 : undefined }}>
+              {!hero.isPercent && (
+                <div style={{ fontSize: 104, fontWeight: 900, color: accent, fontFamily: "'SF Mono','Fira Code',monospace", textShadow: `0 0 60px ${hexA(accent, 0.3)}`, lineHeight: 1 }}>{dv}</div>
+              )}
+              <div style={{ width: hero.isPercent ? "60%" : 120, height: 2, borderRadius: 1, marginTop: 10, marginBottom: 10, background: `linear-gradient(90deg, transparent, ${hexA(accent, 0.5)}, transparent)` }} />
+              <div style={{ fontSize: 30, color: THEME.textSecondary }}>{hero.label}</div>
+            </div>
           </Glass>
         );
       })()}
@@ -429,7 +585,11 @@ const MetricLayout: React.FC<{ bullets: string[]; accent: string }> = ({ bullets
           return (
             <Glass key={i} accent={color} style={{ opacity: op, transform: `scale(${interpolate(p, [0, 1], [0.85, 1])})`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "16px 14px" }}>
               <div style={{ fontSize: 52, fontWeight: 900, color: i === 0 ? accent : THEME.textPrimary, fontFamily: "'SF Mono','Fira Code',monospace", textShadow: i === 0 ? `0 0 30px ${hexA(accent, 0.2)}` : "none", marginBottom: 4, lineHeight: 1.1 }}>{dv}</div>
-              <div style={{ width: "40%", height: 1.5, borderRadius: 1, marginBottom: 8, background: `linear-gradient(90deg, transparent, ${hexA(color, 0.4)}, transparent)` }} />
+              {/* Animated comparison bar */}
+              {!isNaN(m.pure) && (
+                <MetricBar value={m.pure} maxValue={maxRestValue} progress={p} color={color} />
+              )}
+              <div style={{ width: "40%", height: 1.5, borderRadius: 1, marginTop: 6, marginBottom: 6, background: `linear-gradient(90deg, transparent, ${hexA(color, 0.4)}, transparent)` }} />
               <div style={{ fontSize: 22, color: THEME.textSecondary, lineHeight: 1.4 }}>{m.label}</div>
             </Glass>
           );
@@ -450,7 +610,7 @@ export const SlideSegment: React.FC<SlideSegmentProps> = ({ slideContent, segmen
     <AbsoluteFill style={{ background: THEME.bg, fontFamily: "'PingFang SC','Hiragino Sans GB','Noto Sans CJK SC',sans-serif", padding: "44px 56px", overflow: "hidden" }}>
       <FilledBg accent={accent} frame={frame} keywords={keywords} showChart={showChart} />
       <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column" }}>
-        <Title text={slideContent.title} accent={accent} layout={layout} />
+        <Title text={slideContent.title} accent={accent} layout={layout} subtitle={slideContent.chart_hint} />
         <div style={{ flex: 1, minHeight: 0 }}>
           {layout === "compare" && <CompareLayout bullets={slideContent.bullet_points} chartHint={slideContent.chart_hint} />}
           {layout === "grid" && <GridLayout bullets={slideContent.bullet_points} accent={accent} />}
@@ -460,6 +620,21 @@ export const SlideSegment: React.FC<SlideSegmentProps> = ({ slideContent, segmen
           {layout === "standard" && <StandardLayout bullets={slideContent.bullet_points} chartHint={slideContent.chart_hint} accent={accent} />}
         </div>
       </div>
+      {/* Highlight sweep after all items revealed */}
+      {(() => {
+        const bulletCount = slideContent.bullet_points.length;
+        const sweepStart = 6 + bulletCount * 4; // start after last bullet appears
+        const sweepDur = 15; // frames for sweep
+        const sweepProg = interpolate(frame, [sweepStart, sweepStart + sweepDur], [-0.3, 1.3], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+        const sweepOp = sweepProg > -0.3 && sweepProg < 1.3 ? interpolate(Math.abs(sweepProg - 0.5), [0, 0.5, 0.8], [0.2, 0.12, 0], { extrapolateRight: "clamp" }) : 0;
+        if (sweepOp <= 0) return null;
+        return (
+          <div style={{
+            position: "absolute", inset: 0, zIndex: 10, pointerEvents: "none",
+            background: `linear-gradient(105deg, transparent ${(sweepProg - 0.15) * 100}%, ${hexA(accent, sweepOp)} ${sweepProg * 100}%, transparent ${(sweepProg + 0.15) * 100}%)`,
+          }} />
+        );
+      })()}
       <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 32, display: "flex", alignItems: "center", padding: "0 56px", opacity: progressOp }}>
         <div style={{ flex: 1, height: 2, background: hexA("#ffffff", 0.05), borderRadius: 1, overflow: "hidden", marginRight: 12 }}>
           <div style={{ width: `${totalSlides > 0 ? ((segmentId + 1) / totalSlides) * 100 : 0}%`, height: "100%", background: `linear-gradient(90deg, ${accent}, ${hexA(accent, 0.5)})`, borderRadius: 1, boxShadow: `0 0 10px ${hexA(accent, 0.3)}` }} />

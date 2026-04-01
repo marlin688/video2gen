@@ -208,15 +208,52 @@ function buildCommandBlock(cmd: string, baseDelay: number): UIBlock {
 
 interface TerminalDemoSegmentProps {
   instruction: string;
+  segmentId?: number;
+  narrationText?: string;
+}
+
+/** 从 instruction 中提取核心命令作为标题 */
+function extractHeadline(instruction: string): { title: string; subtitle: string } {
+  // 提取 slash 命令
+  const slashMatch = instruction.match(/\/([\w_]+)/);
+  // 提取关键动作描述
+  const actionMatch = instruction.match(/(?:演示|展示|查看|输入|运行|使用)(.*?)(?:[，,。；]|$)/);
+
+  if (slashMatch) {
+    const cmd = `/${slashMatch[1]}`;
+    const subtitle = actionMatch
+      ? actionMatch[1].trim().replace(/^如何/, "")
+      : instruction.replace(/[。，；]/g, " ").trim().slice(0, 50);
+    return { title: cmd, subtitle };
+  }
+
+  // 提取 CLI 命令
+  const cliMatch = instruction.match(/\b(git\s+\w+|npm\s+\w+|claude\s+\w+)/);
+  if (cliMatch) {
+    return {
+      title: cliMatch[1],
+      subtitle: actionMatch ? actionMatch[1].trim() : instruction.slice(0, 50),
+    };
+  }
+
+  // 提取关键词作为标题
+  const keyAction = instruction.match(/(?:演示|展示|查看)(.*?)(?:[，,。；]|$)/);
+  return {
+    title: keyAction ? keyAction[1].trim().slice(0, 20) : "Demo",
+    subtitle: instruction.replace(/[。，；]/g, " ").trim().slice(0, 60),
+  };
 }
 
 export const TerminalDemoSegment: React.FC<TerminalDemoSegmentProps> = ({
   instruction,
+  segmentId = 1,
+  narrationText,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
   const blocks = useMemo(() => buildClaudeSession(instruction), [instruction]);
+  const headline = useMemo(() => extractHeadline(instruction), [instruction]);
 
   // 展平所有行 + 计算时序
   const allRows = useMemo(() => {
@@ -246,8 +283,13 @@ export const TerminalDemoSegment: React.FC<TerminalDemoSegmentProps> = ({
     return rows;
   }, [blocks]);
 
-  // 窗口进场
+  // 进场动画
   const winProg = spring({ frame, fps, config: { damping: 18, stiffness: 120 }, durationInFrames: 15 });
+  const titleProg = spring({ frame, fps, config: { damping: 20, stiffness: 200 }, durationInFrames: 10 });
+  const subtitleOp = interpolate(frame, [8, 14], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+
+  // 标题颜色
+  const accentOrange = "#f78166";
 
   return (
     <AbsoluteFill
@@ -263,23 +305,64 @@ export const TerminalDemoSegment: React.FC<TerminalDemoSegmentProps> = ({
         background: "radial-gradient(circle, rgba(150,80,200,0.06) 0%, transparent 70%)", filter: "blur(60px)",
       }} />
 
-      {/* 终端窗口 */}
-      <div
-        style={{
-          position: "relative",
-          zIndex: 1,
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          background: CC.bg,
-          border: `1px solid ${CC.border}`,
-          borderRadius: 12,
-          overflow: "hidden",
-          opacity: interpolate(winProg, [0, 1], [0, 1]),
-          transform: `scale(${interpolate(winProg, [0, 1], [0.97, 1])})`,
-          boxShadow: "0 20px 60px rgba(0,0,0,0.7)",
-        }}
-      >
+      <div style={{
+        position: "relative", zIndex: 1, height: "100%",
+        display: "flex", flexDirection: "column", gap: 16,
+      }}>
+        {/* ─── 标题区域: 序号 + 一级标题 + 副标题 ─── */}
+        <div style={{
+          flexShrink: 0, display: "flex", alignItems: "flex-start", gap: 24,
+          padding: "8px 0",
+          opacity: interpolate(titleProg, [0, 1], [0, 1]),
+          transform: `translateY(${interpolate(titleProg, [0, 1], [20, 0])}px)`,
+        }}>
+          {/* 序号 */}
+          <div style={{
+            fontSize: 72, fontWeight: 900, color: accentOrange, fontFamily: "'SF Mono','Fira Code',monospace",
+            lineHeight: 1, flexShrink: 0, minWidth: 80, opacity: 0.9,
+          }}>
+            {String(segmentId).padStart(2, "0")}
+          </div>
+          <div style={{ flex: 1 }}>
+            {/* 类型标签 */}
+            <div style={{
+              fontSize: 12, fontWeight: 700, color: accentOrange, letterSpacing: 4,
+              marginBottom: 6, fontFamily: "'SF Mono','Fira Code',monospace", opacity: 0.7,
+            }}>
+              TIP
+            </div>
+            {/* 一级标题 */}
+            <div style={{
+              fontSize: 44, fontWeight: 900, color: "#f0f4f8", lineHeight: 1.2,
+              fontFamily: "'PingFang SC','Hiragino Sans GB','Noto Sans CJK SC',sans-serif",
+            }}>
+              {headline.title}
+            </div>
+            {/* 二级副标题 */}
+            <div style={{
+              fontSize: 24, color: "#b0bec5", lineHeight: 1.5, marginTop: 8, opacity: subtitleOp,
+              fontFamily: "'PingFang SC','Hiragino Sans GB',sans-serif",
+            }}>
+              {headline.subtitle}
+            </div>
+          </div>
+        </div>
+
+        {/* ─── 终端窗口 ─── */}
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            background: CC.bg,
+            border: `1px solid ${CC.border}`,
+            borderRadius: 12,
+            overflow: "hidden",
+            opacity: interpolate(winProg, [0, 1], [0, 1]),
+            transform: `scale(${interpolate(winProg, [0, 1], [0.97, 1])})`,
+            boxShadow: "0 20px 60px rgba(0,0,0,0.7)",
+          }}
+        >
         {/* ─── macOS 标题栏 ─── */}
         <div
           style={{
@@ -507,6 +590,7 @@ export const TerminalDemoSegment: React.FC<TerminalDemoSegmentProps> = ({
             23.7k tokens
           </span>
         </div>
+      </div>
       </div>
     </AbsoluteFill>
   );

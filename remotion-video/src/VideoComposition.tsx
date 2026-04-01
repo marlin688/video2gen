@@ -71,7 +71,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
         }
         // 无录屏时降级为终端模拟演示
         const instruction = seg.recording_instruction || "需要录屏";
-        return <TerminalDemoSegment instruction={instruction} />;
+        return <TerminalDemoSegment instruction={instruction} segmentId={seg.id} narrationText={seg.narration_zh} />;
       }
       case "C": {
         const t = timing[String(seg.id)];

@@ -20,12 +20,33 @@ def is_gpt_model(model: str) -> bool:
     return model.startswith("gpt") or model.startswith("o1") or model.startswith("o3") or model.startswith("o4")
 
 
+def is_openai_compat_model(model: str) -> bool:
+    """走 OpenAI 兼容 API 的模型（MiniMax / DeepSeek / Qwen / GLM 等）。"""
+    prefixes = ("minimax", "deepseek", "qwen", "glm", "abab")
+    return model.lower().startswith(prefixes)
+
+
+def is_minimax_model(model: str) -> bool:
+    return model.lower().startswith("minimax")
+
+
 def call_llm(system_prompt: str, user_message: str, model: str,
              temperature: float = 0.3, max_tokens: int = 16000) -> str:
-    """统一 LLM 调用接口，根据模型名称自动路由。"""
+    """统一 LLM 调用接口，根据模型名称自动路由。
+
+    MiniMax 模型优先走官方 API (TTS_MINMAX_KEY)，失败时 fallback 到 GPT 代理。
+    """
     if is_gemini_model(model):
         return _call_gemini(system_prompt, user_message, model, temperature, max_tokens)
-    if is_gpt_model(model):
+    if is_minimax_model(model):
+        try:
+            return _call_minimax(system_prompt, user_message, model, temperature, max_tokens)
+        except Exception as e:
+            if "overload" in str(e).lower() or "529" in str(e) or "2061" in str(e):
+                click.echo(f"   ⚠️ MiniMax 官方 API 过载，尝试 GPT 代理...")
+                return _call_gpt(system_prompt, user_message, model, temperature, max_tokens)
+            raise
+    if is_gpt_model(model) or is_openai_compat_model(model):
         return _call_gpt(system_prompt, user_message, model, temperature, max_tokens)
     return _call_claude(system_prompt, user_message, model, temperature, max_tokens)
 
@@ -47,7 +68,11 @@ def _call_claude(system_prompt: str, user_message: str, model: str,
         if _pv and not _pv.rstrip("/").replace("://", "").replace(".", "").replace(":", "").isalnum():
             _cleaned_proxy[_pk] = os.environ.pop(_pk)
 
-    proxy_url = os.environ.get("https_proxy") or os.environ.get("http_proxy") or None
+    # 如果使用了自定义 base_url (代理网关)，不走本地系统代理
+    if base_url and "api.anthropic.com" not in base_url:
+        proxy_url = None
+    else:
+        proxy_url = os.environ.get("https_proxy") or os.environ.get("http_proxy") or None
     client = anthropic.Anthropic(
         api_key=api_key,
         base_url=base_url,
@@ -59,7 +84,10 @@ def _call_claude(system_prompt: str, user_message: str, model: str,
     os.environ.update(_cleaned_proxy)  # restore
 
     # 使用流式调用（兼容中转平台）
-    text_parts = []
+    # 代理平台可能同时发送 content_block_delta 和简化的 text 事件
+    # 优先用 content_block_delta，fallback 到 text 事件
+    text_parts_delta = []
+    text_parts_event = []
     with client.messages.stream(
         model=model,
         max_tokens=max_tokens,
@@ -67,9 +95,16 @@ def _call_claude(system_prompt: str, user_message: str, model: str,
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
     ) as stream:
-        for text in stream.text_stream:
-            text_parts.append(text)
-    result = "".join(text_parts)
+        for event in stream:
+            etype = getattr(event, "type", None)
+            if etype == "content_block_delta":
+                delta = event.delta
+                if getattr(delta, "type", None) == "text_delta":
+                    text_parts_delta.append(getattr(delta, "text", ""))
+            elif etype == "text":
+                text_parts_event.append(getattr(event, "text", ""))
+    # 优先使用 delta 模式；如果为空则 fallback 到 event 模式
+    result = "".join(text_parts_delta) or "".join(text_parts_event)
     if not result:
         raise RuntimeError("Claude 返回空响应")
     return result
@@ -142,4 +177,57 @@ def _call_gpt(system_prompt: str, user_message: str, model: str,
         temperature=temperature,
         max_tokens=max_tokens,
     )
-    return response.choices[0].message.content
+    result = response.choices[0].message.content or ""
+    # 清理 thinking 标签 (DeepSeek/MiniMax 可能返回 <think>...</think>)
+    import re as _re
+    result = _re.sub(r"<think>.*?</think>", "", result, flags=_re.DOTALL).strip()
+    return result
+
+
+def _call_minimax(system_prompt: str, user_message: str, model: str,
+                  temperature: float, max_tokens: int) -> str:
+    """MiniMax 官方 API (OpenAI 兼容格式，用 TTS_MINMAX_KEY)。"""
+    from openai import OpenAI
+    import httpx
+
+    api_key = os.environ.get("TTS_MINMAX_KEY", "")
+    if not api_key:
+        raise click.ClickException("未设置 TTS_MINMAX_KEY (MiniMax API Key)")
+
+    # 临时清除有问题的代理变量
+    proxy_vars = {}
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        if key in os.environ:
+            val = os.environ[key]
+            if val and val.rstrip("/").endswith("~"):
+                proxy_vars[key] = os.environ.pop(key)
+    try:
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.minimax.chat/v1",
+            http_client=httpx.Client(timeout=httpx.Timeout(600.0, connect=60.0)),
+        )
+        # M2.7 是 reasoning 模型，reasoning_content 也算在 max_tokens 里
+        # 需要给更大的 budget 确保 content 不被截断
+        effective_max = max_tokens * 4 if "m2.7" in model.lower() else max_tokens
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=temperature,
+            max_tokens=effective_max,
+        )
+    finally:
+        os.environ.update(proxy_vars)
+
+    if not response.choices:
+        # MiniMax 可能返回错误在 base_resp 而非 HTTP status
+        raise RuntimeError(f"MiniMax 返回空 choices")
+
+    result = response.choices[0].message.content or ""
+    import re as _re
+    result = _re.sub(r"<think>.*?</think>", "", result, flags=_re.DOTALL).strip()
+    return result

@@ -212,6 +212,23 @@ def multi(cfg: Config, urls, topic, project_id, model, whisper_model):
     click.echo(f"   cd remotion-video && node render.mjs {project_id}")
 
 
+@main.command("agent")
+@click.argument("project_id")
+@click.option("--source", "-s", "sources", multiple=True, required=True,
+              help="素材路径或URL (可多次指定)。支持: .md, .srt, .txt, http(s)://")
+@click.option("--topic", "-t", required=True, help="视频主题/标题方向")
+@click.option("--model", default=None, help="LLM 模型")
+@click.option("--duration", default=240, type=int, help="目标视频时长(秒)")
+@click.pass_obj
+def agent_cmd(cfg: Config, project_id, sources, topic, model, duration):
+    """AI Agent 智能编排视频脚本 (支持 markdown/文章URL/字幕等多源输入)
+
+    示例: v2g agent my-video -s article.md -s "https://mp.weixin.qq.com/s/xxx" -t "AI工具横评"
+    """
+    from v2g.agent import run_agent
+    run_agent(cfg, project_id, sources, topic, model, duration)
+
+
 @main.command()
 @click.argument("video_id_or_url")
 @click.option("--model", default=None, help="LLM 模型")

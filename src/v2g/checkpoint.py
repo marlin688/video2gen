@@ -50,6 +50,11 @@ class PipelineState:
     assembled: bool = False
     final_reviewed: bool = False
 
+    # Agent 模式
+    agent_sources: list = field(default_factory=list)  # 输入素材清单
+    agent_outline_done: bool = False     # 大纲已生成
+    outline_reviewed: bool = False       # 大纲已确认
+
     # 文件路径 (单视频模式)
     source_video: str = ""
     en_srt: str = ""

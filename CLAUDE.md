@@ -45,6 +45,7 @@ v2g slides <video_id> [--model]           # Stage 5a: slide image generation
 v2g record <video_id>                     # Screenshots → video (material B fallback)
 v2g assemble <video_id>                   # Stage 5b: FFmpeg → final/video.mp4
 v2g multi "url1;url2" --topic "topic" [--project-id]  # Multi-source pipeline (Remotion backend)
+v2g agent <project_id> -s <source> -t <topic> [--model] [--duration]  # Agent multi-source script orchestration
 v2g status <video_id>                     # Check pipeline progress
 ```
 
@@ -71,6 +72,9 @@ Single-video (v2g run):
 
 Multi-source (v2g multi):
   multi-prepare → multi-script → [review] → tts → slides → Remotion (render.mjs) → final/video.mp4
+
+Agent orchestration (v2g agent):
+  fetch/read sources → outline → [human confirm] → script.json → tts → slides → render
 ```
 
 - **FFmpeg path** (`editor.py`): direct video composition with ASS subtitle burn-in. Output: `output/{video_id}/final/video.mp4`
@@ -115,14 +119,31 @@ State persists in `output/{video_id}/checkpoint.json` (`PipelineState` dataclass
 - `recording_guide.md` — Extracted material B instructions for the user.
 - `final/subtitles.srt` — SRT subtitles (Remotion backend) or `final/subtitles.ass` (FFmpeg backend).
 
+### Agent Orchestration (`agent.py`)
+
+`v2g agent` implements a two-phase LLM-driven script generation pipeline:
+
+1. **Phase 1 — Outline**: Agent loop with tool use (fetch URLs, read files, save outline). Supports both Anthropic and OpenAI-compatible backends.
+2. **Human review**: User confirms/edits `outline.json`
+3. **Phase 2 — Script**: Direct LLM call expands outline into `script.json` (uses `call_llm`, not agent loop, for stability with long outputs)
+
+Agent tools: `fetch_url` (web article extraction via trafilatura), `read_source_file` (local .md/.srt/.txt), `save_outline`, `save_script`.
+
+Article fetching (`fetcher.py`): Uses trafilatura with browser UA headers. WeChat articles require direct HTTP download (trafilatura's default downloader fails on WeChat's environment verification).
+
 ### LLM Router (`llm.py`)
 
 Routes by model name prefix:
+- `glm*` → 智谱官方 API (`ZHIPU_API_KEY`, base: `open.bigmodel.cn`)
+- `minimax*` → MiniMax 官方 API (`TTS_MINMAX_KEY`, base: `api.minimax.chat`), fallback to GPT proxy on overload
 - `gemini*` → Google Generative AI SDK
 - `gpt*`, `o1*`, `o3*`, `o4*` → OpenAI SDK (optional Anthropic proxy fallback)
+- `deepseek*`, `qwen*`, `abab*` → OpenAI-compatible via GPT proxy
 - All others → Anthropic Claude SDK (streaming via httpx)
 
 Platform proxy system (`config.py` `_apply_platform()`) maps platform-specific env vars (e.g. `ITSSX_API_KEY`) to standard `ANTHROPIC_*` variables.
+
+**Proxy handling**: When `ANTHROPIC_BASE_URL` is a third-party gateway, local system proxy is skipped. 智谱/MiniMax API calls temporarily clear all proxy env vars.
 
 ### TTS Dual Engine (`tts.py`)
 
@@ -132,10 +153,13 @@ Platform proxy system (`config.py` `_apply_platform()`) maps platform-specific e
 
 ### Prompt Engineering
 
-`src/v2g/prompts/` contains three LLM prompt templates:
+`src/v2g/prompts/` contains LLM prompt templates:
 - `script_system.md` — single-source script generation rules
 - `script_multi_system.md` — multi-source synthesis rules
 - `slide_system.md` — slide content and layout generation
+- `agent_system.md` — Agent role and orchestration principles
+- `agent_outline.md` — outline generation requirements and JSON format
+- `agent_script.md` — script expansion rules (reuses material type system from script_system.md)
 
 ### Remotion Components (`remotion-video/src/`)
 
@@ -155,8 +179,10 @@ Platform proxy system (`config.py` `_apply_platform()`) maps platform-specific e
 ### Key Environment Variables
 
 See `.env.example` for the full list. Notable variables:
-- `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` — LLM provider keys
+- `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` — Claude API (supports third-party gateways)
+- `ZHIPU_API_KEY` — 智谱 GLM API (glm-5, glm-4.7 etc.)
+- `TTS_MINMAX_KEY` — MiniMax API (shared by TTS and text models like minimax-m2.7)
+- `GPT_API_KEY`, `GPT_BASE_URL` — OpenAI-compatible proxy (for GPT/DeepSeek/Qwen etc.)
+- `GEMINI_API_KEY` — Google Gemini
 - `TTS_ENGINE` — `edge` (default) or `minimax`
-- `TTS_MINMAX_KEY`, `TTS_MINIMAX_VOICE_ID` — MiniMax TTS config
-- `GPT_API_KEY`, `GPT_BASE_URL` — OpenAI-compatible API config
 - `REMOTION_CHROME_EXECUTABLE` — override Chrome path for Remotion rendering

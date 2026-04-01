@@ -24,13 +24,15 @@
 - 必须提供 `recording_instruction` 字段
 - **关键规则：尽可能在 instruction 中包含具体的 URL**，系统会自动打开网页截图生成素材
 - URL 来源示例：
-  - GitHub 仓库页面（如 `https://github.com/anthropics/claude-code`）
-  - npm/PyPI 包页面（如 `https://www.npmjs.com/package/@anthropic-ai/claude-code`）
+  - GitHub 仓库/文件页面（如 `https://github.com/anthropics/claude-code/blob/main/src/query.ts`）——**指定到具体文件路径**
+  - npm/PyPI 包页面
   - 官方文档页面
-  - 在线工具/演示页面
+  - **推特/X 帖子**（如 `https://x.com/user/status/123456`）——系统会自动截取推文卡片
+- 如果素材文章中引用了某条推特/社交媒体帖子，**优先使用该推文 URL 作为 B 素材**，比放一张 slide 更有说服力
 - 如果知识点涉及某个开源项目、工具、API，**必须**附上其官方页面 URL
+- GitHub URL 要**尽可能精确到文件路径**（如 `blob/main/src/analytics/datadog.ts`），不要只放仓库首页
 - 没有对应 URL 的终端/IDE 操作也可以，系统会用动画模拟
-- 控制在 80 字以内
+- 控制在 120 字以内（URL 不计入字数限制）
 
 ### 素材 C: 原始片段（仅当输入包含字幕时）
 - 必须提供 `source_start` 和 `source_end`（秒数）

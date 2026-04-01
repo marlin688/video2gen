@@ -54,6 +54,30 @@ function twoTone(accent: string) {
 const EASE_OUT = Easing.bezier(0.16, 1, 0.3, 1);
 const SPR = { damping: 18, stiffness: 260 };
 
+/**
+ * 交错弹入动画：每个元素依次 spring 进入。
+ * 返回 { opacity, transform } style 对象，直接用于 div.style
+ */
+function staggerStyle(
+  frame: number,
+  fps: number,
+  index: number,
+  baseDelay: number = 12,
+  staggerInterval: number = 5,
+): React.CSSProperties {
+  const delay = baseDelay + index * staggerInterval;
+  const prog = spring({
+    frame: Math.max(0, frame - delay),
+    fps,
+    config: { damping: 16, stiffness: 180 },
+    durationInFrames: 15,
+  });
+  return {
+    opacity: prog,
+    transform: `translateY(${interpolate(prog, [0, 1], [28, 0])}px) scale(${interpolate(prog, [0, 1], [0.92, 1])})`,
+  };
+}
+
 function hexA(hex: string, a: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -257,12 +281,11 @@ const StandardLayout: React.FC<{ bullets: string[]; chartHint?: string; accent: 
       {bullets.length > 1 && (
         <div style={{ flex: 1, display: "grid", gridTemplateColumns: useSingleCol ? "1fr" : "1fr 1fr", gap: 10 }}>
           {bullets.slice(1).map((bp, i) => {
-            const idx = i + 1; const delay = 6 + i * 3;
-            const p = spring({ frame: Math.max(0, frame - delay), fps, config: SPR, durationInFrames: 8 });
-            const op = interpolate(frame, [delay, delay + 4], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+            const idx = i + 1;
+            const stag = staggerStyle(frame, fps, i, 10, 6);
             const num = extractNumber(bp); const cardColor = num ? accent : dim;
             return (
-              <Glass key={idx} accent={cardColor} style={{ opacity: op, transform: `scale(${interpolate(p, [0, 1], [0.92, 1])})`, padding: useSingleCol ? "20px 28px" : "16px 22px", display: "flex", alignItems: "center", gap: 16, gridColumn: (!useSingleCol && num && i === 0) ? "1 / -1" : undefined }}>
+              <Glass key={idx} accent={cardColor} style={{ ...stag, padding: useSingleCol ? "20px 28px" : "16px 22px", display: "flex", alignItems: "center", gap: 16, gridColumn: (!useSingleCol && num && i === 0) ? "1 / -1" : undefined }}>
                 <BulletIcon text={bp} color={cardColor} size={useSingleCol ? 32 : 28} />
                 {num ? (
                   <div style={{ flex: 1, display: "flex", alignItems: "baseline", gap: 12 }}>
@@ -300,9 +323,8 @@ const CompareLayout: React.FC<{ bullets: string[]; chartHint?: string }> = ({ bu
         </div>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: items.length <= 3 ? "space-evenly" : "flex-start", gap: items.length > 3 ? 12 : 0 }}>
           {items.map((bp, i) => {
-            const d = baseDelay + 4 + i * 3;
-            const p = spring({ frame: Math.max(0, frame - d), fps, config: SPR, durationInFrames: 8 });
-            return (<div key={i} style={{ opacity: interpolate(frame, [d, d + 3], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }), transform: `translateY(${interpolate(p, [0, 1], [10, 0])}px)`, fontSize: 28, color: THEME.textPrimary, lineHeight: 1.6, paddingLeft: 16, borderLeft: `3px solid ${hexA(color, 0.45)}` }}>{bp}</div>);
+            const stag = staggerStyle(frame, fps, i, baseDelay + 6, 6);
+            return (<div key={i} style={{ ...stag, fontSize: 28, color: THEME.textPrimary, lineHeight: 1.6, paddingLeft: 16, borderLeft: `3px solid ${hexA(color, 0.45)}` }}>{bp}</div>);
           })}
         </div>
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${hexA(color, 0.15)}`, fontSize: 22, color: hexA(color, 0.7), fontStyle: "italic", opacity: interpolate(frame, [baseDelay + 12, baseDelay + 18], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) }}>
@@ -333,13 +355,11 @@ const GridLayout: React.FC<{ bullets: string[]; accent: string }> = ({ bullets, 
   return (
     <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gridAutoRows: "1fr", gap: 12, height: "100%" }}>
       {bullets.map((bp, i) => {
-        const delay = 3 + i * 3;
-        const p = spring({ frame: Math.max(0, frame - delay), fps, config: SPR, durationInFrames: 8 });
-        const op = interpolate(frame, [delay, delay + 3], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+        const stag = staggerStyle(frame, fps, i, 8, 6);
         const color = i === 0 ? accent : dim; const isAnchor = i === 0;
         const [label, ...descParts] = bp.split(/[：:]/); const description = descParts.join("：");
         return (
-          <Glass key={i} accent={color} style={{ opacity: op, position: "relative", transform: `scale(${interpolate(p, [0, 1], [0.88, 1])})`, padding: 0, display: "flex", overflow: "hidden", gridColumn: isAnchor ? "1 / -1" : undefined, background: isAnchor ? hexA(accent, 0.06) : undefined }}>
+          <Glass key={i} accent={color} style={{ ...stag, position: "relative", padding: 0, display: "flex", overflow: "hidden", gridColumn: isAnchor ? "1 / -1" : undefined, background: isAnchor ? hexA(accent, 0.06) : undefined }}>
             <div style={{ width: 5, background: `linear-gradient(180deg, ${color}, ${hexA(color, 0.25)})`, flexShrink: 0 }} />
             <div style={{ flex: 1, padding: isAnchor ? "22px 28px" : "16px 20px", display: "flex", flexDirection: isAnchor ? "row" : "column", alignItems: isAnchor ? "center" : "flex-start", justifyContent: isAnchor ? "flex-start" : "center", gap: isAnchor ? 24 : 6 }}>
               <div style={{ position: isAnchor ? "relative" : "absolute", top: isAnchor ? undefined : 8, right: isAnchor ? undefined : 14, fontSize: isAnchor ? 64 : 40, fontWeight: 900, color: hexA(color, 0.18), fontFamily: "'SF Mono',monospace", lineHeight: 1, flexShrink: 0 }}>{String(i + 1).padStart(2, "0")}</div>
@@ -409,8 +429,8 @@ const CodeLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
       {/* Terminal content area */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: big ? "center" : "flex-start", padding: big ? "8px 0" : "12px 0" }}>
         {bullets.map((bp, i) => {
-          const delay = 3 + i * 5;
-          const op = interpolate(frame, [delay, delay + 2], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+          const delay = 3 + i * 6;
+          const op = interpolate(frame, [delay, delay + 4], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
           const isCmd = /^[$>❯]\s/.test(bp) || /^(npm|git|claude|pip|cd|node|yarn|docker|npx)\s/.test(bp);
           const isCmt = /^[#/]/.test(bp.trim());
           const isOutput = /^[•●○◆▸▹→·]\s/.test(bp) || /^\s{2,}/.test(bp);
@@ -460,9 +480,9 @@ const StepsLayout: React.FC<{ bullets: string[]; accent: string }> = ({ bullets,
     <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 6, position: "relative", paddingLeft: 40 }}>
       <div style={{ position: "absolute", left: 62, top: 20, bottom: 20, width: 3, borderRadius: 2, background: `linear-gradient(180deg, ${accent}55, ${THEME.violet}55, ${THEME.amber}44, ${THEME.emerald}44)` }} />
       {bullets.map((bp, i) => {
-        const delay = 3 + i * 5;
-        const p = spring({ frame: Math.max(0, frame - delay), fps, config: SPR, durationInFrames: 10 });
-        const op = interpolate(frame, [delay, delay + 4], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+        const delay = 6 + i * 7;
+        const p = spring({ frame: Math.max(0, frame - delay), fps, config: { damping: 14, stiffness: 160 }, durationInFrames: 15 });
+        const op = interpolate(frame, [delay, delay + 5], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
         const text = bp.replace(/^(第[一二三四五六七八九十\d]+步|Step\s*\d|[\d①②③④⑤⑥⑦⑧⑨⑩])\s*[.、)）:：]\s*/i, "");
         const color = colors[i % colors.length]; const isActive = i === activeIdx;
         const scale = isActive ? interpolate(p, [0, 1], [0.4, 1.0]) : interpolate(p, [0, 1], [0.4, 0.92]);
@@ -576,14 +596,14 @@ const MetricLayout: React.FC<{ bullets: string[]; accent: string }> = ({ bullets
       })()}
       <div style={{ flex: 1, display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gridAutoRows: "1fr", gap: 12 }}>
         {rest.map((m, i) => {
-          const delay = (hasHero ? 9 : 3) + i * 3;
-          const p = spring({ frame: Math.max(0, frame - delay), fps, config: SPR, durationInFrames: 12 });
-          const op = interpolate(frame, [delay, delay + 3], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+          const delay = (hasHero ? 12 : 6) + i * 6;
+          const p = spring({ frame: Math.max(0, frame - delay), fps, config: { damping: 14, stiffness: 160 }, durationInFrames: 15 });
+          const stag = staggerStyle(frame, fps, i, hasHero ? 12 : 6, 6);
           const color = i === 0 ? accent : dim;
           const cu = !isNaN(m.pure) ? interpolate(p, [0, 1], [0, m.pure]).toFixed(m.dec) : null;
           const dv = cu !== null ? `${m.prefix}${cu}${m.suffix}` : m.value || "—";
           return (
-            <Glass key={i} accent={color} style={{ opacity: op, transform: `scale(${interpolate(p, [0, 1], [0.85, 1])})`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "16px 14px" }}>
+            <Glass key={i} accent={color} style={{ ...stag, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "16px 14px" }}>
               <div style={{ fontSize: 52, fontWeight: 900, color: i === 0 ? accent : THEME.textPrimary, fontFamily: "'SF Mono','Fira Code',monospace", textShadow: i === 0 ? `0 0 30px ${hexA(accent, 0.2)}` : "none", marginBottom: 4, lineHeight: 1.1 }}>{dv}</div>
               {/* Animated comparison bar */}
               {!isNaN(m.pure) && (

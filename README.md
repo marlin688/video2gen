@@ -148,8 +148,17 @@ video2gen/
 │       └── agent_script.md     # 脚本展开规则
 ├── remotion-video/             # TypeScript 前端
 │   ├── src/
-│   │   ├── VideoComposition.tsx # 主合成容器
-│   │   ├── components/         # 渲染组件
+│   │   ├── VideoComposition.tsx # 主合成容器（通过 registry 动态分发）
+│   │   ├── registry/           # 组件库（Schema × Style 两层模型）
+│   │   │   ├── types.ts        # Schema 数据接口 + Style 元信息
+│   │   │   ├── registry.ts     # 组件注册表
+│   │   │   ├── init.ts         # 自注册入口
+│   │   │   └── styles/         # 视觉组件实现
+│   │   │       ├── slide/      # PPT 卡片风格
+│   │   │       ├── terminal/   # 终端模拟风格
+│   │   │       ├── recording/  # 录屏播放风格
+│   │   │       └── source-clip/# 原视频片段风格
+│   │   ├── components/         # 旧组件（保留兼容）
 │   │   └── types.ts            # 类型定义
 │   └── render.mjs              # Python→Remotion 渲染桥接
 ├── output/                     # 运行产出（gitignore）
@@ -157,15 +166,33 @@ video2gen/
 └── .env.example
 ```
 
+## 组件库系统
+
+视频渲染采用 **Schema × Style 两层模型**，将数据契约（稳定）与视觉实现（频繁迭代）解耦：
+
+- **Schema** — 定义数据结构：slide（PPT）、terminal（终端）、recording（录屏）、source-clip（原片）
+- **Style** — 实现视觉效果：每个 schema 可以有多种风格，通过 `component` 字段在 script.json 中指定
+
+当前可用组件：
+
+| 组件 ID | 说明 | Schema |
+|---------|------|--------|
+| `slide.tech-dark` | 深色 PPT 卡片，6 种自动布局 | slide |
+| `terminal.aurora` | Claude Code TUI 模拟，极光背景 | terminal |
+| `recording.default` | 录屏视频播放 | recording |
+| `source-clip.default` | 原视频片段裁剪 | source-clip |
+
+新增组件只需：写一个 style 文件 + `init.ts` 加一行 import，框架代码无需改动。
+
 ## 三种素材类型
 
-脚本中每个段落指定一种素材类型：
+脚本中每个段落指定一种素材类型（向后兼容），也可通过 `component` 字段直接指定视觉组件：
 
-| 类型 | 说明 | 占比 |
-|------|------|------|
-| **A (PPT 幻灯片)** | AI 生成的图文幻灯片，支持 6 种布局 | ~40% |
-| **B (录屏)** | 用户提供的屏幕录制，缺失时自动降级为动画模拟 | ~40% |
-| **C (原片剪辑)** | 原视频片段，限 10 秒内，自动调速匹配配音时长 | ~20% |
+| 类型 | 说明 | 默认组件 | 占比 |
+|------|------|---------|------|
+| **A (PPT 幻灯片)** | AI 生成的图文幻灯片，支持 6 种布局 | `slide.tech-dark` | ~30% |
+| **B (录屏)** | 用户提供的屏幕录制，缺失时自动降级为动画模拟 | `recording.default` / `terminal.aurora` | ~50% |
+| **C (原片剪辑)** | 原视频片段，限 10 秒内，自动调速匹配配音时长 | `source-clip.default` | ~20% |
 
 ## 渲染后端对比
 

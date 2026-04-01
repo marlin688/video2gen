@@ -1,12 +1,12 @@
 /**
- * 素材 A: PPT 图文卡片 — 极简风格 v6
+ * slide.tech-dark — 极简深色 PPT 卡片
  *
  * 设计理念: "less is more"
  * - 深海军蓝背景 + 细网格
  * - 单色系: 蓝色 #4a9eff 为主色，白/灰辅助
  * - 大量留白，元素居中只占画面 40-50%
  * - 交错弹入动画 (staggered spring)
- * - 6 种布局自动检测（保留原有检测逻辑）
+ * - 6 种布局自动检测
  */
 
 import {
@@ -16,8 +16,9 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import React, { useMemo } from "react";
-import type { SlideContent } from "../types";
+import React from "react";
+import type { StyleComponentProps } from "../../types";
+import { registry } from "../../registry";
 
 /* ═══════════════ 颜色系统：单色蓝 ═══════════════ */
 const C = {
@@ -41,7 +42,6 @@ function hexA(hex: string, a: number): string {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-/** 交错弹入动画 */
 function stag(frame: number, fps: number, index: number, base = 12, interval = 10): React.CSSProperties {
   const delay = base + index * interval;
   const p = spring({ frame: Math.max(0, frame - delay), fps, config: { damping: 14, stiffness: 120 }, durationInFrames: 20 });
@@ -51,7 +51,6 @@ function stag(frame: number, fps: number, index: number, base = 12, interval = 1
   };
 }
 
-/** 内联代码高亮 */
 function hl(text: string): React.ReactNode {
   return text.split(/(`[^`]+`)/).map((p, j) => {
     if (p.startsWith("`") && p.endsWith("`"))
@@ -60,11 +59,16 @@ function hl(text: string): React.ReactNode {
   });
 }
 
-/* ═══════════════ 布局检测（保留原有逻辑）═══════════════ */
+/* ═══════════════ 布局检测 ═══════════════ */
 
 type LayoutType = "compare" | "grid" | "code" | "steps" | "metric" | "standard";
 
-function detectLayout(sc: SlideContent): LayoutType {
+interface SlideContentShape {
+  bullet_points: string[];
+  chart_hint?: string;
+}
+
+function detectLayout(sc: SlideContentShape): LayoutType {
   const hint = (sc.chart_hint || "").toLowerCase();
   const bp = sc.bullet_points;
   if (hint.includes("vs") || hint.includes("对比")) return "compare";
@@ -184,7 +188,6 @@ const GridLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
 const MetricLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  // 提取数字和标签
   const metrics = bullets.map((bp) => {
     const m = bp.match(/([<>≤≥~]?\s*\d+[\d.,]*\s*[%倍x×秒msMBGBK次个项+\-]?)/);
     if (m) return { value: m[1].trim(), label: bp.replace(m[0], "").replace(/^[：:,，\s]+/, "").trim() };
@@ -203,7 +206,6 @@ const MetricLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
     }}>
       {metrics.map((m, i) => {
         const s = stag(frame, fps, i, 10, 12);
-        // 数字动画
         const numProg = spring({ frame: Math.max(0, frame - 10 - i * 12), fps, config: { damping: 20, stiffness: 100 }, durationInFrames: 25 });
         const pure = parseFloat(m.value.replace(/[^0-9.]/g, ""));
         const animated = !isNaN(pure) ? interpolate(numProg, [0, 1], [0, pure]).toFixed(m.value.includes(".") ? 1 : 0) : m.value;
@@ -238,7 +240,6 @@ const MetricLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
 
 const CodeLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
   return (
     <div style={{
       background: "rgba(10, 15, 28, 0.9)",
@@ -247,7 +248,6 @@ const CodeLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
       maxWidth: 1000, margin: "0 auto",
       overflow: "hidden",
     }}>
-      {/* macOS title bar */}
       <div style={{
         display: "flex", alignItems: "center", padding: "12px 18px",
         borderBottom: `1px solid ${hexA(C.blue, 0.08)}`,
@@ -260,7 +260,6 @@ const CodeLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
         <span style={{ fontSize: 14, color: C.grayDim, fontFamily: "'SF Mono',monospace" }}>Claude Code</span>
         <div style={{ flex: 1 }} />
       </div>
-      {/* Code content */}
       <div style={{ padding: "20px 28px", display: "flex", flexDirection: "column", gap: 4 }}>
         {bullets.map((bp, i) => {
           const delay = 8 + i * 8;
@@ -292,7 +291,6 @@ const StepsLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
     bp.replace(/^(第[一二三四五六七八九十\d]+步|Step\s*\d|[\d①②③④⑤⑥⑦⑧⑨⑩])\s*[.、)）:：]\s*/i, "")
   );
 
-  // 少于等于 4 步用水平 pipeline，否则用垂直堆叠
   if (cleaned.length <= 5) {
     return (
       <div style={{
@@ -330,7 +328,6 @@ const StepsLayout: React.FC<{ bullets: string[] }> = ({ bullets }) => {
     );
   }
 
-  // 垂直堆叠
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
       {cleaned.map((text, i) => (
@@ -372,7 +369,6 @@ const CompareLayout: React.FC<{ bullets: string[]; chartHint?: string }> = ({ bu
 
   return (
     <div style={{ display: "flex", alignItems: "stretch", gap: 0, maxWidth: 1100, margin: "0 auto" }}>
-      {/* Left */}
       <div style={{
         flex: 1, display: "flex", flexDirection: "column", gap: 12,
         ...stag(frame, fps, 0, 6, 0),
@@ -393,7 +389,6 @@ const CompareLayout: React.FC<{ bullets: string[]; chartHint?: string }> = ({ bu
         ))}
       </div>
 
-      {/* VS */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "center",
         width: 80, flexShrink: 0,
@@ -409,7 +404,6 @@ const CompareLayout: React.FC<{ bullets: string[]; chartHint?: string }> = ({ bu
         }}>VS</div>
       </div>
 
-      {/* Right */}
       <div style={{
         flex: 1, display: "flex", flexDirection: "column", gap: 12,
         ...stag(frame, fps, 0, 10, 0),
@@ -435,14 +429,8 @@ const CompareLayout: React.FC<{ bullets: string[]; chartHint?: string }> = ({ bu
 
 /* ═══════════════ 主组件 ═══════════════ */
 
-interface SlideSegmentProps {
-  slideContent: SlideContent;
-  segmentId?: number;
-  totalSlides?: number;
-}
-
-export const SlideSegment: React.FC<SlideSegmentProps> = ({ slideContent, segmentId = 0 }) => {
-  const layout = detectLayout(slideContent);
+const SlideTechDark: React.FC<StyleComponentProps<"slide">> = ({ data }) => {
+  const layout = detectLayout(data);
 
   return (
     <AbsoluteFill style={{
@@ -457,14 +445,30 @@ export const SlideSegment: React.FC<SlideSegmentProps> = ({ slideContent, segmen
         alignItems: "center", justifyContent: "center",
         padding: "60px 120px",
       }}>
-        <Title text={slideContent.title} subtitle={slideContent.chart_hint} />
-        {layout === "standard" && <StandardLayout bullets={slideContent.bullet_points} />}
-        {layout === "grid" && <GridLayout bullets={slideContent.bullet_points} />}
-        {layout === "metric" && <MetricLayout bullets={slideContent.bullet_points} />}
-        {layout === "code" && <CodeLayout bullets={slideContent.bullet_points} />}
-        {layout === "steps" && <StepsLayout bullets={slideContent.bullet_points} />}
-        {layout === "compare" && <CompareLayout bullets={slideContent.bullet_points} chartHint={slideContent.chart_hint} />}
+        <Title text={data.title} subtitle={data.chart_hint} />
+        {layout === "standard" && <StandardLayout bullets={data.bullet_points} />}
+        {layout === "grid" && <GridLayout bullets={data.bullet_points} />}
+        {layout === "metric" && <MetricLayout bullets={data.bullet_points} />}
+        {layout === "code" && <CodeLayout bullets={data.bullet_points} />}
+        {layout === "steps" && <StepsLayout bullets={data.bullet_points} />}
+        {layout === "compare" && <CompareLayout bullets={data.bullet_points} chartHint={data.chart_hint} />}
       </div>
     </AbsoluteFill>
   );
 };
+
+/* ═══════════════ 注册 ═══════════════ */
+
+registry.register(
+  {
+    id: "slide.tech-dark",
+    schema: "slide",
+    name: "极简深色卡片",
+    description: "深色背景 PPT 卡片，适合数据展示、架构总览、多组对比。支持 6 种自动检测布局（标准/网格/指标/代码/步骤/对比）。需要 title 和 bullet_points。",
+    isDefault: true,
+    tags: ["数据密集", "架构", "对比", "指标"],
+  },
+  SlideTechDark,
+);
+
+export { SlideTechDark };

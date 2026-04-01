@@ -92,14 +92,31 @@ Agent orchestration (v2g agent):
 
 Composition ID is hardcoded as `V2GVideo` in `Root.tsx`. Resolution is 1920x1080 @ 30fps.
 
+### Component Registry (Schema × Style)
+
+Visual rendering uses a two-layer model separating data contracts (Schema) from visual implementations (Style):
+
+- **Schemas** (stable): `slide`, `terminal`, `recording`, `source-clip` — define data interfaces in `registry/types.ts`
+- **Styles** (iterable): visual implementations in `registry/styles/{schema}/{name}.tsx` — self-register via `registry.register()` at import time
+- **Registry** (`registry/registry.ts`): `ComponentRegistry` class with `resolve()`, `resolveForSegment()`, `toLLMPromptTable()`
+- **Init** (`registry/init.ts`): imports all style files to trigger registration
+
+Style ID format: `"{schema}.{style-name}"`, e.g. `"slide.tech-dark"`.
+
+`VideoComposition.tsx` resolves components via `registry.resolveForSegment(seg, hasRecording)`:
+1. If `segment.component` is set → look up that style ID
+2. Else fallback by `segment.material`: A→slide default, B→recording/terminal default, C→source-clip default
+
+To add a new visual style: create `registry/styles/{schema}/{name}.tsx` with `registry.register()` call at bottom + add import to `init.ts`.
+
 ### Three Material Types
 
-Each script segment specifies one of three material types:
-- **A (PPT slides)** — AI-generated slide images. Layout detection happens in TypeScript (`SlideSegment.tsx` `detectLayout()`), not Python. 6 layout modes: code, compare, metric, grid, steps, standard.
-- **B (Screen recording)** — User-provided screen captures, or screenshots auto-converted via `v2g record`. Missing recordings fall back to `TerminalDemoSegment` (animated Claude Code TUI simulation) in Remotion, or a placeholder card in FFmpeg.
+Each script segment specifies one of three material types, and optionally a `component` field (style ID like `"slide.tech-dark"`) for explicit visual component selection:
+- **A (PPT slides)** — AI-generated slide images. Layout detection happens in TypeScript (`registry/styles/slide/tech-dark.tsx` `detectLayout()`), not Python. 6 layout modes: code, compare, metric, grid, steps, standard.
+- **B (Screen recording)** — User-provided screen captures, or screenshots auto-converted via `v2g record`. Missing recordings fall back to `terminal.aurora` style (animated Claude Code TUI simulation) in Remotion, or a placeholder card in FFmpeg.
 - **C (Source clip)** — Trimmed + speed-adjusted clips from original video. Capped at 10 seconds, bottom 15% cropped to remove hardcoded subtitles.
 
-Target ratio: A ~40%, B ~40%, C ~20%.
+Target ratio: A ≤30%, B ≥50%, C ~20%.
 
 ### Pipeline State
 
@@ -114,7 +131,7 @@ State persists in `output/{video_id}/checkpoint.json` (`PipelineState` dataclass
 
 ### Key Data Files
 
-- `script.json` — LLM-generated script with segments (id, type, material, narration_zh, slide_content/recording_instruction/source timing). Multi-source mode adds `sources_used`, `total_duration_hint`.
+- `script.json` — LLM-generated script with segments (id, type, material, component?, narration_zh, slide_content/recording_instruction/source timing). The optional `component` field specifies a style ID (e.g. `"slide.tech-dark"`); when absent, defaults by material type. Multi-source mode adds `sources_used`, `total_duration_hint`.
 - `voiceover/timing.json` — `{segment_id: {file, duration, text_length}}` mapping from TTS output.
 - `recording_guide.md` — Extracted material B instructions for the user.
 - `final/subtitles.srt` — SRT subtitles (Remotion backend) or `final/subtitles.ass` (FFmpeg backend).
@@ -163,13 +180,17 @@ Platform proxy system (`config.py` `_apply_platform()`) maps platform-specific e
 
 ### Remotion Components (`remotion-video/src/`)
 
-- `VideoComposition.tsx` — main container, sequences segments via `<Series>`, handles material B fallback to `TerminalDemoSegment`
-- `SlideSegment.tsx` — material A with 6 layout modes, glassmorphism design, animated backgrounds
-- `SourceClipSegment.tsx` — material C with speed-matching to TTS duration
-- `RecordingSegment.tsx` — material B video playback
-- `TerminalDemoSegment.tsx` — Claude Code TUI simulation (material B fallback when no recording)
-- `SubtitleOverlay.tsx` — frame-synced subtitle display (currently unused, subtitles are separate SRT)
-- `types.ts` — `ScriptSegment`, `TimingMap`, `VideoCompositionProps` type definitions
+- `VideoComposition.tsx` — main container, sequences segments via `<Series>`, dispatches to registered styles via `registry.resolveForSegment()`
+- `registry/` — Schema × Style component library system:
+  - `types.ts` — `SlideData`, `TerminalData`, `RecordingData`, `SourceClipData` schema interfaces + `StyleMeta`, `StyleComponentProps<S>` generics
+  - `registry.ts` — `ComponentRegistry` class (register, resolve, resolveForSegment, toLLMPromptTable)
+  - `init.ts` — import-triggers all style self-registration
+  - `styles/slide/tech-dark.tsx` — PPT cards with 6 auto-detected layouts (default for material A)
+  - `styles/terminal/aurora.tsx` — Claude Code TUI simulation with aurora background (default for material B fallback)
+  - `styles/recording/default.tsx` — video playback (default for material B with recording file)
+  - `styles/source-clip/default.tsx` — trimmed source clip with bottom mask (default for material C)
+- `components/` — legacy components (SlideSegment.tsx etc. still present for reference, but rendering goes through registry styles)
+- `types.ts` — `ScriptSegment` (includes optional `component?: string` field), `TimingMap`, `VideoCompositionProps` type definitions
 
 ### External Dependencies
 

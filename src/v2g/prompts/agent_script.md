@@ -64,6 +64,7 @@
       "id": 1,
       "type": "intro",
       "material": "A",
+      "component": "slide.tech-dark",
       "narration_zh": "解说词（40-100字，口语化）",
       "slide_content": {
         "title": "卡片标题（4-12字）",
@@ -76,12 +77,24 @@
       "id": 2,
       "type": "body",
       "material": "B",
+      "component": "terminal.aurora",
       "narration_zh": "解说词...",
       "recording_instruction": "操作步骤说明（≤80字）",
       "notes": "段落意图"
     }
   ]
 }
+
+## 可用视觉组件
+
+每个 segment 可通过 `component` 字段指定视觉组件（格式 `"{schema}.{style}"`）。不指定时按 material 走默认。
+
+| 组件 ID | 适用场景 | 标签 |
+|---------|---------|------|
+| `slide.tech-dark` (默认) | 深色背景 PPT 卡片，适合数据展示、架构总览、多组对比。支持 6 种自动检测布局。 | 数据密集, 架构, 对比, 指标 |
+| `terminal.aurora` (默认) | 模拟 Claude Code TUI 界面，自动从 instruction 提取命令生成交互动画。适合展示 CLI 命令、斜杠命令操作。 | 终端, CLI, 命令行 |
+| `recording.default` (默认) | 直接播放录屏视频文件。用于有现成录屏素材的 B 类段落。 | 录屏, 视频播放 |
+| `source-clip.default` (默认) | 裁剪并播放原视频的指定时间段。用于引用原视频精华片段。 | 原视频, 片段裁剪 |
 
 ## 硬性约束
 

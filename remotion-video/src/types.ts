@@ -15,6 +15,8 @@ export interface ScriptSegment {
   material: "A" | "B" | "C";
   narration_zh: string;
   notes?: string;
+  /** 指定视觉组件，格式 "{schema}.{style}"，如 "slide.tech-dark"。缺失时按 material 走默认。 */
+  component?: string;
   // 素材 A
   slide_content?: SlideContent;
   // 素材 B

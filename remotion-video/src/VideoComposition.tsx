@@ -1,27 +1,25 @@
 /**
  * video2gen 主视频组合
  *
- * 根据 script.json 的 segments 顺序，用 Series 依次渲染三类素材，
- * 叠加 SubtitleOverlay 和 Audio。
+ * 通过 registry 动态分发 segment 到注册的 style 组件。
+ * 向后兼容：无 component 字段时按 material A/B/C 走默认 style。
  */
 
 import { AbsoluteFill, Sequence, Series, staticFile } from "remotion";
-import React, { useMemo } from "react";
+import React from "react";
 import { Audio } from "@remotion/media";
 
 import type { VideoCompositionProps, ScriptSegment } from "./types";
-import { SlideSegment } from "./components/SlideSegment";
-import { SourceClipSegment } from "./components/SourceClipSegment";
-import { PlaceholderSegment } from "./components/PlaceholderSegment";
-import { RecordingSegment } from "./components/RecordingSegment";
-import { TerminalDemoSegment } from "./components/TerminalDemoSegment";
+import { registry } from "./registry/registry";
+import "./registry/init"; // 触发所有 style 自注册
+
+import type { SlideData, TerminalData, RecordingData, SourceClipData, StyleComponentProps } from "./registry/types";
 
 export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
   const {
     script,
     timing,
     fps,
-    slidesDir,
     recordingsDir,
     sourceVideoFiles = [],
     sourceChannels = [],
@@ -30,71 +28,67 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
   } = props;
   const segments = script.segments;
 
-  // 预计算素材 A 段总数及每个 segment 的 slide 序号
-  const totalSlides = useMemo(
-    () => segments.filter((s) => s.material === "A").length,
-    [segments]
-  );
-  const slideIndexMap = useMemo(() => {
-    const map = new Map<number, number>();
-    let idx = 0;
-    for (const seg of segments) {
-      if (seg.material === "A") {
-        idx++;
-        map.set(seg.id, idx);
-      }
-    }
-    return map;
-  }, [segments]);
-
   const renderSegment = (seg: ScriptSegment) => {
-    switch (seg.material) {
-      case "A": {
-        return (
-          <SlideSegment
-            slideContent={
-              seg.slide_content || {
-                title: "Info",
-                bullet_points: [],
-              }
-            }
-            segmentId={slideIndexMap.get(seg.id) || 1}
-            totalSlides={totalSlides}
-          />
-        );
-      }
-      case "B": {
-        const recFile = `${recordingsDir}/seg_${seg.id}.mp4`;
-        const hasRecording = availableRecordings.includes(seg.id);
-        if (hasRecording) {
-          return <RecordingSegment recordingFile={recFile} />;
-        }
-        // 无录屏时降级为终端模拟演示
-        const instruction = seg.recording_instruction || "需要录屏";
-        return <TerminalDemoSegment instruction={instruction} segmentId={seg.id} narrationText={seg.narration_zh} />;
-      }
-      case "C": {
-        const t = timing[String(seg.id)];
-        const ttsDur = t ? t.duration : 10;
-        // 多源: 按 source_video_index 选择视频; 单源: 用第一个
+    const hasRecording = availableRecordings.includes(seg.id);
+    const entry = registry.resolveForSegment(seg, hasRecording);
+
+    if (!entry) {
+      return <AbsoluteFill style={{ backgroundColor: "#000" }} />;
+    }
+
+    // 根据 schema 构建 data
+    const schema = entry.meta.schema;
+    const t = timing[String(seg.id)];
+    const segFps = fps;
+
+    let data: SlideData | TerminalData | RecordingData | SourceClipData;
+
+    switch (schema) {
+      case "slide":
+        data = {
+          schema: "slide",
+          title: seg.slide_content?.title || "Info",
+          bullet_points: seg.slide_content?.bullet_points || [],
+          chart_hint: seg.slide_content?.chart_hint,
+        } satisfies SlideData;
+        break;
+
+      case "terminal":
+        data = {
+          schema: "terminal",
+          instruction: seg.recording_instruction || "需要录屏",
+          narrationText: seg.narration_zh,
+        } satisfies TerminalData;
+        break;
+
+      case "recording":
+        data = {
+          schema: "recording",
+          recordingFile: `${recordingsDir}/seg_${seg.id}.mp4`,
+        } satisfies RecordingData;
+        break;
+
+      case "source-clip": {
         const idx = seg.source_video_index ?? 0;
         const videoFile = sourceVideoFiles[idx] || sourceVideoFiles[0] || "";
-        const channel = sourceChannels[idx] || script.source_channel || "";
-        return (
-          <SourceClipSegment
-            sourceVideoFile={videoFile}
-            sourceStart={seg.source_start || 0}
-            sourceEnd={Math.min(seg.source_end || 8, (seg.source_start || 0) + 10)}
-            sourceChannel={channel}
-            ttsDuration={ttsDur}
-          />
-        );
+        const ttsDur = t ? t.duration : 10;
+        data = {
+          schema: "source-clip",
+          sourceVideoFile: videoFile,
+          sourceStart: seg.source_start || 0,
+          sourceEnd: Math.min(seg.source_end || 8, (seg.source_start || 0) + 10),
+          sourceChannel: sourceChannels[idx] || script.source_channel || "",
+          ttsDuration: ttsDur,
+        } satisfies SourceClipData;
+        break;
       }
+
       default:
-        return (
-          <AbsoluteFill style={{ backgroundColor: "#000" }} />
-        );
+        return <AbsoluteFill style={{ backgroundColor: "#000" }} />;
     }
+
+    const Component = entry.component as React.ComponentType<StyleComponentProps>;
+    return <Component data={data} segmentId={seg.id} fps={segFps} />;
   };
 
   return (

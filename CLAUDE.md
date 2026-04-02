@@ -47,6 +47,11 @@ v2g assemble <video_id>                   # Stage 5b: FFmpeg → final/video.mp4
 v2g multi "url1;url2" --topic "topic" [--project-id]  # Multi-source pipeline (Remotion backend)
 v2g agent <project_id> -s <source> -t <topic> [--model] [--duration]  # Agent multi-source script orchestration
 v2g status <video_id>                     # Check pipeline progress
+v2g knowledge all                         # Run all knowledge sources + daily digest
+v2g knowledge github [--since 7]          # GitHub AI trending repos
+v2g knowledge hn [--hours 24]             # Hacker News AI hot posts
+v2g knowledge article [--urls "url1;url2"]# Article monitor (RSS / manual URL / inbox)
+v2g knowledge twitter [--temperature 0.5] # Twitter/X monitor (requires APIFY_TOKEN)
 ```
 
 ### Remotion (from `remotion-video/`)
@@ -168,6 +173,24 @@ Platform proxy system (`config.py` `_apply_platform()`) maps platform-specific e
 - **MiniMax Speech** (paid, high quality): requires `TTS_MINMAX_KEY`
 - Switch via `TTS_ENGINE` env var. Each segment rendered separately to `voiceover_segments/seg_{id}.mp3`.
 
+### Knowledge Source Automation (`knowledge/`)
+
+`v2g knowledge` implements automated topic discovery for AI Tech content creators. Three knowledge sources feed into an Obsidian vault:
+
+1. **GitHub Trending** (`github_trending.py`): Uses GitHub REST API `/search/repositories` (no token needed, 60 req/hour). Per-topic queries merged and deduped. LLM analyzes repos for content creation opportunities.
+2. **Hacker News** (`hn_monitor.py`): Uses HN Algolia API (free, no rate limit). Per-keyword queries merged and deduped. LLM identifies hot topics and discussion-worthy posts.
+3. **Article Monitor** (`article_monitor.py`): Three input modes — RSS feeds (via feedparser), manual URLs (`--urls`), and Obsidian inbox (`{vault}/inbox/articles.md`). Reuses `fetcher.fetch_article()` for content extraction. LLM generates TL;DR + key points.
+4. **Twitter/X** (`twitter_monitor.py`): Uses Apify `apidojo~tweet-scraper` Actor (async polling model). Rule-based pre-filter → LLM scoring (virality/authority/timeliness/opportunity) → softmax probabilistic selection. Currently limited by X's anti-scraping measures.
+
+Shared infrastructure:
+- **`store.py`**: Generic SQLite dedup store shared by all sources. Table `seen_items(source, item_id, data, fetched_at)`.
+- **`obsidian.py`**: `ObsidianWriter` class writes YAML-frontmatter Markdown to `{vault}/knowledge/{source}/` dirs. Falls back to `output/knowledge/` when `OBSIDIAN_VAULT_PATH` is unset.
+- **`telegram.py`**: Telegram Bot notifications via httpx POST (HTML parse_mode). Best-effort, failures logged but not raised.
+
+`v2g knowledge all` runs GitHub + HN + articles sequentially, then generates a daily digest (`{vault}/daily/{date}.md`) with `[[wiki-links]]` cross-referencing all source reports.
+
+Each source is idempotent per date (overwrites same-date files). SQLite dedup ensures no repeated processing across runs. Designed for cron scheduling: `0 8 * * * v2g knowledge all --quiet`.
+
 ### Prompt Engineering
 
 `src/v2g/prompts/` contains LLM prompt templates:
@@ -177,6 +200,10 @@ Platform proxy system (`config.py` `_apply_platform()`) maps platform-specific e
 - `agent_system.md` — Agent role and orchestration principles
 - `agent_outline.md` — outline generation requirements and JSON format
 - `agent_script.md` — script expansion rules (reuses material type system from script_system.md)
+- `knowledge_github.md` — GitHub repo analysis (trending, top 3, emerging directions)
+- `knowledge_hn.md` — HN post analysis (trends, top 3, controversy detection)
+- `knowledge_article.md` — article summarization (TL;DR, key points, content angle)
+- `knowledge_daily.md` — daily digest generation (highlights, content suggestions, trends)
 
 ### Remotion Components (`remotion-video/src/`)
 
@@ -207,3 +234,9 @@ See `.env.example` for the full list. Notable variables:
 - `GEMINI_API_KEY` — Google Gemini
 - `TTS_ENGINE` — `edge` (default) or `minimax`
 - `REMOTION_CHROME_EXECUTABLE` — override Chrome path for Remotion rendering
+- `OBSIDIAN_VAULT_PATH` — Obsidian vault directory (fallback: `output/knowledge/`)
+- `GITHUB_TOPICS` — comma-separated topics for GitHub trending (default: `ai,ml,llm,agent,rag`)
+- `APIFY_TOKEN` — Apify API token (for Twitter monitoring)
+- `TWITTER_KEYWORDS`, `TWITTER_AUTHORS` — Twitter monitoring targets
+- `ARTICLE_RSS_URLS` — comma-separated RSS feed URLs
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — Telegram push notifications

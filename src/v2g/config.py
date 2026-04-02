@@ -33,6 +33,18 @@ class Config:
     # API 平台
     api_platform: str = ""
 
+    # Knowledge Sources
+    obsidian_vault_path: Path = field(default_factory=lambda: Path(""))
+    knowledge_model: str = "claude-sonnet-4-5-20250929"
+    github_topics: str = "ai,ml,llm,agent,rag"
+    apify_token: str = ""
+    twitter_keywords: str = ""
+    twitter_authors: str = ""
+    knowledge_db_path: Path = field(default_factory=lambda: Path("data/knowledge.db"))
+    article_rss_urls: str = ""
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
     @classmethod
     def load(cls, env_path: str | None = None) -> "Config":
         """从 .env 文件加载配置。"""
@@ -53,6 +65,16 @@ class Config:
             video_height=int(h),
             video_crf=int(os.environ.get("VIDEO_CRF", str(defaults.video_crf))),
             api_platform=os.environ.get("API_PLATFORM", ""),
+            obsidian_vault_path=Path(os.environ.get("OBSIDIAN_VAULT_PATH", "")),
+            knowledge_model=os.environ.get("KNOWLEDGE_MODEL", defaults.knowledge_model),
+            github_topics=os.environ.get("GITHUB_TOPICS", defaults.github_topics),
+            apify_token=os.environ.get("APIFY_TOKEN", ""),
+            twitter_keywords=os.environ.get("TWITTER_KEYWORDS", ""),
+            twitter_authors=os.environ.get("TWITTER_AUTHORS", ""),
+            knowledge_db_path=Path(os.environ.get("KNOWLEDGE_DB_PATH", str(defaults.knowledge_db_path))),
+            article_rss_urls=os.environ.get("ARTICLE_RSS_URLS", ""),
+            telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
+            telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
         )
 
         # 应用平台切换（复用 lecture2note 的模式）

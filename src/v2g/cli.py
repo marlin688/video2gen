@@ -303,6 +303,128 @@ def material_list(cfg):
         click.echo(f"  [{e.id}] {e.type:10s} | {e.description[:40]} | {', '.join(e.keywords[:3])}")
 
 
+@main.group()
+@click.option("--quiet", is_flag=True, help="安静模式 (适合 cron)")
+@click.pass_obj
+def knowledge(cfg: Config, quiet):
+    """知识源监控 (GitHub / Twitter / 文章)"""
+    pass
+
+
+@knowledge.command("github")
+@click.option("--since", default=7, type=int, help="查看最近 N 天 (默认 7)")
+@click.option("--min-stars", default=50, type=int, help="最低星标数 (默认 50)")
+@click.pass_obj
+def knowledge_github(cfg: Config, since, min_stars):
+    """GitHub AI 趋势监控"""
+    from v2g.knowledge.github_trending import run_github_trending
+    run_github_trending(cfg)
+
+
+@knowledge.command("hn")
+@click.option("--hours", default=24, type=int, help="搜索最近 N 小时 (默认 24)")
+@click.option("--min-points", default=20, type=int, help="最低 points (默认 20)")
+@click.pass_obj
+def knowledge_hn(cfg: Config, hours, min_points):
+    """Hacker News AI 热帖监控"""
+    from v2g.knowledge.hn_monitor import run_hn_monitor
+    run_hn_monitor(cfg, hours=hours, min_points=min_points)
+
+
+@knowledge.command("twitter")
+@click.option("--temperature", default=0.5, type=float, help="softmax temperature (默认 0.5)")
+@click.option("--max-tweets", default=100, type=int, help="最大抓取数 (默认 100)")
+@click.pass_obj
+def knowledge_twitter(cfg: Config, temperature, max_tweets):
+    """Twitter/X AI 话题监控 (需要 APIFY_TOKEN)"""
+    from v2g.knowledge.twitter_monitor import run_twitter_monitor
+    run_twitter_monitor(cfg, temperature=temperature, max_tweets=max_tweets)
+
+
+@knowledge.command("article")
+@click.option("--urls", default=None, help="文章 URL (分号分隔)")
+@click.pass_obj
+def knowledge_article(cfg: Config, urls):
+    """文章监控 (RSS / 手动 URL / inbox)"""
+    from v2g.knowledge.article_monitor import run_article_monitor
+    url_list = [u.strip() for u in urls.split(";")] if urls else None
+    run_article_monitor(cfg, urls=url_list)
+
+
+@knowledge.command("all")
+@click.pass_obj
+def knowledge_all(cfg: Config):
+    """运行全部知识源 + 生成每日汇总"""
+    from datetime import date
+
+    results = {}
+
+    # GitHub
+    try:
+        from v2g.knowledge.github_trending import run_github_trending
+        path = run_github_trending(cfg)
+        if path:
+            results["github"] = path
+    except Exception as e:
+        click.echo(f"⚠️ GitHub 监控失败: {e}")
+
+    click.echo()
+
+    # Hacker News
+    try:
+        from v2g.knowledge.hn_monitor import run_hn_monitor
+        path = run_hn_monitor(cfg)
+        if path:
+            results["hn"] = path
+    except Exception as e:
+        click.echo(f"⚠️ Hacker News 监控失败: {e}")
+
+    click.echo()
+
+    # Articles
+    try:
+        from v2g.knowledge.article_monitor import run_article_monitor
+        path = run_article_monitor(cfg)
+        if path:
+            results["articles"] = path
+    except Exception as e:
+        click.echo(f"⚠️ 文章监控失败: {e}")
+
+    click.echo()
+
+    # 每日汇总
+    if results:
+        click.echo("📋 生成每日汇总...")
+        try:
+            from v2g.knowledge.obsidian import ObsidianWriter
+            from v2g.llm import call_llm
+            from v2g.knowledge import _load_prompt
+
+            # 读取各源报告内容
+            sections_input = {}
+            for name, path in results.items():
+                try:
+                    content = path.read_text(encoding="utf-8")[:2000]
+                    sections_input[name] = content
+                except Exception:
+                    pass
+
+            if sections_input:
+                system_prompt = _load_prompt("knowledge_daily.md")
+                user_msg = "\n\n---\n\n".join(
+                    f"## {name}\n{content}" for name, content in sections_input.items()
+                )
+                digest = call_llm(system_prompt, user_msg, cfg.knowledge_model, temperature=0.3, max_tokens=1000)
+
+                writer = ObsidianWriter(cfg.obsidian_vault_path)
+                digest_path = writer.write_daily_digest(date.today(), {"汇总": digest})
+                click.echo(f"   📝 每日汇总: {digest_path}")
+        except Exception as e:
+            click.echo(f"   ⚠️ 汇总生成失败: {e}")
+
+    click.echo("\n✅ 知识源监控完成")
+
+
 @main.command()
 @click.argument("video_id_or_url")
 @click.option("--model", default=None, help="LLM 模型")

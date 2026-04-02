@@ -41,6 +41,7 @@ class Config:
     twitter_keywords: str = ""
     twitter_authors: str = ""
     knowledge_db_path: Path = field(default_factory=lambda: Path("data/knowledge.db"))
+    hn_keywords: str = "AI,LLM,Claude,GPT,agent,RAG"
     article_rss_urls: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
@@ -73,6 +74,7 @@ class Config:
             twitter_keywords=os.environ.get("TWITTER_KEYWORDS", ""),
             twitter_authors=os.environ.get("TWITTER_AUTHORS", ""),
             knowledge_db_path=Path(os.environ.get("KNOWLEDGE_DB_PATH", str(defaults.knowledge_db_path))),
+            hn_keywords=os.environ.get("HN_KEYWORDS", defaults.hn_keywords),
             article_rss_urls=os.environ.get("ARTICLE_RSS_URLS", ""),
             telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),

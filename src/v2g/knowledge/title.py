@@ -23,6 +23,7 @@ def generate_titles(topic: str, angle: str, model: str, context: str = "") -> st
 
 def run_title(cfg, topic: str, angle: str = "") -> Path | None:
     """标题生成主流程。"""
+    from v2g.knowledge import _load_today_context as load_ctx
     from v2g.knowledge.obsidian import ObsidianWriter
 
     click.echo("📛 标题生成")
@@ -30,7 +31,7 @@ def run_title(cfg, topic: str, angle: str = "") -> Path | None:
     writer = ObsidianWriter(cfg.obsidian_vault_path)
     today = date.today()
 
-    context = _load_today_context(writer.vault, today)
+    context = load_ctx(writer.vault, today)
 
     click.echo(f"   📌 话题: {topic}")
     click.echo("   🤖 LLM 生成中...")
@@ -68,9 +69,3 @@ def _write_title_report(writer, today: date, topic: str, content: str) -> Path:
     return path
 
 
-def _load_today_context(vault_path: Path, today: date) -> str:
-    context = ""
-    for source_file in [vault_path / "daily" / f"{today}.md"]:
-        if source_file.exists():
-            context += source_file.read_text(encoding="utf-8")[:1500]
-    return context

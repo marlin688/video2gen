@@ -1,18 +1,10 @@
 """Twitter/X 监控：Apify 抓取 + 规则粗筛 + LLM 精评 + softmax 选择。"""
 
 import math
-import os
 import random
 import time
 
 import click
-
-# 清理非法 proxy 环境变量
-for _k in list(os.environ):
-    if "proxy" in _k.lower():
-        _v = os.environ[_k]
-        if _v and _v.rstrip("/").endswith("~"):
-            os.environ[_k] = _v.rstrip("~")
 
 
 def fetch_tweets_apify(
@@ -85,8 +77,8 @@ def fetch_tweets_apify(
             if status in ("FAILED", "ABORTED", "TIMED-OUT"):
                 click.echo(f"   ⚠️ Apify run 失败: {status}")
                 return []
-        except Exception:
-            pass
+        except Exception as e:
+            click.echo(f"   ⚠️ 状态查询失败: {e}")
     else:
         click.echo(f"   ⚠️ Apify 超时 ({timeout}s)")
         return []
@@ -254,33 +246,31 @@ def run_twitter_monitor(cfg, temperature: float = 0.5, max_tweets: int = 100) ->
     tweets = [_normalize_tweet(t) for t in raw_tweets]
 
     # 去重
-    store = KnowledgeStore(cfg.knowledge_db_path)
-    new_tweets = store.filter_new("twitter", tweets, lambda t: t["tweet_id"])
-    click.echo(f"   📊 新推文: {len(new_tweets)} / {len(tweets)}")
+    with KnowledgeStore(cfg.knowledge_db_path) as store:
+        new_tweets = store.filter_new("twitter", tweets, lambda t: t["tweet_id"])
+        click.echo(f"   📊 新推文: {len(new_tweets)} / {len(tweets)}")
 
-    if not new_tweets:
-        store.close()
-        click.echo("   ℹ️ 无新推文")
-        return None
+        if not new_tweets:
+            click.echo("   ℹ️ 无新推文")
+            return None
 
-    # 规则粗筛
-    filtered = rule_filter(new_tweets, min_likes=10)
-    click.echo(f"   🎯 粗筛后: {len(filtered)}")
+        # 规则粗筛
+        filtered = rule_filter(new_tweets, min_likes=10)
+        click.echo(f"   🎯 粗筛后: {len(filtered)}")
 
-    # LLM 精评
-    if filtered:
-        click.echo("   🤖 LLM 评分中...")
-        scored = score_tweets_with_llm(filtered, cfg.knowledge_model)
-    else:
-        scored = new_tweets
+        # LLM 精评
+        if filtered:
+            click.echo("   🤖 LLM 评分中...")
+            scored = score_tweets_with_llm(filtered, cfg.knowledge_model)
+        else:
+            scored = new_tweets
 
-    # softmax 选择
-    selected = softmax_select(scored, k=10, temperature=temperature)
-    click.echo(f"   ✨ 精选: {len(selected)} 条")
+        # softmax 选择
+        selected = softmax_select(scored, k=10, temperature=temperature)
+        click.echo(f"   ✨ 精选: {len(selected)} 条")
 
-    # 标记已见
-    store.mark_seen_batch("twitter", new_tweets, lambda t: t["tweet_id"])
-    store.close()
+        # 标记已见
+        store.mark_seen_batch("twitter", new_tweets, lambda t: t["tweet_id"])
 
     # 写入 Obsidian
     writer = ObsidianWriter(cfg.obsidian_vault_path)

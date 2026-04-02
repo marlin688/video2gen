@@ -146,22 +146,20 @@ def run_article_monitor(cfg, urls: list[str] | None = None) -> "Path | None":
         return None
 
     # 去重
-    store = KnowledgeStore(cfg.knowledge_db_path)
-    new_entries = store.filter_new("article", all_entries, lambda e: e.get("url", ""))
-    click.echo(f"   📊 新文章: {len(new_entries)} / {len(all_entries)}")
+    with KnowledgeStore(cfg.knowledge_db_path) as store:
+        new_entries = store.filter_new("article", all_entries, lambda e: e.get("url", ""))
+        click.echo(f"   📊 新文章: {len(new_entries)} / {len(all_entries)}")
 
-    if not new_entries:
-        store.close()
-        click.echo("   ℹ️ 无新文章")
-        return None
+        if not new_entries:
+            click.echo("   ℹ️ 无新文章")
+            return None
 
-    # 抓取 + 摘要
-    click.echo("   🤖 抓取 + LLM 摘要中...")
-    articles = extract_and_summarize(new_entries, cfg.knowledge_model)
+        # 抓取 + 摘要
+        click.echo("   🤖 抓取 + LLM 摘要中...")
+        articles = extract_and_summarize(new_entries, cfg.knowledge_model)
 
-    # 标记已见
-    store.mark_seen_batch("article", new_entries, lambda e: e.get("url", ""))
-    store.close()
+        # 标记已见
+        store.mark_seen_batch("article", new_entries, lambda e: e.get("url", ""))
 
     # 写入 Obsidian
     writer = ObsidianWriter(cfg.obsidian_vault_path)

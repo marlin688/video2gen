@@ -1,18 +1,10 @@
 """创意构思 + 竞品分析：YouTube 竞品搜索 + LLM 竞争格局分析 + 创意生成。"""
 
-import os
 import re
 from datetime import date
 from pathlib import Path
 
 import click
-
-# 清理非法 proxy 环境变量
-for _k in list(os.environ):
-    if "proxy" in _k.lower():
-        _v = os.environ[_k]
-        if _v and _v.rstrip("/").endswith("~"):
-            os.environ[_k] = _v.rstrip("~")
 
 
 def search_youtube_videos(

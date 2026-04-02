@@ -4,17 +4,9 @@ HN Algolia API 完全免费，无需 token，无速率限制。
 对 AI Tech 内容创作者来说，HN 是最好的技术话题发现源之一。
 """
 
-import os
 from datetime import datetime, timezone
 
 import click
-
-# 清理非法 proxy 环境变量
-for _k in list(os.environ):
-    if "proxy" in _k.lower():
-        _v = os.environ[_k]
-        if _v and _v.rstrip("/").endswith("~"):
-            os.environ[_k] = _v.rstrip("~")
 
 
 def search_hn_stories(
@@ -117,7 +109,7 @@ def run_hn_monitor(cfg, hours: int = 24, min_points: int = 20) -> "Path | None":
 
     click.echo("🟧 Hacker News 监控")
 
-    keywords = [k.strip() for k in cfg.github_topics.split(",") if k.strip()]
+    keywords = [k.strip() for k in cfg.hn_keywords.split(",") if k.strip()]
 
     # 搜索
     raw_stories = search_hn_stories(keywords, hours=hours, min_points=min_points)
@@ -128,22 +120,20 @@ def run_hn_monitor(cfg, hours: int = 24, min_points: int = 20) -> "Path | None":
     stories = [_normalize_story(h) for h in raw_stories]
 
     # 去重
-    store = KnowledgeStore(cfg.knowledge_db_path)
-    new_stories = store.filter_new("hn", stories, lambda s: s["story_id"])
-    click.echo(f"   📊 新帖子: {len(new_stories)} / {len(stories)}")
+    with KnowledgeStore(cfg.knowledge_db_path) as store:
+        new_stories = store.filter_new("hn", stories, lambda s: s["story_id"])
+        click.echo(f"   📊 新帖子: {len(new_stories)} / {len(stories)}")
 
-    if not new_stories:
-        store.close()
-        click.echo("   ℹ️ 无新帖子")
-        return None
+        if not new_stories:
+            click.echo("   ℹ️ 无新帖子")
+            return None
 
-    # LLM 分析
-    click.echo("   🤖 LLM 分析中...")
-    analysis = analyze_stories_with_llm(new_stories, cfg.knowledge_model)
+        # LLM 分析
+        click.echo("   🤖 LLM 分析中...")
+        analysis = analyze_stories_with_llm(new_stories, cfg.knowledge_model)
 
-    # 标记已见
-    store.mark_seen_batch("hn", new_stories, lambda s: s["story_id"])
-    store.close()
+        # 标记已见
+        store.mark_seen_batch("hn", new_stories, lambda s: s["story_id"])
 
     # 写入 Obsidian
     writer = ObsidianWriter(cfg.obsidian_vault_path)

@@ -1,4 +1,4 @@
-"""通用 SQLite 去重存储，三源（github/twitter/article）共享。"""
+"""通用 SQLite 去重存储，三源（github/twitter/article/hn）共享。"""
 
 import json
 import sqlite3
@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 
 class KnowledgeStore:
-    """轻量级 SQLite 存储，用于知识源去重。"""
+    """轻量级 SQLite 存储，用于知识源去重。支持 context manager。"""
 
     def __init__(self, db_path: Path):
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -25,6 +25,12 @@ class KnowledgeStore:
         )
         self._conn.commit()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
     def is_seen(self, source: str, item_id: str) -> bool:
         cur = self._conn.execute(
             "SELECT 1 FROM seen_items WHERE source=? AND item_id=?",
@@ -38,13 +44,18 @@ class KnowledgeStore:
         items: list[dict],
         key_fn: Callable[[dict], str],
     ) -> list[dict]:
-        """过滤掉已见过的 item，返回新 item 列表。"""
-        result = []
-        for item in items:
-            item_id = key_fn(item)
-            if not self.is_seen(source, item_id):
-                result.append(item)
-        return result
+        """批量过滤掉已见过的 item，返回新 item 列表。"""
+        if not items:
+            return []
+        item_ids = [key_fn(item) for item in items]
+        # 批量查询已见 ID
+        placeholders = ",".join("?" for _ in item_ids)
+        cur = self._conn.execute(
+            f"SELECT item_id FROM seen_items WHERE source=? AND item_id IN ({placeholders})",
+            [source, *item_ids],
+        )
+        seen_ids = {row[0] for row in cur.fetchall()}
+        return [item for item, iid in zip(items, item_ids) if iid not in seen_ids]
 
     def mark_seen(self, source: str, item_id: str, data: Any = None):
         now = datetime.now(timezone.utc).isoformat()

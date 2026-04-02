@@ -124,6 +124,8 @@ v2g knowledge all                        # 运行全部知识源 + 生成每日�
 v2g knowledge github [--since 7]         # GitHub AI 趋势 (免费，无需 key)
 v2g knowledge hn [--hours 24]            # Hacker News AI 热帖 (免费)
 v2g knowledge article --urls "url1;url2" # 文章抓取 + LLM 摘要
+v2g knowledge ideation "话题"            # 竞品分析 + 创意构思 (可选 YOUTUBE_API_KEY)
+v2g knowledge ideation --from-daily      # 从每日汇总自动提取话题
 ```
 
 配合 cron 实现全自动：
@@ -141,6 +143,7 @@ v2g knowledge article --urls "url1;url2" # 文章抓取 + LLM 摘要
 | `ARTICLE_RSS_URLS` | RSS 订阅 URL（逗号分隔） | 否 |
 | `TELEGRAM_BOT_TOKEN` | Telegram 通知 | 否 |
 | `TELEGRAM_CHAT_ID` | Telegram Chat ID | 否 |
+| `YOUTUBE_API_KEY` | YouTube Data API v3（竞品分析用） | 否 |
 
 ### 查看进度
 

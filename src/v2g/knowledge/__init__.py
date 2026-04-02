@@ -18,3 +18,4 @@ from .github_trending import run_github_trending  # noqa: E402, F401
 from .hn_monitor import run_hn_monitor  # noqa: E402, F401
 from .twitter_monitor import run_twitter_monitor  # noqa: E402, F401
 from .article_monitor import run_article_monitor  # noqa: E402, F401
+from .ideation import run_ideation  # noqa: E402, F401

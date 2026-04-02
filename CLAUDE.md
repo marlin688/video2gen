@@ -51,6 +51,8 @@ v2g knowledge all                         # Run all knowledge sources + daily di
 v2g knowledge github [--since 7]          # GitHub AI trending repos
 v2g knowledge hn [--hours 24]             # Hacker News AI hot posts
 v2g knowledge article [--urls "url1;url2"]# Article monitor (RSS / manual URL / inbox)
+v2g knowledge ideation "topic"            # Competitive analysis + content ideation (optional YOUTUBE_API_KEY)
+v2g knowledge ideation --from-daily       # Auto-extract topics from daily digest
 v2g knowledge twitter [--temperature 0.5] # Twitter/X monitor (requires APIFY_TOKEN)
 ```
 
@@ -187,7 +189,9 @@ Shared infrastructure:
 - **`obsidian.py`**: `ObsidianWriter` class writes YAML-frontmatter Markdown to `{vault}/knowledge/{source}/` dirs. Falls back to `output/knowledge/` when `OBSIDIAN_VAULT_PATH` is unset.
 - **`telegram.py`**: Telegram Bot notifications via httpx POST (HTML parse_mode). Best-effort, failures logged but not raised.
 
-`v2g knowledge all` runs GitHub + HN + articles sequentially, then generates a daily digest (`{vault}/daily/{date}.md`) with `[[wiki-links]]` cross-referencing all source reports.
+`v2g knowledge all` runs GitHub + HN + articles sequentially, generates a daily digest, then auto-runs ideation on topics extracted from the digest.
+
+5. **Ideation** (`ideation.py`): Takes a topic (user-specified or auto-extracted from daily digest), searches YouTube via Data API v3 for competitive landscape, then LLM generates 5-9 content ideas with Tier 1/Tier 2 ranking. Degrades gracefully without `YOUTUBE_API_KEY` (LLM-only ideation).
 
 Each source is idempotent per date (overwrites same-date files). SQLite dedup ensures no repeated processing across runs. Designed for cron scheduling: `0 8 * * * v2g knowledge all --quiet`.
 
@@ -204,6 +208,7 @@ Each source is idempotent per date (overwrites same-date files). SQLite dedup en
 - `knowledge_hn.md` — HN post analysis (trends, top 3, controversy detection)
 - `knowledge_article.md` — article summarization (TL;DR, key points, content angle)
 - `knowledge_daily.md` — daily digest generation (highlights, content suggestions, trends)
+- `knowledge_ideation.md` — competitive analysis + content ideation (landscape, 5-9 ideas with tiers)
 
 ### Remotion Components (`remotion-video/src/`)
 
@@ -240,3 +245,4 @@ See `.env.example` for the full list. Notable variables:
 - `TWITTER_KEYWORDS`, `TWITTER_AUTHORS` — Twitter monitoring targets
 - `ARTICLE_RSS_URLS` — comma-separated RSS feed URLs
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — Telegram push notifications
+- `YOUTUBE_API_KEY` — YouTube Data API v3 (optional, for ideation competitive analysis)

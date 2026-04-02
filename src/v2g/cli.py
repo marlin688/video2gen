@@ -351,6 +351,18 @@ def knowledge_article(cfg: Config, urls):
     run_article_monitor(cfg, urls=url_list)
 
 
+@knowledge.command("ideation")
+@click.argument("topic", required=False, default=None)
+@click.option("--from-daily", is_flag=True, help="从今日 daily digest 自动提取话题")
+@click.pass_obj
+def knowledge_ideation(cfg: Config, topic, from_daily):
+    """创意构思 + 竞品分析 (YouTube 竞争格局)"""
+    from v2g.knowledge.ideation import run_ideation
+    if not topic and not from_daily:
+        raise click.ClickException("请指定话题或使用 --from-daily")
+    run_ideation(cfg, topic=topic, from_daily=from_daily)
+
+
 @knowledge.command("all")
 @click.pass_obj
 def knowledge_all(cfg: Config):
@@ -421,6 +433,15 @@ def knowledge_all(cfg: Config):
                 click.echo(f"   📝 每日汇总: {digest_path}")
         except Exception as e:
             click.echo(f"   ⚠️ 汇总生成失败: {e}")
+
+    # 创意构思（从 daily digest 提取话题）
+    if results:
+        click.echo()
+        try:
+            from v2g.knowledge.ideation import run_ideation
+            run_ideation(cfg, from_daily=True)
+        except Exception as e:
+            click.echo(f"⚠️ 创意构思失败: {e}")
 
     click.echo("\n✅ 知识源监控完成")
 

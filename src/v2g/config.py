@@ -44,6 +44,7 @@ class Config:
     article_rss_urls: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    youtube_api_key: str = ""
 
     @classmethod
     def load(cls, env_path: str | None = None) -> "Config":
@@ -75,6 +76,7 @@ class Config:
             article_rss_urls=os.environ.get("ARTICLE_RSS_URLS", ""),
             telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
+            youtube_api_key=os.environ.get("YOUTUBE_API_KEY", ""),
         )
 
         # 应用平台切换（复用 lecture2note 的模式）

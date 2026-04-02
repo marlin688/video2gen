@@ -115,17 +115,36 @@ npm run dev      # 启动 Remotion Studio 交互式预览
 npm run build    # TypeScript 类型检查
 ```
 
-### 知识源自动化
+### 内容自动化系统
 
-每天自动发现 AI 领域值得关注的话题，输出到 Obsidian 知识库：
+从选题发现到脚本规划的全流程自动化，输出到 `output/` 目录（可直接用 Obsidian 打开）：
 
 ```bash
-v2g knowledge all                        # 运行全部知识源 + 生成每日汇总
-v2g knowledge github [--since 7]         # GitHub AI 趋势 (免费，无需 key)
+# ---- 知识源头（发现话题）----
+v2g knowledge all                        # 一键运行全部：知识源 + 汇总 + 创意构思
+v2g knowledge github [--since 7]         # GitHub AI 趋势 (免费)
 v2g knowledge hn [--hours 24]            # Hacker News AI 热帖 (免费)
-v2g knowledge article --urls "url1;url2" # 文章抓取 + LLM 摘要
-v2g knowledge ideation "话题"            # 竞品分析 + 创意构思 (可选 YOUTUBE_API_KEY)
+v2g knowledge article --urls "url1;url2" # 文章/公众号抓取 + LLM 摘要
+
+# ---- 创意构思（选择角度）----
+v2g knowledge ideation "话题"            # 竞品分析 + 5-9 个内容创意
 v2g knowledge ideation --from-daily      # 从每日汇总自动提取话题
+
+# ---- 脚本规划（准备拍摄）----
+v2g knowledge script "话题" -a "角度"    # 一键三连：钩子 + 标题 + 大纲
+v2g knowledge hook "话题" -a "角度"      # 5 个开场钩子变体 (口播/视觉/文字叠加)
+v2g knowledge title "话题" -a "角度"     # 分层标题 (Tier 1/2) + 缩略图文字
+v2g knowledge outline "话题" -d 600      # 视频大纲 (章节/视觉建议/参考资料)
+```
+
+**典型工作流：**
+
+```bash
+v2g knowledge all                                    # 1. 早上跑一次，发现话题
+# → 打开 output/daily/ 看今日汇总，选一个话题
+v2g knowledge ideation "Claude Code 拆解"            # 2. 做竞品分析
+v2g knowledge script "Claude Code 拆解" -a "图解"    # 3. 生成钩子+标题+大纲
+# → 打开 output/knowledge/scripts/ review，开始拍摄
 ```
 
 配合 cron 实现全自动：
@@ -134,16 +153,29 @@ v2g knowledge ideation --from-daily      # 从每日汇总自动提取话题
 0 8 * * * cd /path/to/video2gen && v2g knowledge all --quiet >> logs/knowledge.log 2>&1
 ```
 
-知识源配置项（`.env`）：
+输出目录结构（可直接作为 Obsidian vault 打开）：
 
-| 变量 | 说明 | 必须 |
-|------|------|------|
-| `GITHUB_TOPICS` | GitHub 监控主题 | 否（默认 ai,ml,llm,agent,rag） |
-| `OBSIDIAN_VAULT_PATH` | Obsidian vault 路径 | 否（默认 output/knowledge/） |
-| `ARTICLE_RSS_URLS` | RSS 订阅 URL（逗号分隔） | 否 |
-| `TELEGRAM_BOT_TOKEN` | Telegram 通知 | 否 |
-| `TELEGRAM_CHAT_ID` | Telegram Chat ID | 否 |
-| `YOUTUBE_API_KEY` | YouTube Data API v3（竞品分析用） | 否 |
+```
+output/
+├── daily/                    # 每日汇总（含 [[wiki-links]] 交叉引用）
+└── knowledge/
+    ├── github/               # GitHub 趋势报告
+    ├── hn/                   # Hacker News 热帖报告
+    ├── articles/             # 文章摘要
+    ├── ideation/             # 竞品分析 + 创意列表
+    └── scripts/              # 钩子 / 标题 / 大纲
+```
+
+配置项（`.env`，全部可选）：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `GITHUB_TOPICS` | GitHub 监控主题 | `ai,ml,llm,agent,rag` |
+| `OBSIDIAN_VAULT_PATH` | Obsidian vault 路径 | `output/`（不设置也能用） |
+| `ARTICLE_RSS_URLS` | RSS 订阅 URL（逗号分隔） | — |
+| `YOUTUBE_API_KEY` | YouTube Data API v3（竞品分析用） | —（无则降级） |
+| `TELEGRAM_BOT_TOKEN` | Telegram 推送通知 | — |
+| `TELEGRAM_CHAT_ID` | Telegram Chat ID | — |
 
 ### 查看进度
 

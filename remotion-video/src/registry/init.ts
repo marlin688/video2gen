@@ -5,6 +5,9 @@
  */
 
 import "./styles/slide/tech-dark";
+import "./styles/slide/chalk-board";
+import "./styles/slide/glass-morphism";
 import "./styles/terminal/aurora";
+import "./styles/terminal/vscode";
 import "./styles/recording/default";
 import "./styles/source-clip/default";

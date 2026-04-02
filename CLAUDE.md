@@ -54,6 +54,11 @@ v2g knowledge article [--urls "url1;url2"]# Article monitor (RSS / manual URL / 
 v2g knowledge ideation "topic"            # Competitive analysis + content ideation (optional YOUTUBE_API_KEY)
 v2g knowledge ideation --from-daily       # Auto-extract topics from daily digest
 v2g knowledge twitter [--temperature 0.5] # Twitter/X monitor (requires APIFY_TOKEN)
+v2g knowledge title "topic" --history t.json  # Title generation with historical performance benchmarking
+v2g knowledge waterfall "topic" --video-id ID # Content waterfall: video → blog + Twitter thread + LinkedIn
+v2g knowledge waterfall "topic" --url URL     # Content waterfall from article URL
+v2g knowledge waterfall "topic" --file path   # Content waterfall from local file
+v2g knowledge shorts "topic" --video-id ID    # Short-form repurpose: long → 30/60/90s scripts
 ```
 
 ### Remotion (from `remotion-video/`)
@@ -195,6 +200,23 @@ Shared infrastructure:
 
 Each source is idempotent per date (overwrites same-date files). SQLite dedup ensures no repeated processing across runs. Designed for cron scheduling: `0 8 * * * v2g knowledge all --quiet`.
 
+### Content Distribution (`knowledge/`)
+
+Post-production distribution layer for repurposing finished content across platforms:
+
+6. **Content Waterfall** (`waterfall.py`): Takes video subtitles/scripts/articles and generates three formats: SEO blog post (800-1200 words), Twitter thread (7 tweets), and LinkedIn posts (2 versions). Input sources: `--video-id` (reads from sources/ or output/), `--url` (fetches article), `--file` (local file). Output: `knowledge/distribution/{date}-waterfall-{slug}.md`.
+
+7. **Short-form Repurpose** (`shorts.py`): Converts long-form content into three independent short video scripts (30s/60s/90s). Each version includes hook (oral + text overlay), core content points, and CTA. Not simple trimming — each version is re-conceived for its time constraint. Output: `knowledge/distribution/{date}-shorts-{slug}.md`.
+
+Shared content loading (`_load_video_content()` in `__init__.py`): Resolves video content from multiple paths — `output/{id}/script.md` > `sources/{id}/subtitle_zh.srt` > `subtitle_en.srt`, or fetches from URL, or reads local file. Truncates to 8000 chars.
+
+### Title Historical Benchmarking (`knowledge/title.py`)
+
+The title generation skill supports historical performance data for data-driven title optimization:
+- `--history titles.json`: Load explicit performance data (`[{title, views, likes}]`), LLM references patterns from high-performing titles
+- Auto-scan: Without `--history`, automatically scans `knowledge/scripts/*-title-*.md` in the Obsidian vault for past generated titles as reference
+- Prompt instructs LLM to identify successful patterns and explicitly cite which historical title inspired each suggestion
+
 ### Prompt Engineering
 
 `src/v2g/prompts/` contains LLM prompt templates:
@@ -209,6 +231,11 @@ Each source is idempotent per date (overwrites same-date files). SQLite dedup en
 - `knowledge_article.md` — article summarization (TL;DR, key points, content angle)
 - `knowledge_daily.md` — daily digest generation (highlights, content suggestions, trends)
 - `knowledge_ideation.md` — competitive analysis + content ideation (landscape, 5-9 ideas with tiers)
+- `knowledge_hook.md` — 5-variant opening hook generation (oral/visual/text overlay)
+- `knowledge_title.md` — tiered title generation with historical benchmarking support
+- `knowledge_outline.md` — video outline (chapters, visual aids, references)
+- `knowledge_waterfall.md` — content waterfall distribution (blog + Twitter thread + LinkedIn)
+- `knowledge_shorts.md` — short-form repurpose (30/60/90s independent scripts)
 
 ### Remotion Components (`remotion-video/src/`)
 

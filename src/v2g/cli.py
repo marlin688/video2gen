@@ -376,11 +376,12 @@ def knowledge_hook(cfg: Config, topic, angle):
 @knowledge.command("title")
 @click.argument("topic")
 @click.option("--angle", "-a", default="", help="切入角度")
+@click.option("--history", "-h", default=None, help="历史标题 JSON 文件 [{title, views, likes}]")
 @click.pass_obj
-def knowledge_title(cfg: Config, topic, angle):
-    """生成分层标题 (Tier 1 稳健 / Tier 2 冒险) + 缩略图文字"""
+def knowledge_title(cfg: Config, topic, angle, history):
+    """生成分层标题 (Tier 1 稳健 / Tier 2 冒险) + 缩略图文字 + 历史对标"""
     from v2g.knowledge.title import run_title
-    run_title(cfg, topic, angle)
+    run_title(cfg, topic, angle, history_file=history)
 
 
 @knowledge.command("outline")
@@ -392,6 +393,30 @@ def knowledge_outline(cfg: Config, topic, angle, duration):
     """生成视频大纲 (章节 + 视觉建议 + 参考资料)"""
     from v2g.knowledge.outline import run_outline
     run_outline(cfg, topic, angle, duration)
+
+
+@knowledge.command("waterfall")
+@click.argument("topic")
+@click.option("--video-id", "-v", default=None, help="视频 ID (读取字幕/脚本)")
+@click.option("--url", "-u", default=None, help="文章 URL")
+@click.option("--file", "-f", "file_path", default=None, help="本地文件路径")
+@click.pass_obj
+def knowledge_waterfall(cfg: Config, topic, video_id, url, file_path):
+    """内容瀑布: 视频/文章 → 博客 + Twitter 帖串 + LinkedIn 帖子"""
+    from v2g.knowledge.waterfall import run_waterfall
+    run_waterfall(cfg, topic, video_id=video_id, url=url, file_path=file_path)
+
+
+@knowledge.command("shorts")
+@click.argument("topic")
+@click.option("--video-id", "-v", default=None, help="视频 ID (读取字幕/脚本)")
+@click.option("--url", "-u", default=None, help="文章 URL")
+@click.option("--file", "-f", "file_path", default=None, help="本地文件路径")
+@click.pass_obj
+def knowledge_shorts(cfg: Config, topic, video_id, url, file_path):
+    """短视频再利用: 长内容 → 30/60/90 秒短视频脚本"""
+    from v2g.knowledge.shorts import run_shorts
+    run_shorts(cfg, topic, video_id=video_id, url=url, file_path=file_path)
 
 
 @knowledge.command("notebooklm")

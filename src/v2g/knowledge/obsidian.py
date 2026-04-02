@@ -20,7 +20,8 @@ class ObsidianWriter:
         self.ensure_dirs()
 
     def ensure_dirs(self):
-        for sub in ("knowledge/github", "knowledge/twitter", "knowledge/articles", "daily"):
+        for sub in ("knowledge/github", "knowledge/twitter", "knowledge/articles",
+                    "knowledge/distribution", "daily"):
             (self.vault / sub).mkdir(parents=True, exist_ok=True)
 
     # -- GitHub --

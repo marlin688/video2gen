@@ -394,6 +394,20 @@ def knowledge_outline(cfg: Config, topic, angle, duration):
     run_outline(cfg, topic, angle, duration)
 
 
+@knowledge.command("notebooklm")
+@click.argument("topic")
+@click.option("--source", "-s", "sources", multiple=True, required=True,
+              help="YouTube URL / 文章 URL / PDF 路径 (可多次指定)")
+@click.pass_obj
+def knowledge_notebooklm(cfg: Config, topic, sources):
+    """NotebookLM 深度分析 (Google 服务器处理，不消耗本地 token)
+
+    示例: v2g knowledge notebooklm "Claude Code" -s "https://youtube.com/watch?v=xxx" -s paper.pdf
+    """
+    from v2g.knowledge.notebooklm import run_notebooklm
+    run_notebooklm(cfg, list(sources), topic)
+
+
 @knowledge.command("script")
 @click.argument("topic")
 @click.option("--angle", "-a", default="", help="切入角度")

@@ -18,6 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 knowledge = ["feedparser>=6.0"]
+notebooklm = ["notebooklm-py[browser]>=0.1"]
 
 [project.scripts]
 v2g = "v2g.cli:main"

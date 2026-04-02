@@ -19,3 +19,6 @@ from .hn_monitor import run_hn_monitor  # noqa: E402, F401
 from .twitter_monitor import run_twitter_monitor  # noqa: E402, F401
 from .article_monitor import run_article_monitor  # noqa: E402, F401
 from .ideation import run_ideation  # noqa: E402, F401
+from .hook import run_hook  # noqa: E402, F401
+from .title import run_title  # noqa: E402, F401
+from .outline import run_outline  # noqa: E402, F401

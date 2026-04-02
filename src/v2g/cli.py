@@ -363,6 +363,56 @@ def knowledge_ideation(cfg: Config, topic, from_daily):
     run_ideation(cfg, topic=topic, from_daily=from_daily)
 
 
+@knowledge.command("hook")
+@click.argument("topic")
+@click.option("--angle", "-a", default="", help="切入角度")
+@click.pass_obj
+def knowledge_hook(cfg: Config, topic, angle):
+    """生成 5 个开场钩子变体 (前 30 秒)"""
+    from v2g.knowledge.hook import run_hook
+    run_hook(cfg, topic, angle)
+
+
+@knowledge.command("title")
+@click.argument("topic")
+@click.option("--angle", "-a", default="", help="切入角度")
+@click.pass_obj
+def knowledge_title(cfg: Config, topic, angle):
+    """生成分层标题 (Tier 1 稳健 / Tier 2 冒险) + 缩略图文字"""
+    from v2g.knowledge.title import run_title
+    run_title(cfg, topic, angle)
+
+
+@knowledge.command("outline")
+@click.argument("topic")
+@click.option("--angle", "-a", default="", help="切入角度")
+@click.option("--duration", "-d", default=600, type=int, help="目标时长秒数 (默认 600)")
+@click.pass_obj
+def knowledge_outline(cfg: Config, topic, angle, duration):
+    """生成视频大纲 (章节 + 视觉建议 + 参考资料)"""
+    from v2g.knowledge.outline import run_outline
+    run_outline(cfg, topic, angle, duration)
+
+
+@knowledge.command("script")
+@click.argument("topic")
+@click.option("--angle", "-a", default="", help="切入角度")
+@click.option("--duration", "-d", default=600, type=int, help="目标时长秒数 (默认 600)")
+@click.pass_obj
+def knowledge_script(cfg: Config, topic, angle, duration):
+    """一键运行: 钩子 + 标题 + 大纲"""
+    from v2g.knowledge.hook import run_hook
+    from v2g.knowledge.title import run_title
+    from v2g.knowledge.outline import run_outline
+
+    run_hook(cfg, topic, angle)
+    click.echo()
+    run_title(cfg, topic, angle)
+    click.echo()
+    run_outline(cfg, topic, angle, duration)
+    click.echo("\n✅ 脚本三件套生成完成")
+
+
 @knowledge.command("all")
 @click.pass_obj
 def knowledge_all(cfg: Config):

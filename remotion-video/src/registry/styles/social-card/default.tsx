@@ -15,6 +15,7 @@ import {
 import React from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
+import { useTheme } from "../../theme";
 
 /* ═══════════════ 平台配色 ═══════════════ */
 const THEMES = {
@@ -318,6 +319,7 @@ function HNCard({ data, frame, fps }: {
 const SocialCardDefault: React.FC<StyleComponentProps<"social-card">> = ({ data, segmentId }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const theme = useTheme();
 
   const t = THEMES[data.platform] || THEMES.twitter;
 
@@ -325,7 +327,7 @@ const SocialCardDefault: React.FC<StyleComponentProps<"social-card">> = ({ data,
 
   return (
     <AbsoluteFill style={{
-      background: t.bg,
+      background: theme.bg,
       display: "flex",
       alignItems: "center",
       justifyContent: "center",

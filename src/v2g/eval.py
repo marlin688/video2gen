@@ -8,14 +8,11 @@ import click
 from v2g.config import Config
 
 
-def run_eval(cfg: Config, video_id: str) -> dict:
-    """评估 script.json 质量，返回评分报告。"""
-    output_dir = cfg.output_dir / video_id
-    script_path = output_dir / "script.json"
-    if not script_path.exists():
-        raise click.ClickException(f"脚本不存在: {script_path}")
+def eval_script(script: dict, video_id: str = "") -> dict:
+    """评估脚本质量（纯函数版，接受 dict），返回评分报告。
 
-    script = json.loads(script_path.read_text(encoding="utf-8"))
+    可在脚本生成后立即调用，无需写入文件。
+    """
     segments = script.get("segments", [])
 
     report = {
@@ -84,20 +81,31 @@ def run_eval(cfg: Config, video_id: str) -> dict:
               detail=f"开头: {first_narration[:30]}...")
 
     # --- B 段 terminal_session ---
+    # 使用高级组件（如 code-block）的 B 段不需要 terminal_session
+    b_need_session = sum(
+        1 for s in segments
+        if s.get("material") == "B" and not s.get("component")
+    )
     b_with_session = sum(
         1 for s in segments
-        if s.get("material") == "B" and s.get("terminal_session")
+        if s.get("material") == "B" and not s.get("component") and s.get("terminal_session")
     )
-    check("B段有 terminal_session", b_with_session == b_count, weight=2,
-          detail=f"{b_with_session}/{b_count} 段有结构化会话")
+    check("B段有 terminal_session", b_with_session == b_need_session, weight=2,
+          detail=f"{b_with_session}/{b_need_session} 段有结构化会话")
 
     # --- A 段 slide_content ---
+    # 使用高级组件（如 hero-stat/diagram）的 A 段不需要 slide_content
+    a_need_content = sum(
+        1 for s in segments
+        if s.get("material") == "A" and not s.get("component")
+    )
     a_with_content = sum(
         1 for s in segments
-        if s.get("material") == "A" and s.get("slide_content", {}).get("bullet_points")
+        if s.get("material") == "A" and not s.get("component")
+        and s.get("slide_content", {}).get("bullet_points")
     )
-    check("A段有 slide_content", a_with_content == a_count,
-          detail=f"{a_with_content}/{a_count} 段有卡片内容")
+    check("A段有 slide_content", a_with_content == a_need_content,
+          detail=f"{a_with_content}/{a_need_content} 段有卡片内容")
 
     # --- C 段时间限制 ---
     c_over_10s = 0
@@ -115,7 +123,64 @@ def run_eval(cfg: Config, video_id: str) -> dict:
             consecutive += 1
     check("素材类型交替", consecutive <= 2, detail=f"{consecutive} 处连续相同素材")
 
-    # --- 元数据 ---
+    # --- 脚本结构 (intro/body/outro) ---
+    types = [s.get("type", "") for s in segments]
+    has_intro = "intro" in types
+    has_outro = "outro" in types
+    check("有 intro 段", has_intro, weight=2)
+    check("有 outro 段", has_outro, weight=1)
+
+    # intro 在前、outro 在后
+    if has_intro and has_outro:
+        intro_idx = types.index("intro")
+        outro_idx = len(types) - 1 - types[::-1].index("outro")
+        check("结构顺序正确", intro_idx < outro_idx, detail="intro 在前, outro 在后")
+
+    # body 段用 A→B 交替（统计主体段的 A/B 交替比例）
+    body_materials = [s.get("material") for s in segments if s.get("type") == "body"]
+    if len(body_materials) >= 4:
+        alternations = sum(
+            1 for i in range(1, len(body_materials))
+            if body_materials[i] != body_materials[i - 1]
+        )
+        alt_ratio = alternations / max(len(body_materials) - 1, 1)
+        check("body段 A/B 交替", alt_ratio >= 0.5, weight=2,
+              detail=f"{alternations}/{len(body_materials)-1} 次交替 ({alt_ratio:.0%})")
+
+    # --- 段间钩子检查 ---
+    flat_endings = 0
+    for seg in segments:
+        if seg.get("type") != "body":
+            continue
+        narration = seg.get("narration_zh", "").rstrip()
+        if narration and not any(narration.endswith(c) for c in ("？", "。", "！", "…", "——")):
+            flat_endings += 1
+    check("段落有结尾标点", flat_endings <= 1, detail=f"{flat_endings} 段缺结尾标点")
+
+    # --- 高级组件使用 ---
+    component_count = sum(1 for s in segments if s.get("component"))
+    check("使用高级组件 (0-3)", component_count <= 3,
+          detail=f"{component_count} 个高级组件")
+
+    return report
+
+
+def eval_score_pct(report: dict) -> float:
+    """从 report 中计算百分比得分 (0-100)。"""
+    return report["score"] / max(report["max_score"], 1) * 100
+
+
+def run_eval(cfg: Config, video_id: str) -> dict:
+    """从文件评估 script.json 质量，返回评分报告。"""
+    output_dir = cfg.output_dir / video_id
+    script_path = output_dir / "script.json"
+    if not script_path.exists():
+        raise click.ClickException(f"脚本不存在: {script_path}")
+
+    script = json.loads(script_path.read_text(encoding="utf-8"))
+    report = eval_script(script, video_id)
+
+    # 附加元数据
     meta_path = output_dir / "script_meta.json"
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))

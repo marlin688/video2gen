@@ -15,6 +15,7 @@ import {
 import React, { useMemo } from "react";
 import type { StyleComponentProps, TerminalSessionStep } from "../../types";
 import { registry } from "../../registry";
+import { useTheme } from "../../theme";
 
 /* ═══════════════ 颜色系统 ═══════════════ */
 const CC = {
@@ -272,6 +273,7 @@ function renderHighlights(text: string): React.ReactNode {
 const TerminalAurora: React.FC<StyleComponentProps<"terminal">> = ({ data, segmentId }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const theme = useTheme();
 
   const blocks = useMemo(
     () => data.session?.length ? buildFromSession(data.session) : buildClaudeSession(data.instruction),
@@ -332,7 +334,7 @@ const TerminalAurora: React.FC<StyleComponentProps<"terminal">> = ({ data, segme
 
   return (
     <AbsoluteFill style={{
-      background: "#0a0a1a",
+      background: theme.bg,
       overflow: "hidden",
       display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center",
@@ -342,22 +344,22 @@ const TerminalAurora: React.FC<StyleComponentProps<"terminal">> = ({ data, segme
       <div style={{
         position: "absolute", inset: 0, zIndex: 0,
         background: `
-          radial-gradient(ellipse 120% 60% at 30% 20%, rgba(56,189,248,0.25) 0%, transparent 60%),
-          radial-gradient(ellipse 100% 50% at 70% 80%, rgba(139,92,246,0.2) 0%, transparent 55%),
-          radial-gradient(ellipse 80% 40% at 50% 50%, rgba(59,130,246,0.15) 0%, transparent 50%)
+          radial-gradient(ellipse 120% 60% at 30% 20%, ${theme.orbColor1} 0%, transparent 60%),
+          radial-gradient(ellipse 100% 50% at 70% 80%, ${theme.orbColor2} 0%, transparent 55%),
+          radial-gradient(ellipse 80% 40% at 50% 50%, ${theme.orbColor1} 0%, transparent 50%)
         `,
         filter: "blur(40px)",
         transform: `translateX(${Math.sin(auroraShift * 0.02) * 30}px) translateY(${Math.cos(auroraShift * 0.015) * 20}px)`,
       }} />
       <div style={{
         position: "absolute", top: "5%", left: "-10%", width: "120%", height: "35%", zIndex: 0,
-        background: `linear-gradient(${100 + Math.sin(auroraShift * 0.01) * 15}deg, transparent 20%, rgba(56,189,248,0.08) 35%, rgba(99,102,241,0.12) 50%, rgba(139,92,246,0.08) 65%, transparent 80%)`,
+        background: `linear-gradient(${100 + Math.sin(auroraShift * 0.01) * 15}deg, transparent 20%, ${theme.orbColor1} 35%, ${theme.orbColor2} 50%, ${theme.orbColor1} 65%, transparent 80%)`,
         filter: "blur(20px)",
         transform: `translateX(${Math.sin(auroraShift * 0.008) * 50}px)`,
       }} />
       <div style={{
         position: "absolute", bottom: "0%", left: "-10%", width: "120%", height: "40%", zIndex: 0,
-        background: `linear-gradient(${260 + Math.cos(auroraShift * 0.012) * 10}deg, transparent 25%, rgba(59,130,246,0.1) 40%, rgba(14,165,233,0.08) 55%, transparent 75%)`,
+        background: `linear-gradient(${260 + Math.cos(auroraShift * 0.012) * 10}deg, transparent 25%, ${theme.orbColor2} 40%, ${theme.orbColor1} 55%, transparent 75%)`,
         filter: "blur(30px)",
         transform: `translateX(${Math.cos(auroraShift * 0.01) * 40}px)`,
       }} />

@@ -189,6 +189,12 @@ def multi(cfg: Config, urls, topic, project_id, model, whisper_model):
         from v2g.scriptwriter import run_multi_script
         state = run_multi_script(cfg, project_id, model)
 
+    # 质量门控 (多源脚本用 run_multi_script 重试)
+    from v2g.pipeline import _run_quality_gate
+    from v2g.scriptwriter import run_multi_script as _regen_multi
+    _run_quality_gate(cfg, project_id, model, max_retries=2, threshold=85,
+                      regen_fn=_regen_multi)
+
     # 人工审核
     if not state.script_reviewed:
         click.echo(f"\n✋ 暂停: 审阅脚本")

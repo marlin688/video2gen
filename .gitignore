@@ -30,3 +30,10 @@ node_modules/
 .DS_Store
 Thumbs.db
 .venv/
+
+# Runtime data
+data/
+materials/
+
+# Remotion build output
+remotion-video/out/

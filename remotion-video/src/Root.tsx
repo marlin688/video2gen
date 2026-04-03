@@ -1,5 +1,4 @@
 import { Composition } from "remotion";
-import type { CalculateMetadataFunction } from "remotion";
 import { VideoComposition } from "./VideoComposition";
 import type { VideoCompositionProps, TimingMap } from "./types";
 
@@ -8,8 +7,14 @@ const FPS = 30;
 /**
  * 动态计算视频总时长（基于 TTS 时长之和）
  */
-const calculateMetadata: CalculateMetadataFunction<VideoCompositionProps> = async ({
+const calculateMetadata = async ({
   props,
+}: {
+  props: VideoCompositionProps;
+  defaultProps: VideoCompositionProps;
+  abortSignal: AbortSignal;
+  compositionId: string;
+  isRendering: boolean;
 }) => {
   const { timing } = props;
   const totalSeconds = Object.values(timing).reduce((sum, t) => sum + t.duration, 0);
@@ -43,11 +48,15 @@ const defaultProps: VideoCompositionProps = {
   sourceChannels: [],
   voiceoverFile: "voiceover.mp3",
   availableRecordings: [],
+  theme: "tech-blue",
 };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const AnyComposition = Composition as any;
 
 export const RemotionRoot: React.FC = () => {
   return (
-    <Composition
+    <AnyComposition
       id="V2GVideo"
       component={VideoComposition}
       durationInFrames={FPS * 60}

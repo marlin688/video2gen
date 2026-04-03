@@ -695,6 +695,10 @@ def run_agent(
         state.last_error = ""
         state.save(cfg.output_dir)
 
+    # ── Phase 2.5: 质量门控（agent 模式不自动重试，仅报告）─────
+    from v2g.pipeline import _run_quality_gate
+    _run_quality_gate(cfg, project_id, model, max_retries=0, threshold=85)
+
     # ── Phase 3: B 类素材自动采集 ─────────────────────────
     script_data = json.loads(script_path.read_text(encoding="utf-8"))
     segments = script_data.get("segments", [])

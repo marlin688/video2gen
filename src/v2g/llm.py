@@ -68,18 +68,23 @@ def _call_claude(system_prompt: str, user_message: str, model: str,
     if not api_key:
         raise click.ClickException("未设置 ANTHROPIC_API_KEY")
 
-    # 清理可能带非法字符的 proxy env（如 all_proxy=socks5://...~）
-    _cleaned_proxy = {}
-    for _pk in ("all_proxy", "ALL_PROXY"):
-        _pv = os.environ.get(_pk, "")
-        if _pv and not _pv.rstrip("/").replace("://", "").replace(".", "").replace(":", "").isalnum():
-            _cleaned_proxy[_pk] = os.environ.pop(_pk)
-
-    # 如果使用了自定义 base_url (代理网关)，不走本地系统代理
+    # 如果使用了自定义 base_url (代理网关)，临时清除所有 proxy 变量
+    # httpx.Client(proxy=None) 仍会读取环境变量，必须彻底清除
+    _saved_proxy = {}
     if base_url and "api.anthropic.com" not in base_url:
+        for _pk in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                     "http_proxy", "https_proxy", "all_proxy"):
+            if _pk in os.environ:
+                _saved_proxy[_pk] = os.environ.pop(_pk)
         proxy_url = None
     else:
+        # 清理非法字符的 proxy（如 all_proxy=socks5://...~）
+        for _pk in ("all_proxy", "ALL_PROXY"):
+            _pv = os.environ.get(_pk, "")
+            if _pv and _pv.rstrip("/").endswith("~"):
+                _saved_proxy[_pk] = os.environ.pop(_pk)
         proxy_url = os.environ.get("https_proxy") or os.environ.get("http_proxy") or None
+
     client = anthropic.Anthropic(
         api_key=api_key,
         base_url=base_url,
@@ -88,13 +93,14 @@ def _call_claude(system_prompt: str, user_message: str, model: str,
             proxy=proxy_url,
         ),
     )
-    os.environ.update(_cleaned_proxy)  # restore
+    os.environ.update(_saved_proxy)  # restore
 
     # 使用流式调用（兼容中转平台）
-    # 代理平台可能同时发送 content_block_delta 和简化的 text 事件
-    # 优先用 content_block_delta，fallback 到 text 事件
+    # 某些代理平台可能自动启用 extended thinking，需要处理 thinking_delta
+    # 并只提取 text 部分作为最终结果
     text_parts_delta = []
     text_parts_event = []
+    has_thinking = False
     with client.messages.stream(
         model=model,
         max_tokens=max_tokens,
@@ -106,12 +112,34 @@ def _call_claude(system_prompt: str, user_message: str, model: str,
             etype = getattr(event, "type", None)
             if etype == "content_block_delta":
                 delta = event.delta
-                if getattr(delta, "type", None) == "text_delta":
+                delta_type = getattr(delta, "type", None)
+                if delta_type == "text_delta":
                     text_parts_delta.append(getattr(delta, "text", ""))
+                elif delta_type == "thinking_delta":
+                    has_thinking = True
             elif etype == "text":
                 text_parts_event.append(getattr(event, "text", ""))
     # 优先使用 delta 模式；如果为空则 fallback 到 event 模式
     result = "".join(text_parts_delta) or "".join(text_parts_event)
+    if not result:
+        if has_thinking:
+            # thinking 耗尽 token budget，用更大 budget 重试
+            click.echo("   ⚠️ thinking 模式耗尽 token，增大 budget 重试...")
+            text_parts_delta = []
+            with client.messages.stream(
+                model=model,
+                max_tokens=max_tokens * 4,
+                temperature=temperature,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_message}],
+            ) as stream:
+                for event in stream:
+                    etype = getattr(event, "type", None)
+                    if etype == "content_block_delta":
+                        delta = event.delta
+                        if getattr(delta, "type", None) == "text_delta":
+                            text_parts_delta.append(getattr(delta, "text", ""))
+            result = "".join(text_parts_delta)
     if not result:
         raise RuntimeError("Claude 返回空响应")
     return result

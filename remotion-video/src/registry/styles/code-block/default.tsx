@@ -19,6 +19,7 @@ import {
 import React, { useMemo } from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
+import { useTheme } from "../../theme";
 
 /* ═══════════════ 颜色系统 ═══════════════ */
 const C = {
@@ -136,6 +137,7 @@ function langIcon(lang: string): { icon: string; color: string } {
 const CodeBlockDefault: React.FC<StyleComponentProps<"code-block">> = ({ data, segmentId }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const theme = useTheme();
 
   const { fileName, language, code, highlightLines = [], annotations = {} } = data;
   const langInfo = langIcon(language);
@@ -156,14 +158,31 @@ const CodeBlockDefault: React.FC<StyleComponentProps<"code-block">> = ({ data, s
   const ANNO_W = 360;
   const codeAreaH = Math.min(code.length * LINE_H, 780);
 
+  // 背景微弱光斑
+  const { durationInFrames } = useVideoConfig();
+  const t = frame / Math.max(durationInFrames, 1);
+  const orbX = 50 + Math.sin(t * Math.PI * 2) * 15;
+  const orbY = 50 + Math.cos(t * Math.PI * 2 * 0.6) * 10;
+
   return (
     <AbsoluteFill style={{
-      background: "#0a0a1a",
+      background: theme.bg,
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
       padding: "30px 60px",
     }}>
+      {/* 微弱漂浮光斑 */}
+      <div style={{
+        position: "absolute",
+        left: `${orbX}%`, top: `${orbY}%`,
+        width: 500, height: 500,
+        borderRadius: "50%",
+        background: `radial-gradient(circle, ${theme.orbColor1} 0%, transparent 70%)`,
+        filter: "blur(60px)",
+        transform: "translate(-50%, -50%)",
+        pointerEvents: "none",
+      }} />
       {/* 代码窗口 */}
       <div style={{
         width: "100%",

@@ -15,6 +15,7 @@ import {
 import React, { useMemo } from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
+import { useTheme } from "../../theme";
 
 /* ═══════════════ 颜色系统 ═══════════════ */
 
@@ -149,6 +150,7 @@ function Arrow({ from, to, label, progress }: {
   label?: string;
   progress: number;
 }) {
+  const theme = useTheme();
   const x1 = from.x + from.w / 2;
   const y1 = from.y + from.h / 2;
   const x2 = to.x + to.w / 2;
@@ -189,7 +191,7 @@ function Arrow({ from, to, label, progress }: {
       {label && (
         <text x={mx} y={my - 10}
           textAnchor="middle" fontSize={18}
-          fill={C.edgeLabel} fontFamily="'Inter', sans-serif"
+          fill={theme.textDim} fontFamily="'Inter', sans-serif"
         >
           {label}
         </text>
@@ -203,6 +205,7 @@ function Arrow({ from, to, label, progress }: {
 const DiagramDefault: React.FC<StyleComponentProps<"diagram">> = ({ data, segmentId }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const theme = useTheme();
 
   const CANVAS_W = 1700;
   const CANVAS_H = 900;
@@ -216,7 +219,7 @@ const DiagramDefault: React.FC<StyleComponentProps<"diagram">> = ({ data, segmen
 
   return (
     <AbsoluteFill style={{
-      background: C.bg,
+      background: theme.bg,
       display: "flex",
       flexDirection: "column",
       alignItems: "center",
@@ -227,7 +230,7 @@ const DiagramDefault: React.FC<StyleComponentProps<"diagram">> = ({ data, segmen
       <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 0 }}>
         <defs>
           <pattern id={`grid-${segmentId}`} width="40" height="40" patternUnits="userSpaceOnUse">
-            <path d="M 40 0 L 0 0 0 40" fill="none" stroke={C.gridLine} strokeWidth="1" />
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke={theme.gridLine} strokeWidth="1" />
           </pattern>
         </defs>
         <rect width="100%" height="100%" fill={`url(#grid-${segmentId})`} />
@@ -237,7 +240,7 @@ const DiagramDefault: React.FC<StyleComponentProps<"diagram">> = ({ data, segmen
       {data.title && (
         <div style={{
           position: "relative", zIndex: 1,
-          fontSize: 40, fontWeight: 700, color: C.title,
+          fontSize: 40, fontWeight: 700, color: theme.text,
           marginBottom: 20,
           opacity: interpolate(titleP, [0, 1], [0, 1]),
           transform: `translateY(${interpolate(titleP, [0, 1], [-20, 0])}px)`,

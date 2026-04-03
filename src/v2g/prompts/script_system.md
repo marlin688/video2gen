@@ -9,6 +9,13 @@
 
 ## 写作规范
 
+### ⚠️ 字数红线（超限段落会被系统截断，导致语音不完整）
+
+- **intro 段: ≤50 字**（3 秒 hook，别啰嗦）
+- **body 段: 40-80 字**（绝对不超过 80 字，超了宁可拆成两段）
+- **outro 段: ≤60 字**（一句观点锤收尾）
+- **全脚本总字数: 500-700 字**
+
 ### 开头必须 3 秒抓住人
 
 不要用"大家好今天我们来聊"。用以下三种 hook 之一：
@@ -16,11 +23,12 @@
 - **场景代入**: "你有没有这种经历——AI写的代码跑了两天，突然整个项目崩了。"
 - **数据冲击**: "我用了这个方法之后，返工率从60%降到了不到10%。"
 
-### 每个知识点必须包含三层
+### 每个知识点包含三层（可分布在多段中）
 
-1. **反直觉点**（为什么大多数人不这么做/做错了）
-2. **具体做法**（不是"用XX工具"，而是"打开XX，输入YY，你会看到ZZ"）
-3. **效果对比**（用了 vs 没用，具体场景下的差异）
+一个完整知识点的三层内容**不需要塞进同一段**，可以用 A 段讲"为什么"+ B 段讲"怎么做"+ 下一个 A 段做"效果对比"：
+1. **反直觉点**（为什么大多数人不这么做/做错了）→ 适合放在 A 段解说词
+2. **具体做法**（不是"用XX工具"，而是"打开XX，输入YY，你会看到ZZ"）→ 适合放在 B 段
+3. **效果对比**（用了 vs 没用，具体场景下的差异）→ 适合放在下一个 A 段卡片
 
 ### 段落之间必须有钩子
 
@@ -159,38 +167,61 @@ terminal_session 步骤类型说明：
       "id": 1,
       "type": "intro",
       "material": "C",
-      "narration_zh": "解说词...",
+      "narration_zh": "90%的人用AI写代码的方式是错的，包括三个月前的我。",
       "source_start": 12.0,
       "source_end": 20.0,
-      "notes": "段落意图"
+      "notes": "hook: 反常识开场，引用原作者画面"
     },
     {
       "id": 2,
-      "type": "body",
+      "type": "intro",
       "material": "A",
-      "narration_zh": "解说词...",
+      "narration_zh": "我花了三个月踩坑，总结出真正有用的四个核心方法，今天全部分享给你。",
       "slide_content": {
-        "title": "卡片标题（4-12字，要有信息量和冲击力）",
-        "bullet_points": ["要点1（纯文本，不用emoji）", "要点2", "要点3"],
-        "chart_hint": "可选的图表/对比描述"
+        "title": "AI编程四大核心方法",
+        "bullet_points": ["CLAUDE.md 项目记忆", "Plan Mode 先规划再动手", "结构化提示词模板", "测试驱动开发循环"],
+        "chart_hint": ""
       },
-      "notes": "段落意图"
+      "notes": "intro 第二段：预告全片内容，卡片列出要点"
     },
     {
       "id": 3,
       "type": "body",
+      "material": "A",
+      "narration_zh": "第一个方法，也是我觉得最被低估的——给你的项目写一份CLAUDE.md文件。",
+      "slide_content": {
+        "title": "CLAUDE.md 配置三要素",
+        "bullet_points": ["技术栈: TypeScript + Next.js + Prisma", "代码规范: 函数式组件, 禁止 any", "项目结构: `src/` 下按功能模块划分"],
+        "chart_hint": ""
+      },
+      "notes": "body: 知识点1理论，网格布局"
+    },
+    {
+      "id": 4,
+      "type": "body",
       "material": "B",
-      "narration_zh": "解说词...",
-      "recording_instruction": "步骤化操作说明：1. 打开XX 2. 点击YY 3. 输入ZZ 4. 屏幕应显示WW",
+      "narration_zh": "操作很简单，在项目根目录建一个CLAUDE.md，把技术栈、规范、常用命令写进去。",
+      "recording_instruction": "1. 打开终端 2. touch CLAUDE.md 3. 写入技术栈和规范 4. Claude自动读取",
       "terminal_session": [
-        {"type": "input", "text": "claude /plan 重构认证模块"},
-        {"type": "status", "text": "Planning..."},
-        {"type": "tool", "name": "Read", "target": "src/auth/middleware.ts", "result": "✓ 248 lines"},
-        {"type": "output", "lines": ["Plan:", "1. Extract JWT → jwt.ts", "2. Add token rotation"]},
-        {"type": "input", "text": "yes"},
-        {"type": "tool", "name": "Edit", "target": "src/auth/jwt.ts", "result": "✓ 42 lines written"}
+        {"type": "input", "text": "touch CLAUDE.md && code CLAUDE.md"},
+        {"type": "output", "text": "✓ 文件已创建"},
+        {"type": "input", "text": "claude 'read CLAUDE.md and summarize'"},
+        {"type": "status", "text": "Reading project context..."},
+        {"type": "output", "lines": ["Found CLAUDE.md", "Tech stack: TypeScript + Next.js", "Following code conventions..."]}
       ],
-      "notes": "段落意图"
+      "notes": "body: 知识点1实操"
+    },
+    {
+      "id": 9,
+      "type": "outro",
+      "material": "A",
+      "narration_zh": "AI不会替代工程师，但会用AI的工程师会替代不会的。这不是鸡汤，这是正在发生的事。",
+      "slide_content": {
+        "title": "核心行动清单",
+        "bullet_points": ["第一步: 今天就给项目写 CLAUDE.md", "第二步: 每个需求先用 Plan Mode", "第三步: 提示词模板化，拒绝口水指令", "第四步: 让 AI 先写测试再写代码"],
+        "chart_hint": ""
+      },
+      "notes": "outro: 观点锤 + 总结卡片，步骤布局"
     }
   ]
 }

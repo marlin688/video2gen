@@ -242,6 +242,17 @@ if (fs.existsSync(recDir)) {
 }
 console.log(`   录屏素材: ${availableRecordings.length > 0 ? availableRecordings.map(id => `seg_${id}`).join(", ") : "无"}`);
 
+// 主题: 从 checkpoint 或环境变量读取（默认 tech-blue）
+const themeId = (() => {
+  if (process.env.V2G_THEME) return process.env.V2G_THEME;
+  if (fs.existsSync(checkpointPath)) {
+    const cp = JSON.parse(fs.readFileSync(checkpointPath, "utf-8"));
+    if (cp.theme) return cp.theme;
+  }
+  return "tech-blue";
+})();
+console.log(`   主题: ${themeId}`);
+
 // 构建 props
 const inputProps = {
   script,
@@ -253,6 +264,7 @@ const inputProps = {
   sourceChannels,
   voiceoverFile: "voiceover.mp3",
   availableRecordings,
+  theme: themeId,
 };
 
 // ═══ SRT 字幕生成 ═══

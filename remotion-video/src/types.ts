@@ -103,6 +103,8 @@ export interface VideoCompositionProps {
   sourceChannels: string[];     // 每个源的频道名
   voiceoverFile: string;
   availableRecordings: number[];
+  /** 视频主题 ID（tech-blue / warm-purple / emerald-dark），默认 tech-blue */
+  theme?: string;
 }
 
 /** 计算每个 segment 在时间线上的帧范围 */

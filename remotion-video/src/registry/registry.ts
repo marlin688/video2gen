@@ -58,6 +58,9 @@ class ComponentRegistry {
    * 优先级：
    * 1. segment.component 字段（显式指定 style id）
    * 2. material type fallback（向后兼容旧 script.json）
+   *
+   * 注意: slide 不再轮换不同组件（视觉一致性），统一走 default slide。
+   * 视觉多样性通过 slide 内的 6 种 layout 自动检测实现。
    */
   resolveForSegment(
     segment: { component?: string; material?: string },
@@ -72,7 +75,7 @@ class ComponentRegistry {
       return this.resolveDefault(schema);
     }
 
-    // 2. material fallback
+    // 2. material fallback — 所有 A 走统一 slide，视觉一致性由 theme 保证
     switch (segment.material) {
       case "A":
         return this.resolveDefault("slide");

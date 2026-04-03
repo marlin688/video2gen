@@ -15,6 +15,7 @@ import {
 import React from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
+import { useTheme } from "../../theme";
 
 /* ═══════════════ 颜色系统 ═══════════════ */
 const DARK = {
@@ -105,6 +106,7 @@ function Favicon({ domain }: { domain: string }) {
 const BrowserDefault: React.FC<StyleComponentProps<"browser">> = ({ data, segmentId }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const globalTheme = useTheme();
 
   const { url, tabTitle, pageTitle, contentLines, theme = "dark" } = data;
   const t = theme === "light" ? LIGHT : DARK;
@@ -120,7 +122,7 @@ const BrowserDefault: React.FC<StyleComponentProps<"browser">> = ({ data, segmen
 
   return (
     <AbsoluteFill style={{
-      background: t.bg,
+      background: theme === "light" ? t.bg : globalTheme.bg,
       display: "flex",
       alignItems: "center",
       justifyContent: "center",

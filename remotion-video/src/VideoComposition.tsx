@@ -5,19 +5,66 @@
  * 向后兼容：无 component 字段时按 material A/B/C 走默认 style。
  */
 
-import { AbsoluteFill, Sequence, Series, staticFile } from "remotion";
+import {
+  AbsoluteFill, Sequence, Series, staticFile,
+  useCurrentFrame, useVideoConfig, interpolate,
+} from "remotion";
 import React from "react";
 import { Audio } from "@remotion/media";
 
 import type { VideoCompositionProps, ScriptSegment } from "./types";
 import { registry } from "./registry/registry";
 import "./registry/init"; // 触发所有 style 自注册
+import { ThemeProvider, getTheme } from "./registry/theme";
 
 import type {
   SlideData, TerminalData, RecordingData, SourceClipData,
   CodeBlockData, SocialCardData, DiagramData, HeroStatData, BrowserData,
   SegmentData, StyleComponentProps,
 } from "./registry/types";
+
+/**
+ * 段间转场：每个 segment 首尾 fade through black
+ * - 淡入：前 8 帧 (0.27s) 从黑色渐显
+ * - 淡出：后 8 帧 (0.27s) 渐隐到黑色
+ * - 第一段只淡入不淡出，最后一段只淡出不淡入（避免开头/结尾突兀）
+ */
+const FADE_FRAMES = 8;
+
+const SegmentTransition: React.FC<{
+  isFirst: boolean;
+  isLast: boolean;
+  children: React.ReactNode;
+}> = ({ isFirst, isLast, children }) => {
+  const frame = useCurrentFrame();
+  const { durationInFrames } = useVideoConfig();
+
+  // 淡入：第一段从黑到亮；中间段从黑到亮
+  const fadeIn = isFirst
+    ? interpolate(frame, [0, FADE_FRAMES], [0, 1], { extrapolateRight: "clamp" })
+    : interpolate(frame, [0, FADE_FRAMES], [0, 1], { extrapolateRight: "clamp" });
+
+  // 淡出：最后一段从亮到黑；中间段从亮到黑
+  const fadeOut = isLast
+    ? interpolate(frame, [durationInFrames - FADE_FRAMES, durationInFrames], [1, 0], { extrapolateLeft: "clamp" })
+    : interpolate(frame, [durationInFrames - FADE_FRAMES, durationInFrames], [1, 0], { extrapolateLeft: "clamp" });
+
+  const opacity = Math.min(fadeIn, fadeOut);
+
+  return (
+    <AbsoluteFill>
+      {children}
+      {/* 黑色遮罩层实现 fade through black */}
+      <AbsoluteFill
+        style={{
+          backgroundColor: "#000",
+          opacity: 1 - opacity,
+          pointerEvents: "none",
+        }}
+      />
+    </AbsoluteFill>
+  );
+};
 
 export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
   const {
@@ -31,6 +78,10 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
     availableRecordings = [],
   } = props;
   const segments = script.segments;
+
+  // 获取视频主题（通过 props 传入或默认 tech-blue）
+  const { theme: themeId } = props;
+  const theme = React.useMemo(() => getTheme(themeId), [themeId]);
 
   const renderSegment = (seg: ScriptSegment) => {
     const hasRecording = availableRecordings.includes(seg.id);
@@ -156,25 +207,34 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
   };
 
   return (
-    <AbsoluteFill>
-      {/* 视频片段序列 */}
-      <Series>
-        {segments.map((seg) => {
-          const t = timing[String(seg.id)];
-          if (!t) return null;
-          const durationFrames = Math.round(t.duration * fps);
-          return (
-            <Series.Sequence key={seg.id} durationInFrames={durationFrames}>
-              {renderSegment(seg)}
-            </Series.Sequence>
-          );
-        })}
-      </Series>
+    <ThemeProvider value={theme}>
+      <AbsoluteFill>
+        {/* 视频片段序列（带段间淡入淡出转场） */}
+        <Series>
+          {segments.map((seg, idx) => {
+            const t = timing[String(seg.id)];
+            if (!t) return null;
+            const durationFrames = Math.round(t.duration * fps);
+            const isFirst = idx === 0;
+            const isLast = idx === segments.length - 1;
+            return (
+              <Series.Sequence key={seg.id} durationInFrames={durationFrames}>
+                <SegmentTransition
+                  isFirst={isFirst}
+                  isLast={isLast}
+                >
+                  {renderSegment(seg)}
+                </SegmentTransition>
+              </Series.Sequence>
+            );
+          })}
+        </Series>
 
-      {/* 配音音轨 */}
-      <Sequence from={0}>
-        <Audio src={staticFile(voiceoverFile)} />
-      </Sequence>
-    </AbsoluteFill>
+        {/* 配音音轨 */}
+        <Sequence from={0}>
+          <Audio src={staticFile(voiceoverFile)} />
+        </Sequence>
+      </AbsoluteFill>
+    </ThemeProvider>
   );
 };

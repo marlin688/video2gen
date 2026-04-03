@@ -15,24 +15,28 @@ import {
 import React from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
+import { useTheme } from "../../theme";
 
-/* ═══════════════ 颜色系统 ═══════════════ */
-const C = {
-  bg: "#0a0e1a",
-  text: "#e2e8f0",
-  label: "#94a3b8",
-  footnote: "#64748b",
-  up: "#22c55e",
-  down: "#ef4444",
-  neutral: "#3b82f6",
-  arrow: "#ffffff",
-  divider: "rgba(148,163,184,0.15)",
-  glow: {
-    up: "rgba(34,197,94,0.15)",
-    down: "rgba(239,68,68,0.15)",
-    neutral: "rgba(59,130,246,0.15)",
-  },
-};
+/* ═══════════════ 颜色系统（从主题读取基础色） ═══════════════ */
+function useC() {
+  const t = useTheme();
+  return {
+    bg: t.bg,
+    text: t.text,
+    label: t.textDim,
+    footnote: t.textMuted,
+    up: t.success,
+    down: t.danger,
+    neutral: t.accent,
+    arrow: "#ffffff",
+    divider: "rgba(148,163,184,0.15)",
+    glow: {
+      up: `${t.success}26`,   // ~15% opacity
+      down: `${t.danger}26`,
+      neutral: `${t.accent}26`,
+    },
+  };
+}
 
 /* ═══════════════ 数字动画 ═══════════════ */
 
@@ -43,13 +47,13 @@ function AnimatedValue({ value, oldValue, frame, fps, delay }: {
   fps: number;
   delay: number;
 }) {
+  const C = useC();
   const p = spring({
     frame: Math.max(0, frame - delay),
     fps, config: { damping: 18, stiffness: 80 },
     durationInFrames: 25,
   });
 
-  // 尝试解析数字做 countUp
   const numMatch = value.match(/^([<>≈~]?)(\d+\.?\d*)(.*)/);
   if (numMatch) {
     const [, prefix, numStr, suffix] = numMatch;
@@ -72,7 +76,6 @@ function AnimatedValue({ value, oldValue, frame, fps, delay }: {
     return <span>{prefix}{display}{suffix}</span>;
   }
 
-  // 非数字直接显示
   if (oldValue) {
     return (
       <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
@@ -90,6 +93,7 @@ function AnimatedValue({ value, oldValue, frame, fps, delay }: {
 /* ═══════════════ 趋势箭头 ═══════════════ */
 
 function TrendArrow({ trend }: { trend: "up" | "down" | "neutral" }) {
+  const C = useC();
   const color = trend === "up" ? C.up : trend === "down" ? C.down : C.neutral;
   const arrow = trend === "up" ? "↑" : trend === "down" ? "↓" : "→";
   return (
@@ -108,7 +112,8 @@ function TrendArrow({ trend }: { trend: "up" | "down" | "neutral" }) {
 
 const HeroStatDefault: React.FC<StyleComponentProps<"hero-stat">> = ({ data, segmentId }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, durationInFrames } = useVideoConfig();
+  const C = useC();
 
   const { stats, footnote } = data;
   const count = stats.length;
@@ -126,18 +131,22 @@ const HeroStatDefault: React.FC<StyleComponentProps<"hero-stat">> = ({ data, seg
       padding: "40px 80px",
       overflow: "hidden",
     }}>
-      {/* 背景光晕 */}
+      {/* 背景光晕（缓慢呼吸 + 漂移动画） */}
       {stats.map((stat, i) => {
         const trend = stat.trend || "neutral";
         const glowColor = C.glow[trend];
-        const xPos = count === 1 ? 50 : count === 2 ? 25 + i * 50 : 20 + i * 30;
+        const baseX = count === 1 ? 50 : count === 2 ? 25 + i * 50 : 20 + i * 30;
+        const t = frame / Math.max(durationInFrames, 1);
+        const driftX = Math.sin(t * Math.PI * 2 + i * 1.5) * 5;
+        const driftY = Math.cos(t * Math.PI * 2 * 0.7 + i * 2) * 4;
+        const breathe = 1 + Math.sin(t * Math.PI * 2 * 0.5 + i) * 0.08;
         return (
           <div key={i} style={{
             position: "absolute",
-            left: `${xPos}%`,
-            top: "40%",
-            width: 500,
-            height: 500,
+            left: `${baseX + driftX}%`,
+            top: `${40 + driftY}%`,
+            width: 500 * breathe,
+            height: 500 * breathe,
             borderRadius: "50%",
             background: glowColor,
             filter: "blur(100px)",

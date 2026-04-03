@@ -13,13 +13,15 @@ sources/{video_id}/              ← 输入素材 (下载的视频 + 字幕)
     video.mp4, subtitle_en.srt, subtitle_zh.srt
 
 output/{project_id}/             ← 项目工作目录
-    checkpoint.json              ← 流水线状态
+    checkpoint.json              ← 流水线状态 (含 cost_summary)
     script.json, script.md       ← 脚本 (顶层方便引用)
     script_meta.json             ← 生成元数据 (模型、prompt hash、时间戳)
     recording_guide.md
+    preview/seg_*.png            ← 静帧预览 (渲染前确认)
     voiceover/                   ← TTS 配音
         full.mp3                 ← 合并后完整音轨
         timing.json              ← 时间轴
+        word_timing.json         ← 词级时间戳 (mlx-whisper, 可选)
         segments/seg_*.mp3       ← 分段音频
     slides/slide_*.png           ← 幻灯片图片
     recordings/seg_*.mp4         ← 录屏素材
@@ -38,7 +40,8 @@ output/{project_id}/             ← 项目工作目录
 pip install -e .                          # Install in dev mode
 v2g run <video_id_or_url>                 # Full single-video pipeline (FFmpeg backend)
 v2g run <video_id_or_url> --auto          # Full auto mode: skip review, B-material uses terminal animation
-v2g eval <video_id>                       # Rule-based script quality check (no LLM cost)
+v2g eval <video_id>                       # Rule-based script quality check (Pydantic schema + business rules, no LLM cost)
+v2g preview <video_id>                    # Render per-segment keyframe PNGs (10x faster than full render)
 v2g select --csv trending.csv             # Stage 1: interactive video selection
 v2g prepare <video_id_or_url>             # Stage 2: download → sources/{video_id}/
 v2g script <video_id>                     # Stage 3: AI script generation
@@ -71,9 +74,10 @@ npm run dev                   # Remotion studio (interactive preview)
 npm run build                 # TypeScript type-check only (tsc --noEmit)
 npm run render                # Dev render with empty props (not production)
 node render.mjs <project_id>  # Production render → final/video.mp4 + final/subtitles.srt
+node preview.mjs <project_id> # Quick keyframe preview → output/{id}/preview/seg_*.png
 ```
 
-Production rendering is done via `render.mjs`, not `npm run render`. It auto-cleans `public/` cache after rendering.
+Production rendering is done via `render.mjs`, not `npm run render`. It auto-cleans `public/` cache after rendering. Use `preview.mjs` before full render to verify visual results (10x faster).
 
 ## Architecture
 
@@ -83,13 +87,13 @@ The pipeline has **two independent video rendering paths** that diverge at Stage
 
 ```
 Single-video (v2g run):
-  prepare → script → [review] → tts → slides → record → assemble (FFmpeg) → final/video.mp4
+  prepare → script → [quality gate] → [review] → tts → [word align] → slides → [preview] → assemble (FFmpeg) → final/
 
 Multi-source (v2g multi):
-  multi-prepare → multi-script → [review] → tts → slides → Remotion (render.mjs) → final/video.mp4
+  multi-prepare → multi-script → [quality gate] → [review] → tts → slides → [preview] → Remotion → final/
 
 Agent orchestration (v2g agent):
-  fetch/read sources → outline → [human confirm] → script.json → tts → slides → render
+  fetch/read/search → outline → [confirm] → phased script → [quality gate] → tts → slides → render
 ```
 
 - **FFmpeg path** (`editor.py`): direct video composition with ASS subtitle burn-in. Output: `output/{video_id}/final/video.mp4`
@@ -103,7 +107,7 @@ Agent orchestration (v2g agent):
 3. Finds source videos in `sources/{video_id}/` (fallback: `output/subtitle/`)
 4. Auto-transcodes source videos (AV1/VP9 → H.264) if needed
 5. Copies assets into `remotion-video/public/` (auto-cleaned after render)
-6. Generates `final/subtitles.srt` and renders `final/video.mp4`
+6. Generates `final/subtitles.srt` (uses `word_timing.json` for precise alignment when available, falls back to character-proportional splitting) and renders `final/video.mp4`
 
 Composition ID is hardcoded as `V2GVideo` in `Root.tsx`. Resolution is 1920x1080 @ 30fps.
 
@@ -149,18 +153,20 @@ State persists in `output/{video_id}/checkpoint.json` (`PipelineState` dataclass
 - `script.json` — LLM-generated script with segments (id, type, material, component?, narration_zh, slide_content/recording_instruction/terminal_session/source timing). The optional `component` field specifies a style ID (e.g. `"slide.tech-dark"`); when absent, defaults by material type. B-material segments include `terminal_session` (structured terminal steps: input/output/status/tool/blank) for driving terminal animation when no recording exists. Multi-source mode adds `sources_used`, `total_duration_hint`.
 - `script_meta.json` — Generation metadata: model name, prompt hash, timestamp, input/output char counts. Used for prompt version tracking.
 - `voiceover/timing.json` — `{segment_id: {file, duration, text_length}}` mapping from TTS output.
+- `voiceover/word_timing.json` — (optional) `{segment_id: [{word, start, end}, ...]}` word-level timestamps from mlx-whisper alignment.
 - `recording_guide.md` — Extracted material B instructions for the user.
+- `preview/seg_*.png` — Per-segment keyframe previews (rendered at frame 60, ~2s).
 - `final/subtitles.srt` — SRT subtitles (Remotion backend) or `final/subtitles.ass` (FFmpeg backend).
 
 ### Agent Orchestration (`agent.py`)
 
 `v2g agent` implements a two-phase LLM-driven script generation pipeline:
 
-1. **Phase 1 — Outline**: Agent loop with tool use (fetch URLs, read files, save outline). Supports both Anthropic and OpenAI-compatible backends.
+1. **Phase 1 — Outline**: Agent loop with tool use (fetch URLs, read files, search GitHub/HN, save outline). Supports both Anthropic and OpenAI-compatible backends.
 2. **Human review**: User confirms/edits `outline.json`
-3. **Phase 2 — Script**: Direct LLM call expands outline into `script.json` (uses `call_llm`, not agent loop, for stability with long outputs)
+3. **Phase 2 — Phased Script**: Two-step generation (skeleton → batch fill, 3 segments per batch) to avoid proxy truncation. Falls back to single-shot with truncation recovery.
 
-Agent tools: `fetch_url` (web article extraction via trafilatura), `read_source_file` (local .md/.srt/.txt), `save_outline`, `save_script`.
+Agent tools: `fetch_url` (web article extraction), `read_source_file` (local files), `search_github` (GitHub REST API), `search_hn` (HN Algolia API), `save_outline`, `save_script`.
 
 Article fetching (`fetcher.py`): Uses trafilatura with browser UA headers. WeChat articles require direct HTTP download (trafilatura's default downloader fails on WeChat's environment verification).
 
@@ -176,13 +182,18 @@ Routes by model name prefix:
 
 Platform proxy system (`config.py` `_apply_platform()`) maps platform-specific env vars (e.g. `ITSSX_API_KEY`) to standard `ANTHROPIC_*` variables.
 
-**Proxy handling**: When `ANTHROPIC_BASE_URL` is a third-party gateway, local system proxy is skipped. 智谱/MiniMax API calls temporarily clear all proxy env vars.
+**Proxy handling** (`_make_http_client()` in `llm.py`): Per-request httpx.Client with `trust_env=False`, never modifies global `os.environ`. Domestic APIs (智谱/MiniMax/Gemini) use `proxy=None`; custom gateway URLs skip system proxy; official API URLs read system proxy (read-only).
 
-### TTS Dual Engine (`tts.py`)
+**Cost tracking** (`cost.py`): Module-level `CostTracker` singleton records token usage from every LLM call (extracted from API responses) and TTS character consumption. Summary saved to `checkpoint.json` `cost_summary` field and printed at pipeline end.
+
+**Schema validation** (`schema.py`): Pydantic v2 models mirror `remotion-video/src/types.ts`. `validate_script()` runs before `eval_script()` business rules, catching structural errors (wrong types, missing fields, invalid component IDs) before they reach the rendering layer.
+
+### TTS Dual Engine (`tts.py`) + Word Alignment (`subtitle.py`)
 
 - **edge-tts** (default, free): Microsoft Edge TTS
 - **MiniMax Speech** (paid, high quality): requires `TTS_MINMAX_KEY`
-- Switch via `TTS_ENGINE` env var. Each segment rendered separately to `voiceover_segments/seg_{id}.mp3`.
+- Switch via `TTS_ENGINE` env var. Each segment rendered separately to `voiceover/segments/seg_{id}.mp3`.
+- **Word-level alignment** (optional): After TTS, `mlx-whisper` (Apple Silicon GPU) extracts word-level timestamps → `voiceover/word_timing.json`. Used by `render.mjs` for precise SRT subtitle timing. Install: `pip install -e ".[subtitle]"`. Graceful fallback when unavailable.
 
 ### Knowledge Source Automation (`knowledge/`)
 

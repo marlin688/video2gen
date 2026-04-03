@@ -1,5 +1,7 @@
 """Click CLI 入口。"""
 
+from pathlib import Path
+
 import click
 
 from v2g.config import Config
@@ -552,6 +554,27 @@ def run(cfg: Config, video_id_or_url, model, whisper_model, auto):
     from v2g.pipeline import run_pipeline
     model = model or cfg.script_model
     run_pipeline(cfg, video_id_or_url, model, whisper_model, auto=auto)
+
+
+@main.command()
+@click.argument("video_id")
+@click.pass_obj
+def preview(cfg: Config, video_id):
+    """渲染各段关键帧预览 (比完整渲染快 10x+)"""
+    import subprocess
+    remotion_dir = Path(__file__).parent.parent.parent.parent / "remotion-video"
+    preview_mjs = remotion_dir / "preview.mjs"
+    if not preview_mjs.exists():
+        raise click.ClickException(f"preview.mjs 不存在: {preview_mjs}")
+
+    click.echo(f"🖼️  渲染静帧预览: {video_id}")
+    result = subprocess.run(
+        ["node", str(preview_mjs), video_id,
+         "--output-dir", str(cfg.output_dir)],
+        cwd=str(remotion_dir),
+    )
+    if result.returncode != 0:
+        raise click.ClickException("预览渲染失败")
 
 
 @main.command("eval")

@@ -149,6 +149,29 @@ def run_pipeline(cfg: Config, video_id_or_url: str, model: str,
     if rec_count > 0:
         click.echo(f"   🖥️ 自动生成 {rec_count} 段录屏视频")
 
+    # Stage 5.5: 静帧预览（非 auto 模式下暂停确认）
+    if not auto:
+        try:
+            import subprocess
+            from pathlib import Path
+            remotion_dir = Path(__file__).parent.parent.parent / "remotion-video"
+            preview_mjs = remotion_dir / "preview.mjs"
+            if preview_mjs.exists():
+                click.echo("\n" + "=" * 50)
+                click.echo("🖼️  Stage 5.5: 静帧预览")
+                click.echo("=" * 50)
+                subprocess.run(
+                    ["node", str(preview_mjs), video_id,
+                     "--output-dir", str(cfg.output_dir)],
+                    cwd=str(remotion_dir),
+                )
+                click.echo(f"\n   预览: output/{video_id}/preview/")
+                if not click.confirm("   视觉效果满意？继续渲染？", default=True):
+                    click.echo("   💡 请调整后重新运行")
+                    return
+        except Exception as e:
+            click.echo(f"   ⚠️ 预览失败 (非致命): {e}")
+
     # Stage 5b: 视频合成
     if not state.assembled:
         click.echo("\n" + "=" * 50)

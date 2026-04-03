@@ -78,6 +78,44 @@ TOOLS = [
             "required": ["script_json"],
         },
     },
+    {
+        "name": "search_github",
+        "description": "搜索 GitHub 仓库，返回按 stars 排序的仓库列表（名称、描述、stars、语言、URL）。"
+                       "用于获取项目热度、最新 star 数等真实数据来支撑脚本内容。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词，如 'claude code editor'",
+                },
+                "min_stars": {
+                    "type": "integer",
+                    "description": "最低 star 数 (默认 100)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "search_hn",
+        "description": "搜索 Hacker News 帖子，返回按 points 排序的帖子列表（标题、URL、作者、points、评论数）。"
+                       "用于了解社区讨论热度、争议点和用户反馈。",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词，如 'Claude Code'",
+                },
+                "hours": {
+                    "type": "integer",
+                    "description": "最近多少小时内 (默认 168 即一周)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -98,6 +136,10 @@ def _exec_tool(name: str, input_data: dict) -> str:
         return _tool_save_outline(input_data["outline_json"])
     if name == "save_script":
         return _tool_save_script(input_data["script_json"])
+    if name == "search_github":
+        return _tool_search_github(input_data["query"], input_data.get("min_stars", 100))
+    if name == "search_hn":
+        return _tool_search_hn(input_data["query"], input_data.get("hours", 168))
     return f"未知工具: {name}"
 
 
@@ -175,6 +217,71 @@ def _tool_save_script(script_json_str: str) -> str:
 
     _ctx["script_saved"] = True
     return "脚本已保存到 script.json、script.md、recording_guide.md。"
+
+
+def _tool_search_github(query: str, min_stars: int = 100) -> str:
+    """搜索 GitHub 仓库，返回精简摘要。"""
+    import httpx
+
+    try:
+        resp = httpx.get(
+            "https://api.github.com/search/repositories",
+            params={
+                "q": f"{query} stars:>{min_stars}",
+                "sort": "stars",
+                "order": "desc",
+                "per_page": 10,
+            },
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "video2gen-agent",
+            },
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+        results = [{
+            "name": r["full_name"],
+            "description": (r.get("description") or "")[:200],
+            "stars": r["stargazers_count"],
+            "language": r.get("language"),
+            "url": r["html_url"],
+            "created": r["created_at"][:10],
+        } for r in items[:10]]
+        return json.dumps(results, ensure_ascii=False)
+    except Exception as e:
+        return f"GitHub 搜索失败: {e}"
+
+
+def _tool_search_hn(query: str, hours: int = 168) -> str:
+    """搜索 Hacker News，返回精简摘要。"""
+    import time
+    import httpx
+
+    try:
+        cutoff = int(time.time()) - hours * 3600
+        resp = httpx.get(
+            "https://hn.algolia.com/api/v1/search",
+            params={
+                "query": query,
+                "tags": "story",
+                "numericFilters": f"created_at_i>{cutoff},points>5",
+                "hitsPerPage": 10,
+            },
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        hits = resp.json().get("hits", [])
+        results = [{
+            "title": h.get("title"),
+            "url": h.get("url") or f"https://news.ycombinator.com/item?id={h.get('objectID')}",
+            "points": h.get("points"),
+            "comments": h.get("num_comments"),
+            "author": h.get("author"),
+        } for h in hits[:10]]
+        return json.dumps(results, ensure_ascii=False)
+    except Exception as e:
+        return f"HN 搜索失败: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -531,6 +638,144 @@ def _summarize_input(input_data: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Phase 2: 分段脚本生成 (骨架 → 逐批填充)
+# ---------------------------------------------------------------------------
+
+def _generate_script_phased(
+    outline: dict, system_prompt: str, model: str, output_dir: Path,
+) -> dict:
+    """分段生成脚本：骨架 → 逐批填充，解决代理网关截断大 JSON。
+
+    Step 1: 生成精简骨架 (narration_zh 只写前 10 字)
+    Step 2: 每批 3 段，单独填充完整内容
+    Fallback: 如果分段失败，回退到单次完整调用
+    """
+    from v2g.llm import call_llm
+    from v2g.scriptwriter import _extract_json
+
+    outline_str = json.dumps(outline, ensure_ascii=False, indent=2)
+
+    # ── Step 1: 骨架 ──
+    click.echo("   📋 Step 1/2: 生成骨架...")
+    skeleton_prompt = (
+        f"请根据以下大纲生成视频脚本的骨架结构。\n\n"
+        f"## 已确认的大纲\n\n{outline_str}\n\n"
+        f"---\n\n"
+        f"要求：\n"
+        f"1. 输出完整的 script.json 结构 (title, description, tags, segments)\n"
+        f"2. 每个 segment 包含: id, type, material, component (可选)\n"
+        f"3. narration_zh 只写前 10 个字 + \"...\" (占位，后续填充)\n"
+        f"4. slide_content/terminal_session/code_content 等数据字段留空或写最简形式\n"
+        f"5. 严格输出 JSON，不要代码块标记，不要其他文字。"
+    )
+
+    try:
+        skeleton_resp = call_llm(system_prompt, skeleton_prompt, model, max_tokens=8000)
+        skeleton_resp = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', skeleton_resp)
+        skeleton = _extract_json(skeleton_resp)
+    except Exception as e:
+        click.echo(f"   ⚠️ 骨架生成失败，回退到单次完整调用: {e}")
+        return _generate_script_oneshot(outline_str, system_prompt, model, output_dir)
+
+    segments = skeleton.get("segments", [])
+    if not segments:
+        click.echo("   ⚠️ 骨架无 segments，回退到单次完整调用")
+        return _generate_script_oneshot(outline_str, system_prompt, model, output_dir)
+
+    click.echo(f"   ✅ 骨架: {len(segments)} 段")
+
+    # ── Step 2: 逐批填充 ──
+    click.echo("   📝 Step 2/2: 逐批填充内容...")
+    skeleton_summary = json.dumps(
+        [{"id": s["id"], "type": s.get("type"), "material": s.get("material"),
+          "component": s.get("component")}
+         for s in segments],
+        ensure_ascii=False,
+    )
+
+    batch_size = 3
+    for batch_start in range(0, len(segments), batch_size):
+        batch = segments[batch_start:batch_start + batch_size]
+        batch_ids = [s["id"] for s in batch]
+        click.echo(f"      填充 seg {batch_ids}...")
+
+        fill_prompt = (
+            f"你正在为一个视频脚本逐段填充内容。\n\n"
+            f"## 脚本骨架 (全部段)\n{skeleton_summary}\n\n"
+            f"## 大纲\n{outline_str}\n\n"
+            f"---\n\n"
+            f"请填充 segment {batch_ids} 的完整内容。\n"
+            f"输出格式: {{\"segments\": [{{完整的 segment 1}}, {{完整的 segment 2}}, ...]}}\n"
+            f"每个 segment 必须包含完整的 narration_zh、slide_content/terminal_session 等所有数据字段。\n"
+            f"严格输出 JSON，不要代码块标记，不要其他文字。"
+        )
+
+        try:
+            fill_resp = call_llm(system_prompt, fill_prompt, model, max_tokens=8000)
+            fill_resp = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', fill_resp)
+            filled = _extract_json(fill_resp)
+            filled_segs = filled.get("segments", [])
+
+            # 合并回骨架
+            id_map = {s["id"]: s for s in filled_segs}
+            for i, s in enumerate(segments):
+                if s["id"] in id_map:
+                    segments[i] = id_map[s["id"]]
+
+        except Exception as e:
+            click.echo(f"      ⚠️ 批次 {batch_ids} 填充失败: {e}")
+            # 部分失败不致命，保留骨架中的占位内容
+
+    skeleton["segments"] = segments
+
+    # 保存原始响应供调试
+    (output_dir / "script_raw.txt").write_text(
+        json.dumps(skeleton, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    return skeleton
+
+
+def _generate_script_oneshot(
+    outline_str: str, system_prompt: str, model: str, output_dir: Path,
+) -> dict:
+    """回退方案：单次完整调用 + 截断续写。"""
+    from v2g.llm import call_llm
+    from v2g.scriptwriter import _extract_json
+
+    user_message = (
+        f"请根据以下大纲生成完整的视频脚本。\n\n"
+        f"## 已确认的大纲\n\n{outline_str}\n\n"
+        f"---\n\n"
+        f"严格输出 JSON，不要代码块标记，不要任何其他文字。"
+    )
+
+    response = call_llm(system_prompt, user_message, model, max_tokens=16000)
+
+    # 截断续写
+    stripped = response.rstrip()
+    if stripped and not (stripped.endswith("}") and stripped.count("{") == stripped.count("}")):
+        click.echo("   🔄 输出被截断，自动续写...")
+        cont = call_llm(
+            system_prompt,
+            f"你之前根据大纲生成视频脚本 JSON，但输出在中途被截断了。\n"
+            f"请从截断处直接续写，补全剩余的 JSON 内容。\n"
+            f"不要重复已有内容，不要加解释文字，只输出 JSON 的剩余部分。\n\n"
+            f"已有内容的最后 500 字符：\n{response[-500:]}",
+            model, max_tokens=8000,
+        )
+        cont = cont.strip()
+        if cont.startswith("```"):
+            cont = re.sub(r"^```(?:json)?\s*", "", cont)
+            cont = re.sub(r"\s*```$", "", cont)
+        response = response + cont
+
+    response = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', response)
+    (output_dir / "script_raw.txt").write_text(response, encoding="utf-8")
+    return _extract_json(response)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -607,8 +852,7 @@ def run_agent(
         state.outline_reviewed = True
         state.save(cfg.output_dir)
 
-    # ── Phase 2: 大纲 → script.json ─────────────────────────
-    # 阶段二用直接 LLM 调用（不走 agent loop），避免大 JSON 被代理截断
+    # ── Phase 2: 大纲 → script.json (分段生成，避免截断) ──────
     script_path = output_dir / "script.json"
     if state.scripted and script_path.exists():
         click.echo("⏭️  脚本已存在")
@@ -616,46 +860,15 @@ def run_agent(
         click.echo("\n🔄 展开脚本中...")
 
         outline = json.loads(outline_path.read_text(encoding="utf-8"))
-
         system_prompt = _read_prompt("agent_system.md") + "\n\n" + _read_prompt("agent_script.md")
-
-        # 仅传大纲（已包含素材摘要），不传完整素材内容以避免上下文过长
-        outline_str = json.dumps(outline, ensure_ascii=False, indent=2)
-        user_message = (
-            f"请根据以下大纲生成完整的视频脚本。\n\n"
-            f"## 已确认的大纲\n\n{outline_str}\n\n"
-            f"---\n\n"
-            f"严格输出 JSON，不要代码块标记，不要任何其他文字。"
-        )
 
         from v2g.llm import call_llm
         from v2g.scriptwriter import _extract_json, _generate_script_md, _generate_recording_guide
 
         try:
-            response = call_llm(system_prompt, user_message, model, max_tokens=16000)
-
-            # 截断续写
-            stripped = response.rstrip()
-            if stripped and not (stripped.endswith("}") and stripped.count("{") == stripped.count("}")):
-                click.echo("   🔄 输出被截断，自动续写...")
-                cont = call_llm(
-                    system_prompt,
-                    f"你之前根据大纲生成视频脚本 JSON，但输出在中途被截断了。\n"
-                    f"请从截断处直接续写，补全剩余的 JSON 内容。\n"
-                    f"不要重复已有内容，不要加解释文字，只输出 JSON 的剩余部分。\n\n"
-                    f"已有内容的最后 500 字符：\n{response[-500:]}",
-                    model, max_tokens=8000,
-                )
-                cont = cont.strip()
-                if cont.startswith("```"):
-                    cont = re.sub(r"^```(?:json)?\s*", "", cont)
-                    cont = re.sub(r"\s*```$", "", cont)
-                response = response + cont
-
-            # 清理控制字符并保存
-            response = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', response)
-            (output_dir / "script_raw.txt").write_text(response, encoding="utf-8")
-            script_data = _extract_json(response)
+            script_data = _generate_script_phased(
+                outline, system_prompt, model, output_dir
+            )
         except Exception as e:
             state.last_error = f"脚本生成失败: {e}"
             state.save(cfg.output_dir)

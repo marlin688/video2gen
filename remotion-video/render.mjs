@@ -269,6 +269,42 @@ const inputProps = {
 
 // ═══ SRT 字幕生成 ═══
 
+// 尝试加载 word_timing.json (mlx-whisper 词级对齐)
+const wordTimingPath = path.join(outputDir, "voiceover", "word_timing.json");
+let wordTiming = null;
+if (fs.existsSync(wordTimingPath)) {
+  wordTiming = JSON.parse(fs.readFileSync(wordTimingPath, "utf-8"));
+  console.log(`   词级对齐: ✅ (${Object.keys(wordTiming).length} 段)`);
+} else {
+  console.log(`   词级对齐: ❌ 使用字符均分`);
+}
+
+/**
+ * 从 word_timing 生成精确 SRT entries (按 ≤36 字符打包)
+ */
+function splitFromWordTiming(words, segDuration) {
+  if (!words || words.length === 0) return [{ text: "", start: 0, end: segDuration }];
+
+  const entries = [];
+  let buf = "";
+  let bufStart = words[0].start;
+
+  for (const w of words) {
+    if (buf.length + w.word.length > 36 && buf.length > 0) {
+      // flush
+      entries.push({ text: buf, start: bufStart, end: w.start });
+      buf = w.word;
+      bufStart = w.start;
+    } else {
+      buf += w.word;
+    }
+  }
+  if (buf) {
+    entries.push({ text: buf, start: bufStart, end: words[words.length - 1].end });
+  }
+  return entries;
+}
+
 function splitNarration(text, durationSec) {
   const parts = text.split(/(?<=[。！？；])/).filter(p => p.trim());
   if (parts.length === 0) return [{ text, start: 0, end: durationSec }];
@@ -331,7 +367,11 @@ function generateSrt(script, timing) {
     const duration = t.duration;
 
     if (seg.narration_zh) {
-      const entries = splitNarration(seg.narration_zh, duration);
+      // 优先使用 word_timing (mlx-whisper 精确对齐)，否则回退字符均分
+      const segWords = wordTiming && wordTiming[String(seg.id)];
+      const entries = segWords
+        ? splitFromWordTiming(segWords, duration)
+        : splitNarration(seg.narration_zh, duration);
       for (const e of entries) {
         const absStart = currentTime + e.start;
         const absEnd = currentTime + e.end;

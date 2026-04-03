@@ -229,4 +229,12 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
     state.tts_done = True
     state.last_error = ""
     state.save(cfg.output_dir)
+
+    # 词级时间戳对齐（可选，mlx-whisper 未安装时跳过）
+    try:
+        from v2g.subtitle import align_voiceover
+        align_voiceover(voiceover_dir)
+    except Exception as e:
+        click.echo(f"   ⚠️ 词级对齐失败 (非致命): {e}")
+
     return state

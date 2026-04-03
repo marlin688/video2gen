@@ -13,7 +13,11 @@ import type { VideoCompositionProps, ScriptSegment } from "./types";
 import { registry } from "./registry/registry";
 import "./registry/init"; // 触发所有 style 自注册
 
-import type { SlideData, TerminalData, RecordingData, SourceClipData, StyleComponentProps } from "./registry/types";
+import type {
+  SlideData, TerminalData, RecordingData, SourceClipData,
+  CodeBlockData, SocialCardData, DiagramData, HeroStatData, BrowserData,
+  SegmentData, StyleComponentProps,
+} from "./registry/types";
 
 export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
   const {
@@ -41,7 +45,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
     const t = timing[String(seg.id)];
     const segFps = fps;
 
-    let data: SlideData | TerminalData | RecordingData | SourceClipData;
+    let data: SegmentData;
 
     switch (schema) {
       case "slide":
@@ -58,6 +62,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
           schema: "terminal",
           instruction: seg.recording_instruction || "需要录屏",
           narrationText: seg.narration_zh,
+          session: seg.terminal_session,
         } satisfies TerminalData;
         break;
 
@@ -82,6 +87,65 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
         } satisfies SourceClipData;
         break;
       }
+
+      case "code-block":
+        data = {
+          schema: "code-block",
+          fileName: seg.code_content?.fileName || "code.ts",
+          language: seg.code_content?.language || "typescript",
+          code: seg.code_content?.code || [],
+          highlightLines: seg.code_content?.highlightLines,
+          annotations: seg.code_content?.annotations,
+        } satisfies CodeBlockData;
+        break;
+
+      case "social-card":
+        data = {
+          schema: "social-card",
+          platform: seg.social_card?.platform || "twitter",
+          author: seg.social_card?.author || "",
+          avatarColor: seg.social_card?.avatarColor,
+          text: seg.social_card?.text || "",
+          stats: seg.social_card?.stats,
+          subtitle: seg.social_card?.subtitle,
+          language: seg.social_card?.language,
+        } satisfies SocialCardData;
+        break;
+
+      case "diagram":
+        data = {
+          schema: "diagram",
+          title: seg.diagram?.title,
+          nodes: (seg.diagram?.nodes || []).map(n => ({
+            ...n,
+            type: (n.type || "default") as "default" | "primary" | "success" | "warning" | "danger",
+          })),
+          edges: seg.diagram?.edges || [],
+          direction: (seg.diagram?.direction || "LR") as "LR" | "TB",
+        } satisfies DiagramData;
+        break;
+
+      case "hero-stat":
+        data = {
+          schema: "hero-stat",
+          stats: (seg.hero_stat?.stats || []).map(s => ({
+            ...s,
+            trend: (s.trend || "neutral") as "up" | "down" | "neutral",
+          })),
+          footnote: seg.hero_stat?.footnote,
+        } satisfies HeroStatData;
+        break;
+
+      case "browser":
+        data = {
+          schema: "browser",
+          url: seg.browser_content?.url || "",
+          tabTitle: seg.browser_content?.tabTitle || "",
+          pageTitle: seg.browser_content?.pageTitle,
+          contentLines: seg.browser_content?.contentLines || [],
+          theme: (seg.browser_content?.theme || "dark") as "light" | "dark",
+        } satisfies BrowserData;
+        break;
 
       default:
         return <AbsoluteFill style={{ backgroundColor: "#000" }} />;

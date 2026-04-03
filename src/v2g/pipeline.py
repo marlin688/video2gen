@@ -8,12 +8,12 @@ from v2g.preparer import _extract_video_id
 
 
 def run_pipeline(cfg: Config, video_id_or_url: str, model: str,
-                 whisper_model: str = "medium"):
-    """执行完整流水线，在人工审核点暂停。"""
+                 whisper_model: str = "medium", auto: bool = False):
+    """执行完整流水线，在人工审核点暂停（auto=True 时跳过审核）。"""
     video_id = _extract_video_id(video_id_or_url)
     state = PipelineState.load(cfg.output_dir, video_id)
 
-    click.echo(f"🚀 video2gen 流水线: {video_id}")
+    click.echo(f"🚀 video2gen 流水线: {video_id}" + (" [自动模式]" if auto else ""))
     click.echo(f"   当前阶段: {state.current_stage}\n")
 
     # Stage 2: 下载 + 字幕翻译
@@ -34,18 +34,26 @@ def run_pipeline(cfg: Config, video_id_or_url: str, model: str,
 
     # 人工审核点 1: 脚本审核
     if not state.script_reviewed:
-        click.echo("\n" + "=" * 50)
-        click.echo("✋ 暂停: 脚本审核")
-        click.echo("=" * 50)
-        click.echo(f"   脚本: output/{video_id}/script.md")
-        click.echo(f"   录屏指南: output/{video_id}/recording_guide.md")
-        click.echo(f"\n   请完成以下操作:")
-        click.echo(f"   1. 审阅并编辑 script.md / script.json")
-        click.echo(f"   2. 按 recording_guide.md 录制操作视频")
-        click.echo(f"   3. 将录屏放入 output/{video_id}/recordings/")
-        click.echo(f"   4. 运行: v2g review {video_id}")
-        click.echo(f"   5. 重新运行: v2g run {video_id_or_url} --model {model}")
-        return
+        if auto:
+            click.echo("\n" + "=" * 50)
+            click.echo("⚡ 自动模式: 跳过脚本审核")
+            click.echo("=" * 50)
+            click.echo("   B 类素材将使用终端动画自动生成")
+            state.script_reviewed = True
+            state.save(cfg.output_dir)
+        else:
+            click.echo("\n" + "=" * 50)
+            click.echo("✋ 暂停: 脚本审核")
+            click.echo("=" * 50)
+            click.echo(f"   脚本: output/{video_id}/script.md")
+            click.echo(f"   录屏指南: output/{video_id}/recording_guide.md")
+            click.echo(f"\n   请完成以下操作:")
+            click.echo(f"   1. 审阅并编辑 script.md / script.json")
+            click.echo(f"   2. 按 recording_guide.md 录制操作视频")
+            click.echo(f"   3. 将录屏放入 output/{video_id}/recordings/")
+            click.echo(f"   4. 运行: v2g review {video_id}")
+            click.echo(f"   5. 重新运行: v2g run {video_id_or_url} --model {model}")
+            return
 
     # Stage 4: TTS 配音
     if not state.tts_done:

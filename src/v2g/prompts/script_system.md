@@ -79,12 +79,64 @@
 - **用途**: 软件操作实操演示
 - **出现时机**: "实战演示"部分
 - 必须提供 `recording_instruction` 字段，写成**可执行的操作步骤**（第一步做什么，第二步做什么，屏幕上应该出现什么）
+- **必须同时提供 `terminal_session` 字段**：结构化终端会话数据，用于无录屏时自动生成终端动画。格式如下：
+
+```json
+"terminal_session": [
+  {"type": "input", "text": "/plan 重构 auth 模块"},
+  {"type": "status", "text": "Planning..."},
+  {"type": "tool", "name": "Read", "target": "src/auth/middleware.ts", "result": "✓ 248 lines"},
+  {"type": "output", "lines": ["Plan: Refactor auth module", "1. Extract JWT logic → jwt.ts", "2. Add refresh token rotation"]},
+  {"type": "input", "text": "yes, proceed"},
+  {"type": "tool", "name": "Edit", "target": "src/auth/jwt.ts", "result": "✓ 42 lines written"},
+  {"type": "output", "text": "✓ Refactoring complete. 3 files updated."}
+]
+```
+
+terminal_session 步骤类型说明：
+- `input`: 用户在终端输入的命令（CLI命令、斜杠命令等）
+- `status`: 加载/处理中状态（如 "Thinking...", "Installing..."）
+- `tool`: 工具调用，需要 `name`（Read/Write/Edit/Bash/Grep/Agent）+ `target`（文件路径或参数）+ `result`（执行结果）
+- `output`: 命令输出，用 `text`（单行）或 `lines`（多行）
+- `blank`: 空行分隔
+
+**关键原则**：terminal_session 的内容必须与解说词中提到的操作对应，展示真实的命令和输出，不要写 generic 的占位内容。每个 B 段的 session 应包含 3-6 个步骤。
 
 ### 素材 C: 原视频片段 (目标占比 ~20%)
 - **用途**: 引用原作者关键论述，增加权威感
 - **出现时机**: 开头 hook、引用原作者精华观点时
 - 必须提供 `source_start` 和 `source_end`（秒数），每段严格控制在 5-10 秒
 - 版权安全：不要大段使用，分散引用
+
+## 高级视觉组件
+
+除了默认的 A/B/C 素材之外，你可以通过 `component` 字段指定特殊视觉组件，并提供对应数据字段：
+
+| component | 用途 | 数据字段 |
+|-----------|------|---------|
+| `code-block.default` | 代码高亮展示 | `code_content`: `{fileName, language, code: [行], highlightLines?: [行号], annotations?: {行号: "注释"}}` |
+| `social-card.default` | 社交媒体卡片 | `social_card`: `{platform: "twitter"/"github"/"hackernews", author, text, stats?: {likes: 数字}, subtitle?, language?}` |
+| `diagram.default` | 流程/架构图 | `diagram`: `{title?, nodes: [{id, label, type?: "default"/"primary"/"success"/"warning"/"danger"}], edges: [{from, to, label?}], direction?: "LR"/"TB"}` |
+| `hero-stat.default` | 大数字指标 | `hero_stat`: `{stats: [{value: "3.5x", label: "性能提升", oldValue?: "1x", trend?: "up"/"down"/"neutral"}], footnote?}` |
+| `browser.default` | 浏览器模拟 | `browser_content`: `{url, tabTitle, pageTitle?, contentLines: [行], theme?: "light"/"dark"}` |
+
+使用时设置 `material` 为 `A`（这些组件替代 PPT 卡片），并同时设置 `component` 字段。示例：
+
+```json
+{
+  "id": 5, "type": "body", "material": "A",
+  "component": "hero-stat.default",
+  "narration_zh": "用了这套方案之后，返工率直接从60%降到了不到10%。",
+  "hero_stat": {
+    "stats": [
+      {"value": "60%", "label": "返工率 (Before)", "trend": "down"},
+      {"value": "<10%", "label": "返工率 (After)", "trend": "up"}
+    ]
+  }
+}
+```
+
+**使用建议**：一个 8-10 段的脚本中，使用 1-3 个高级组件即可（比如一个 code-block + 一个 hero-stat），不要全部都用高级组件。大部分段落仍然用 A/B/C 默认素材。
 
 ## 脚本结构
 
@@ -130,6 +182,14 @@
       "material": "B",
       "narration_zh": "解说词...",
       "recording_instruction": "步骤化操作说明：1. 打开XX 2. 点击YY 3. 输入ZZ 4. 屏幕应显示WW",
+      "terminal_session": [
+        {"type": "input", "text": "claude /plan 重构认证模块"},
+        {"type": "status", "text": "Planning..."},
+        {"type": "tool", "name": "Read", "target": "src/auth/middleware.ts", "result": "✓ 248 lines"},
+        {"type": "output", "lines": ["Plan:", "1. Extract JWT → jwt.ts", "2. Add token rotation"]},
+        {"type": "input", "text": "yes"},
+        {"type": "tool", "name": "Edit", "target": "src/auth/jwt.ts", "result": "✓ 42 lines written"}
+      ],
       "notes": "段落意图"
     }
   ]

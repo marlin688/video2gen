@@ -50,6 +50,7 @@
 ### 素材 B: 操作录屏 (~30%)
 - 软件实操演示
 - 必须提供 `recording_instruction`（80字以内步骤化描述）
+- **必须同时提供 `terminal_session`**：结构化终端会话（3-6步），用于自动生成终端动画。步骤类型：`input`（用户命令）、`status`（处理中）、`tool`（工具调用，含name/target/result）、`output`（命令输出，含text或lines）、`blank`（空行）
 
 ### 素材 C: 原视频片段 (~30%)
 - 引用原作者最精华的画面/论述

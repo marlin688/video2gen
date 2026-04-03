@@ -1,7 +1,9 @@
 """Stage 3: AI 生成二创解说脚本 (含三素材分配)。"""
 
+import hashlib
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -81,6 +83,21 @@ def _extract_json(text: str) -> dict:
     fixed = "\n".join(lines)
     fixed = re.sub(r",\s*([}\]])", r"\1", fixed)
     return json.loads(fixed)
+
+
+def _save_script_meta(output_dir: Path, model: str, system_prompt: str,
+                      user_message: str, response: str):
+    """保存脚本生成元数据，用于 prompt 版本追踪和质量回溯。"""
+    prompt_hash = hashlib.md5(system_prompt.encode()).hexdigest()[:8]
+    meta = {
+        "model": model,
+        "prompt_hash": prompt_hash,
+        "timestamp": datetime.now().isoformat(),
+        "input_chars": len(user_message),
+        "output_chars": len(response),
+    }
+    meta_path = output_dir / "script_meta.json"
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _generate_recording_guide(script_data: dict, output_path: Path):
@@ -250,6 +267,9 @@ def run_script(cfg: Config, video_id: str, model: str) -> PipelineState:
     _generate_recording_guide(script_data, recording_guide_path)
     state.recording_guide = str(recording_guide_path)
 
+    # 保存生成元数据（用于 prompt 版本追踪）
+    _save_script_meta(output_dir, model, system_prompt, user_message, response)
+
     # 创建素材目录（按需创建，不预创建空目录）
     (output_dir / "slides").mkdir(exist_ok=True)
     (output_dir / "recordings").mkdir(exist_ok=True)
@@ -366,6 +386,9 @@ def run_multi_script(cfg, project_id: str, model: str) -> "PipelineState":
     recording_guide_path = output_dir / "recording_guide.md"
     _generate_recording_guide(script_data, recording_guide_path)
     state.recording_guide = str(recording_guide_path)
+
+    # 保存生成元数据
+    _save_script_meta(output_dir, model, system_prompt, user_message, response)
 
     (output_dir / "slides").mkdir(exist_ok=True)
     (output_dir / "recordings").mkdir(exist_ok=True)

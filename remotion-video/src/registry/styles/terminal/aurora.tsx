@@ -13,7 +13,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import React, { useMemo } from "react";
-import type { StyleComponentProps } from "../../types";
+import type { StyleComponentProps, TerminalSessionStep } from "../../types";
 import { registry } from "../../registry";
 
 /* ═══════════════ 颜色系统 ═══════════════ */
@@ -50,6 +50,80 @@ interface UILine {
 interface UIBlock {
   lines: UILine[];
   startDelay: number;
+}
+
+/** 从 LLM 生成的结构化 session 构建 UIBlock（优先路径） */
+function buildFromSession(steps: TerminalSessionStep[]): UIBlock[] {
+  const blocks: UIBlock[] = [];
+  let delay = 10;
+
+  // 将连续的非 input 步骤聚合到上一个 input 的 block 中
+  let currentLines: UILine[] = [];
+
+  const flushBlock = () => {
+    if (currentLines.length > 0) {
+      blocks.push({ lines: currentLines, startDelay: delay });
+      delay += currentLines.length * 5 + 15;
+      currentLines = [];
+    }
+  };
+
+  for (const step of steps) {
+    switch (step.type) {
+      case "input":
+        flushBlock();
+        currentLines.push({ type: "user-input", text: step.text || "" });
+        currentLines.push({ type: "blank", text: "" });
+        break;
+
+      case "status":
+        currentLines.push({
+          type: "status",
+          text: step.text || "Processing...",
+          icon: "*",
+          color: step.color || CC.statusRed,
+        });
+        currentLines.push({ type: "blank", text: "" });
+        break;
+
+      case "tool":
+        currentLines.push({
+          type: "tree-item",
+          text: `${step.name || "Tool"}(${step.target || "..."})`,
+          color: step.color || CC.blue,
+        });
+        if (step.result) {
+          currentLines.push({
+            type: "tree-sub",
+            text: step.result,
+            color: CC.green,
+          });
+        }
+        break;
+
+      case "output": {
+        const outputLines = step.lines || (step.text ? [step.text] : []);
+        for (const line of outputLines) {
+          currentLines.push({
+            type: "response",
+            text: line,
+            color: step.color || CC.textPrimary,
+          });
+        }
+        if (outputLines.length > 0) {
+          currentLines.push({ type: "blank", text: "" });
+        }
+        break;
+      }
+
+      case "blank":
+        currentLines.push({ type: "blank", text: "" });
+        break;
+    }
+  }
+
+  flushBlock();
+  return blocks;
 }
 
 function buildClaudeSession(instruction: string): UIBlock[] {
@@ -199,7 +273,10 @@ const TerminalAurora: React.FC<StyleComponentProps<"terminal">> = ({ data, segme
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  const blocks = useMemo(() => buildClaudeSession(data.instruction), [data.instruction]);
+  const blocks = useMemo(
+    () => data.session?.length ? buildFromSession(data.session) : buildClaudeSession(data.instruction),
+    [data.session, data.instruction],
+  );
 
   const allRows = useMemo(() => {
     const rows: (UILine & { frameStart: number; typeEnd: number })[] = [];

@@ -11,3 +11,8 @@ import "./styles/terminal/aurora";
 import "./styles/terminal/vscode";
 import "./styles/recording/default";
 import "./styles/source-clip/default";
+import "./styles/code-block/default";
+import "./styles/social-card/default";
+import "./styles/diagram/default";
+import "./styles/hero-stat/default";
+import "./styles/browser/default";

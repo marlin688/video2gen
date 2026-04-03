@@ -21,10 +21,58 @@ export interface ScriptSegment {
   slide_content?: SlideContent;
   // 素材 B
   recording_instruction?: string;
+  /** LLM 生成的结构化终端会话（B 类素材无录屏时驱动终端动画） */
+  terminal_session?: Array<{
+    type: "input" | "output" | "status" | "tool" | "blank";
+    text?: string;
+    lines?: string[];
+    name?: string;
+    target?: string;
+    result?: string;
+    color?: string;
+  }>;
   // 素材 C
   source_video_index?: number; // 多源模式: 从哪个源视频截取 (0-based)
   source_start?: number;
   source_end?: number;
+  // code-block 组件
+  code_content?: {
+    fileName: string;
+    language: string;
+    code: string[];
+    highlightLines?: number[];
+    annotations?: Record<number, string>;
+  };
+  // social-card 组件
+  social_card?: {
+    platform: "twitter" | "github" | "hackernews";
+    author: string;
+    avatarColor?: string;
+    text: string;
+    stats?: Record<string, number | string>;
+    subtitle?: string;
+    language?: string;
+  };
+  // diagram 组件
+  diagram?: {
+    title?: string;
+    nodes: Array<{ id: string; label: string; type?: string }>;
+    edges: Array<{ from: string; to: string; label?: string }>;
+    direction?: "LR" | "TB";
+  };
+  // hero-stat 组件
+  hero_stat?: {
+    stats: Array<{ value: string; label: string; oldValue?: string; trend?: "up" | "down" | "neutral" }>;
+    footnote?: string;
+  };
+  // browser 组件
+  browser_content?: {
+    url: string;
+    tabTitle: string;
+    pageTitle?: string;
+    contentLines: string[];
+    theme?: "light" | "dark";
+  };
 }
 
 export interface ScriptData {

@@ -539,12 +539,23 @@ def knowledge_all(cfg: Config):
 @click.argument("video_id_or_url")
 @click.option("--model", default=None, help="LLM 模型")
 @click.option("--whisper-model", default="medium", help="Whisper 模型大小")
+@click.option("--auto", is_flag=True, default=False, help="全自动模式: 跳过人工审核，B类素材使用终端动画")
 @click.pass_obj
-def run(cfg: Config, video_id_or_url, model, whisper_model):
-    """单视频全流程运行 (带人工审核暂停点)"""
+def run(cfg: Config, video_id_or_url, model, whisper_model, auto):
+    """单视频全流程运行 (带人工审核暂停点，--auto 跳过审核)"""
     from v2g.pipeline import run_pipeline
     model = model or cfg.script_model
-    run_pipeline(cfg, video_id_or_url, model, whisper_model)
+    run_pipeline(cfg, video_id_or_url, model, whisper_model, auto=auto)
+
+
+@main.command("eval")
+@click.argument("video_id")
+@click.pass_obj
+def eval_script(cfg: Config, video_id):
+    """评估脚本质量（规则化检查，不消耗 LLM 额度）"""
+    from v2g.eval import run_eval, print_eval_report
+    report = run_eval(cfg, video_id)
+    print_eval_report(report)
 
 
 @main.command()

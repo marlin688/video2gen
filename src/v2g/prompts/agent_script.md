@@ -22,6 +22,7 @@
 
 ### 素材 B: 网页/操作演示（主力素材，占比最高）
 - 必须提供 `recording_instruction` 字段
+- **必须同时提供 `terminal_session`**：结构化终端会话（3-6步），步骤类型：`input`（命令）、`status`（处理中）、`tool`（工具调用，含name/target/result）、`output`（输出，含text或lines）、`blank`（空行）
 - **关键规则：尽可能在 instruction 中包含具体的 URL**，系统会自动打开网页截图生成素材
 - URL 来源示例：
   - GitHub 仓库/文件页面（如 `https://github.com/anthropics/claude-code/blob/main/src/query.ts`）——**指定到具体文件路径**

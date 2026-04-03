@@ -15,6 +15,7 @@ sources/{video_id}/              ← 输入素材 (下载的视频 + 字幕)
 output/{project_id}/             ← 项目工作目录
     checkpoint.json              ← 流水线状态
     script.json, script.md       ← 脚本 (顶层方便引用)
+    script_meta.json             ← 生成元数据 (模型、prompt hash、时间戳)
     recording_guide.md
     voiceover/                   ← TTS 配音
         full.mp3                 ← 合并后完整音轨
@@ -36,6 +37,8 @@ output/{project_id}/             ← 项目工作目录
 ```bash
 pip install -e .                          # Install in dev mode
 v2g run <video_id_or_url>                 # Full single-video pipeline (FFmpeg backend)
+v2g run <video_id_or_url> --auto          # Full auto mode: skip review, B-material uses terminal animation
+v2g eval <video_id>                       # Rule-based script quality check (no LLM cost)
 v2g select --csv trending.csv             # Stage 1: interactive video selection
 v2g prepare <video_id_or_url>             # Stage 2: download → sources/{video_id}/
 v2g script <video_id>                     # Stage 3: AI script generation
@@ -108,7 +111,7 @@ Composition ID is hardcoded as `V2GVideo` in `Root.tsx`. Resolution is 1920x1080
 
 Visual rendering uses a two-layer model separating data contracts (Schema) from visual implementations (Style):
 
-- **Schemas** (stable): `slide`, `terminal`, `recording`, `source-clip` — define data interfaces in `registry/types.ts`
+- **Schemas** (stable): `slide`, `terminal`, `recording`, `source-clip`, `code-block`, `social-card`, `diagram`, `hero-stat`, `browser` — define data interfaces in `registry/types.ts`
 - **Styles** (iterable): visual implementations in `registry/styles/{schema}/{name}.tsx` — self-register via `registry.register()` at import time
 - **Registry** (`registry/registry.ts`): `ComponentRegistry` class with `resolve()`, `resolveForSegment()`, `toLLMPromptTable()`
 - **Init** (`registry/init.ts`): imports all style files to trigger registration
@@ -143,7 +146,8 @@ State persists in `output/{video_id}/checkpoint.json` (`PipelineState` dataclass
 
 ### Key Data Files
 
-- `script.json` — LLM-generated script with segments (id, type, material, component?, narration_zh, slide_content/recording_instruction/source timing). The optional `component` field specifies a style ID (e.g. `"slide.tech-dark"`); when absent, defaults by material type. Multi-source mode adds `sources_used`, `total_duration_hint`.
+- `script.json` — LLM-generated script with segments (id, type, material, component?, narration_zh, slide_content/recording_instruction/terminal_session/source timing). The optional `component` field specifies a style ID (e.g. `"slide.tech-dark"`); when absent, defaults by material type. B-material segments include `terminal_session` (structured terminal steps: input/output/status/tool/blank) for driving terminal animation when no recording exists. Multi-source mode adds `sources_used`, `total_duration_hint`.
+- `script_meta.json` — Generation metadata: model name, prompt hash, timestamp, input/output char counts. Used for prompt version tracking.
 - `voiceover/timing.json` — `{segment_id: {file, duration, text_length}}` mapping from TTS output.
 - `recording_guide.md` — Extracted material B instructions for the user.
 - `final/subtitles.srt` — SRT subtitles (Remotion backend) or `final/subtitles.ass` (FFmpeg backend).
@@ -245,9 +249,17 @@ The title generation skill supports historical performance data for data-driven 
   - `registry.ts` — `ComponentRegistry` class (register, resolve, resolveForSegment, toLLMPromptTable)
   - `init.ts` — import-triggers all style self-registration
   - `styles/slide/tech-dark.tsx` — PPT cards with 6 auto-detected layouts (default for material A)
+  - `styles/slide/glass-morphism.tsx` — Glass morphism gradient style PPT cards
+  - `styles/slide/chalk-board.tsx` — Blackboard hand-drawn style with semantic colors
   - `styles/terminal/aurora.tsx` — Claude Code TUI simulation with aurora background (default for material B fallback)
+  - `styles/terminal/vscode.tsx` — VS Code editor simulation with file tree and terminal panel
   - `styles/recording/default.tsx` — video playback (default for material B with recording file)
   - `styles/source-clip/default.tsx` — trimmed source clip with bottom mask (default for material C)
+  - `styles/code-block/default.tsx` — syntax-highlighted code display with line numbers, highlight lines, annotations
+  - `styles/social-card/default.tsx` — Twitter/GitHub/HN card rendering (data-driven, no screenshots)
+  - `styles/diagram/default.tsx` — flow/architecture diagrams with nodes + edges, LR/TB layout
+  - `styles/hero-stat/default.tsx` — big number display with countUp animation and trend arrows
+  - `styles/browser/default.tsx` — Chrome browser frame simulation with address bar and content area
 - `components/` — legacy components (SlideSegment.tsx etc. still present for reference, but rendering goes through registry styles)
 - `types.ts` — `ScriptSegment` (includes optional `component?: string` field), `TimingMap`, `VideoCompositionProps` type definitions
 

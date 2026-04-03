@@ -1,0 +1,238 @@
+"""script.json 结构验证：Pydantic v2 模型，镜像 remotion-video/src/types.ts。
+
+在 eval_script() 之前运行，确保字段类型、必填项、枚举值合法。
+错误前置到脚本生成阶段，不让渲染层做 schema 校验。
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+# ── 子结构 ─────────────────────────────────────────────────
+
+
+class SlideContent(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    title: str
+    bullet_points: list[str]
+    chart_hint: str | None = None
+
+
+class TerminalStep(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    type: Literal["input", "output", "status", "tool", "blank"]
+    text: str | None = None
+    lines: list[str] | None = None
+    name: str | None = None
+    target: str | None = None
+    result: str | None = None
+    color: str | None = None
+
+
+class CodeContent(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    fileName: str
+    language: str
+    code: list[str]
+    highlightLines: list[int] | None = None
+    annotations: dict[str, str] | None = None  # JSON key 总是 str
+
+
+class SocialCard(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    platform: Literal["twitter", "github", "hackernews"]
+    author: str
+    text: str
+    avatarColor: str | None = None
+    stats: dict[str, int | str] | None = None
+    subtitle: str | None = None
+    language: str | None = None
+
+
+class DiagramNode(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    label: str
+    type: str | None = None
+
+
+class DiagramEdge(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    from_: str = Field(alias="from")
+    to: str
+    label: str | None = None
+
+
+class Diagram(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    title: str | None = None
+    nodes: list[DiagramNode]
+    edges: list[DiagramEdge]
+    direction: Literal["LR", "TB"] | None = None
+
+
+class HeroStatItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    value: str
+    label: str
+    oldValue: str | None = None
+    trend: Literal["up", "down", "neutral"] | None = None
+
+
+class HeroStat(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    stats: list[HeroStatItem]
+    footnote: str | None = None
+
+
+class BrowserContent(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    url: str
+    tabTitle: str
+    pageTitle: str | None = None
+    contentLines: list[str]
+    theme: Literal["light", "dark"] | None = None
+
+
+# ── Segment ────────────────────────────────────────────────
+
+# 合法的 component schema 前缀
+_VALID_SCHEMAS = frozenset([
+    "slide", "terminal", "recording", "source-clip",
+    "code-block", "social-card", "diagram", "hero-stat", "browser",
+])
+
+_COMPONENT_RE = re.compile(r"^([a-z][a-z0-9-]*)\.\w[\w-]*$")
+
+
+class ScriptSegment(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    type: Literal["intro", "body", "outro"]
+    material: Literal["A", "B", "C"]
+    narration_zh: str
+    notes: str | None = None
+    component: str | None = None
+
+    # 素材 A
+    slide_content: SlideContent | None = None
+    # 素材 B
+    recording_instruction: str | None = None
+    terminal_session: list[TerminalStep] | None = None
+    # 素材 C
+    source_video_index: int | None = None
+    source_start: float | None = None
+    source_end: float | None = None
+
+    # 高级组件
+    code_content: CodeContent | None = None
+    social_card: SocialCard | None = None
+    diagram: Diagram | None = None
+    hero_stat: HeroStat | None = None
+    browser_content: BrowserContent | None = None
+
+    @field_validator("component")
+    @classmethod
+    def validate_component(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        m = _COMPONENT_RE.match(v)
+        if not m:
+            raise ValueError(
+                f"component 格式错误: '{v}'，应为 '{{schema}}.{{style}}'，"
+                f"如 'slide.tech-dark'"
+            )
+        schema = m.group(1)
+        if schema not in _VALID_SCHEMAS:
+            raise ValueError(
+                f"未知 schema: '{schema}'，合法值: {sorted(_VALID_SCHEMAS)}"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def validate_material_data(self) -> "ScriptSegment":
+        """校验 material 类型对应的数据字段。"""
+        errors = []
+
+        if self.material == "A" and not self.component:
+            if not self.slide_content:
+                errors.append("material=A 且无 component 时必须有 slide_content")
+
+        if self.material == "B" and not self.component:
+            if not self.terminal_session and not self.recording_instruction:
+                errors.append(
+                    "material=B 且无 component 时必须有 terminal_session 或 recording_instruction"
+                )
+
+        if self.material == "C":
+            if self.source_start is not None and self.source_end is not None:
+                if self.source_start >= self.source_end:
+                    errors.append(
+                        f"material=C 的 source_start ({self.source_start}) "
+                        f"必须 < source_end ({self.source_end})"
+                    )
+
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self
+
+
+# ── ScriptData (顶层) ─────────────────────────────────────
+
+
+class ScriptData(BaseModel):
+    """script.json 的顶层结构。"""
+    model_config = ConfigDict(extra="ignore")
+
+    title: str
+    description: str
+    tags: list[str]
+    segments: list[ScriptSegment]
+    source_channel: str | None = None
+    total_duration_hint: float | None = None
+    # 多源模式额外字段
+    sources_used: list[str] | None = None
+
+
+# ── 验证入口 ───────────────────────────────────────────────
+
+
+def validate_script(script: dict) -> tuple[ScriptData | None, list[str]]:
+    """验证 script.json 结构。
+
+    Returns:
+        (解析后的 ScriptData, 错误消息列表)
+        如果验证通过，errors 为空列表。
+        如果失败，ScriptData 为 None，errors 包含所有错误描述。
+    """
+    errors: list[str] = []
+    try:
+        data = ScriptData.model_validate(script)
+        return data, errors
+    except Exception as e:
+        # Pydantic ValidationError 可能包含多个错误
+        err_str = str(e)
+        # 提取人类可读的错误信息
+        if hasattr(e, "errors"):
+            for err in e.errors():  # type: ignore[union-attr]
+                loc = " → ".join(str(x) for x in err.get("loc", []))
+                msg = err.get("msg", str(err))
+                errors.append(f"[{loc}] {msg}")
+        else:
+            errors.append(err_str)
+        return None, errors

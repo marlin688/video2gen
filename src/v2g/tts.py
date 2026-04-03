@@ -193,6 +193,11 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
                 _generate_segment_minimax(narration, seg_file, minimax_voice, minimax_speed)
             else:
                 asyncio.run(_generate_segment_edge(narration, seg_file, voice, rate))
+
+            # 记录 TTS 字符消耗
+            from v2g.cost import get_tracker
+            get_tracker().record_tts(len(narration), engine)
+
             duration = _get_duration(seg_file)
             timing[str(seg_id)] = {
                 "file": str(seg_file),

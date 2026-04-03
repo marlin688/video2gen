@@ -241,34 +241,19 @@ def _run_agent_loop(
     support SSE responses.
     """
     import anthropic
-    import httpx
+    from v2g.llm import _make_http_client
+    from v2g.cost import get_tracker
 
     base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         raise click.ClickException("未设置 ANTHROPIC_API_KEY")
 
-    # 清理代理环境变量中的非法字符（与 llm.py 一致）
-    _cleaned_proxy = {}
-    for _pk in ("all_proxy", "ALL_PROXY"):
-        _pv = os.environ.get(_pk, "")
-        if _pv and not _pv.rstrip("/").replace("://", "").replace(".", "").replace(":", "").isalnum():
-            _cleaned_proxy[_pk] = os.environ.pop(_pk)
-
-    # 如果使用了自定义 base_url (代理网关)，不走本地系统代理
-    if base_url and "api.anthropic.com" not in base_url:
-        proxy_url = None
-    else:
-        proxy_url = os.environ.get("https_proxy") or os.environ.get("http_proxy") or None
     client = anthropic.Anthropic(
         api_key=api_key,
         base_url=base_url,
-        http_client=httpx.Client(
-            timeout=httpx.Timeout(600.0, connect=60.0),
-            proxy=proxy_url,
-        ),
+        http_client=_make_http_client("anthropic", base_url),
     )
-    os.environ.update(_cleaned_proxy)
 
     messages = [{"role": "user", "content": user_message}]
     final_text = ""
@@ -332,12 +317,14 @@ def _run_agent_loop_openai(
 ) -> str:
     """OpenAI-compatible agent loop with function calling."""
     from openai import OpenAI
-    import httpx
+    from v2g.llm import _make_http_client
+    from v2g.cost import get_tracker
 
     # 各厂商官方 API 路由
     if _is_zhipu_model(model):
         base_url = "https://open.bigmodel.cn/api/paas/v4"
         api_key = os.environ.get("ZHIPU_API_KEY", "")
+        provider = "zhipu"
         if not api_key:
             raise click.ClickException("未设置 ZHIPU_API_KEY")
     elif _is_minimax_model(model):
@@ -346,14 +333,17 @@ def _run_agent_loop_openai(
         if minimax_key:
             base_url = "https://api.minimax.chat"
             api_key = minimax_key
+            provider = "minimax"
         elif gpt_key:
             base_url = os.environ.get("GPT_BASE_URL", "")
             api_key = gpt_key
+            provider = "openai"
         else:
             raise click.ClickException("未设置 TTS_MINMAX_KEY 或 GPT_API_KEY")
     else:
         base_url = os.environ.get("GPT_BASE_URL", "")
         api_key = os.environ.get("GPT_API_KEY", "")
+        provider = "openai"
         if not api_key:
             base_url = os.environ.get("ANTHROPIC_BASE_URL", base_url)
             api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -364,25 +354,11 @@ def _run_agent_loop_openai(
     if base_url and not any(base_url.rstrip("/").endswith(s) for s in ("/v1", "/v4")):
         base_url = base_url.rstrip("/") + "/v1"
 
-    # 清理代理变量（MiniMax/智谱等国内 API 不走本地代理）
-    _cleaned = {}
-    if _is_minimax_model(model) or _is_zhipu_model(model):
-        for k in list(os.environ):
-            if "proxy" in k.lower() and os.environ[k]:
-                _cleaned[k] = os.environ.pop(k)
-    else:
-        for k in list(os.environ):
-            if "proxy" in k.lower():
-                v = os.environ[k]
-                if v and v.rstrip("/").endswith("~"):
-                    _cleaned[k] = os.environ.pop(k)
-
     client = OpenAI(
         api_key=api_key,
         base_url=base_url,
-        http_client=httpx.Client(timeout=httpx.Timeout(600.0, connect=60.0)),
+        http_client=_make_http_client(provider, base_url),
     )
-    os.environ.update(_cleaned)
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -398,6 +374,15 @@ def _run_agent_loop_openai(
             temperature=0.3,
             max_tokens=16000,
         )
+
+        # 记录 token usage
+        if response.usage:
+            get_tracker().record_llm(
+                model,
+                response.usage.prompt_tokens or 0,
+                response.usage.completion_tokens or 0,
+                stage="agent",
+            )
 
         choice = response.choices[0]
         msg = choice.message
@@ -718,6 +703,14 @@ def run_agent(
     click.echo(f"   📊 {len(segments)} 段 (A={a} B={b} C={c})")
     click.echo(f"   📄 脚本: output/{project_id}/script.md")
     click.echo(f"   🖥️  录屏指南: output/{project_id}/recording_guide.md")
+
+    # 成本摘要
+    from v2g.cost import get_tracker
+    tracker = get_tracker()
+    tracker.print_summary()
+    state.cost_summary = tracker.summary()
+    state.save(cfg.output_dir)
+
     click.echo(f"\n💡 下一步:")
     click.echo(f"   v2g tts {project_id}")
     click.echo(f"   v2g slides {project_id}")

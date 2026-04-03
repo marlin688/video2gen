@@ -76,6 +76,9 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
 def run_pipeline(cfg: Config, video_id_or_url: str, model: str,
                  whisper_model: str = "medium", auto: bool = False):
     """执行完整流水线，在人工审核点暂停（auto=True 时跳过审核）。"""
+    from v2g.cost import reset_tracker, get_tracker
+    reset_tracker()
+
     video_id = _extract_video_id(video_id_or_url)
     state = PipelineState.load(cfg.output_dir, video_id)
 
@@ -153,6 +156,12 @@ def run_pipeline(cfg: Config, video_id_or_url: str, model: str,
         click.echo("=" * 50)
         from v2g.editor import run_assemble
         state = run_assemble(cfg, video_id)
+
+    # 成本摘要
+    tracker = get_tracker()
+    tracker.print_summary()
+    state.cost_summary = tracker.summary()
+    state.save(cfg.output_dir)
 
     # 完成
     click.echo("\n" + "=" * 50)

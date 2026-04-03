@@ -70,6 +70,9 @@ class PipelineState:
 
     last_error: str = ""
 
+    # 成本追踪
+    cost_summary: dict = field(default_factory=dict)
+
     @property
     def is_multi(self) -> bool:
         return bool(self.sources)

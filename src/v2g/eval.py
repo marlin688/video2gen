@@ -12,6 +12,7 @@ def eval_script(script: dict, video_id: str = "") -> dict:
     """评估脚本质量（纯函数版，接受 dict），返回评分报告。
 
     可在脚本生成后立即调用，无需写入文件。
+    先做 Pydantic 结构验证，再做业务规则检查。
     """
     segments = script.get("segments", [])
 
@@ -20,7 +21,13 @@ def eval_script(script: dict, video_id: str = "") -> dict:
         "checks": [],
         "score": 0,
         "max_score": 0,
+        "schema_errors": [],  # Pydantic 结构验证错误
     }
+
+    # ── Schema 结构验证 (Pydantic) ──
+    from v2g.schema import validate_script
+    _parsed, schema_errors = validate_script(script)
+    report["schema_errors"] = schema_errors
 
     def check(name: str, passed: bool, weight: int = 1, detail: str = ""):
         report["checks"].append({
@@ -32,6 +39,10 @@ def eval_script(script: dict, video_id: str = "") -> dict:
         report["max_score"] += weight
         if passed:
             report["score"] += weight
+
+    # --- Schema 结构验证 ---
+    check("JSON 结构合法", len(schema_errors) == 0, weight=3,
+          detail=f"{len(schema_errors)} 个结构错误" if schema_errors else "")
 
     # --- 基础结构 ---
     check("有标题", bool(script.get("title")))
@@ -203,6 +214,15 @@ def print_eval_report(report: dict):
         detail = f" — {c['detail']}" if c.get("detail") else ""
         weight = f" (×{c['weight']})" if c["weight"] > 1 else ""
         click.echo(f"   {icon} {c['name']}{weight}{detail}")
+
+    # Schema 验证错误详情
+    schema_errors = report.get("schema_errors", [])
+    if schema_errors:
+        click.echo(f"\n   🔴 结构验证错误 ({len(schema_errors)} 项):")
+        for i, err in enumerate(schema_errors[:10], 1):  # 最多显示 10 条
+            click.echo(f"      {i}. {err}")
+        if len(schema_errors) > 10:
+            click.echo(f"      ... 还有 {len(schema_errors) - 10} 项")
 
     if "meta" in report:
         meta = report["meta"]

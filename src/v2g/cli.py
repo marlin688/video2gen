@@ -595,6 +595,117 @@ def scout_plan(cfg: Config, skip_notebooklm, duration, topic_index):
     click.echo("\n✅ 脚本规划完成")
 
 
+@scout.command("produce")
+@click.option("--topic-index", "-i", default=None, type=int, help="直接选择第 N 个话题")
+@click.option("--duration", "-d", default=240, type=int, help="目标视频时长秒数 (默认 240)")
+@click.option("--model", default=None, help="LLM 模型")
+@click.option("--skip-download", is_flag=True, help="跳过视频下载（仅用已有 sources/）")
+@click.pass_obj
+def scout_produce(cfg: Config, topic_index, duration, model, skip_download):
+    """一键生产: 选话题 → 选视频下载 → agent 生成 script.json
+
+    从 ideation 竞品视频中选择素材，结合 scout scripts 上下文，
+    自动调用 agent 生成可渲染的 script.json。
+    """
+    from datetime import date
+    from v2g.scout.url_extractor import (
+        list_ideation_topics, select_topic_interactive,
+        extract_youtube_from_ideation, select_videos_auto,
+        find_scout_scripts,
+    )
+    from v2g.scout.ideation import _topic_slug
+
+    vault = Path(cfg.obsidian_vault_path) if cfg.obsidian_vault_path and str(cfg.obsidian_vault_path) != "." else Path("output")
+    today = date.today()
+
+    # 1. 选话题
+    click.echo("📋 选择话题\n")
+    topics = list_ideation_topics(vault, today)
+    selected = select_topic_interactive(topics, topic_index)
+    if not selected:
+        return
+    topic = selected["title"]
+    slug = _topic_slug(topic)
+    click.echo()
+
+    # 2. 选竞品视频下载
+    videos_to_download = []
+    if not skip_download:
+        click.echo("📺 选择竞品视频下载\n")
+        all_videos = extract_youtube_from_ideation(selected["source_path"])
+        if all_videos:
+            videos_to_download = select_videos_auto(all_videos, max_select=2)
+        else:
+            click.echo("   ℹ️ ideation 中无竞品视频（YOUTUBE_API_KEY 未设置？）")
+        click.echo()
+
+    # 3. 下载视频
+    downloaded_ids = []
+    if videos_to_download:
+        click.echo("📥 下载视频\n")
+        for v in videos_to_download:
+            vid = v["video_id"]
+            click.echo(f"   📥 [{v['channel'][:15]}] {v['title'][:40]}...")
+            try:
+                from v2g.preparer import run_prepare
+                run_prepare(cfg, vid, model=cfg.script_model)
+                downloaded_ids.append(vid)
+                click.echo(f"   ✅ {vid} 下载完成")
+            except Exception as e:
+                click.echo(f"   ⚠️ {vid} 下载失败: {e}")
+        click.echo()
+
+    # 4. 组装 agent 素材
+    click.echo("🔧 组装素材\n")
+    sources = []
+
+    # scout scripts（hook/title/outline）
+    scout_files = find_scout_scripts(vault, today, slug)
+    for f in scout_files:
+        sources.append(str(f))
+        click.echo(f"   📎 {f.name}")
+
+    # 下载的视频字幕
+    for vid in downloaded_ids:
+        srt_candidates = [
+            cfg.sources_dir / vid / "subtitle_zh.srt",
+            cfg.sources_dir / vid / "subtitle_en.srt",
+        ]
+        for srt in srt_candidates:
+            if srt.exists():
+                sources.append(str(srt))
+                click.echo(f"   📎 {srt.name} ({vid})")
+                break
+
+    # 没有下载视频时提示（scout scripts 仍然可以作为 agent 素材）
+    if not downloaded_ids:
+        click.echo("   ℹ️ 无视频素材（agent 将仅基于 scout scripts 生成，无 material C 原片）")
+
+    if not sources:
+        click.echo("   ⚠️ 无可用素材，请先运行 scout plan 或手动下载视频")
+        return
+
+    click.echo(f"\n   共 {len(sources)} 个素材")
+    click.echo()
+
+    # 5. 生成 project_id
+    project_id = f"{slug[:20]}-{today}".lower().replace(" ", "-")
+    click.echo(f"🤖 启动 Agent 脚本生成: {project_id}\n")
+
+    # 6. 调用 agent（自动确认大纲，≥85 分通过）
+    from v2g.agent import run_agent
+    run_agent(
+        cfg=cfg,
+        project_id=project_id,
+        sources=tuple(sources),
+        topic=topic,
+        model=model,
+        duration=duration,
+        auto_confirm=True,
+        auto_confirm_threshold=85,
+    )
+
+
 @scout.command("all")
 @click.pass_obj
 def scout_all(cfg: Config):

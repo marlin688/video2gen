@@ -234,3 +234,71 @@ def select_topic_interactive(topics: list[dict], topic_index: int | None = None)
 
     click.echo("   ⚠️ 无效选择")
     return None
+
+
+# ── 竞品视频提取与选择 ──
+
+
+def extract_youtube_from_ideation(ideation_path: Path) -> list[dict]:
+    """从 ideation 文件提取竞品 YouTube 视频列表。
+
+    返回: [{"channel": str, "title": str, "url": str, "video_id": str,
+            "views": int, "likes": int, "comments": int}, ...]
+    """
+    content = ideation_path.read_text(encoding="utf-8")
+    videos = []
+
+    # 格式: - [频道] [标题](URL)\n  👁 views | ❤️ likes | 💬 comments
+    pattern = re.compile(
+        r"- \[([^\]]+)\] \[([^\]]+)\]\((https://www\.youtube\.com/watch\?v=([^)]+))\)\s*\n"
+        r"\s*👁\s*([\d,]+)\s*\|\s*❤️\s*([\d,]+)\s*\|\s*💬\s*([\d,]+)",
+    )
+    for m in pattern.finditer(content):
+        videos.append({
+            "channel": m.group(1).strip(),
+            "title": m.group(2).strip(),
+            "url": m.group(3),
+            "video_id": m.group(4),
+            "views": int(m.group(5).replace(",", "")),
+            "likes": int(m.group(6).replace(",", "")),
+            "comments": int(m.group(7).replace(",", "")),
+        })
+
+    # 按播放量降序
+    videos.sort(key=lambda v: -v["views"])
+    return videos
+
+
+def select_videos_auto(
+    videos: list[dict], max_select: int = 2,
+) -> list[dict]:
+    """自动选择竞品视频：按播放量取 top N。
+
+    已按播放量降序排列，直接取前 max_select 个。
+    """
+    if not videos:
+        click.echo("   ⚠️ 未找到竞品视频")
+        return []
+
+    selected = videos[:max_select]
+    click.echo(f"   📺 自动选择 {len(selected)} 个竞品视频（按播放量）:")
+    for v in selected:
+        click.echo(f"      👁 {v['views']:>8,} | [{v['channel'][:15]}] {v['title'][:50]}")
+
+    return selected
+
+
+def find_scout_scripts(vault_path: Path, today: date, topic_slug: str) -> list[Path]:
+    """查找与话题匹配的 scout script 文件（hook/title/outline）。"""
+    scripts_dir = vault_path / "scout" / "scripts"
+    if not scripts_dir.exists():
+        return []
+
+    matched = []
+    for prefix in ("hook", "title", "outline"):
+        for f in scripts_dir.glob(f"{today}-{prefix}-*.md"):
+            # slug 模糊匹配
+            if topic_slug[:15] in f.stem:
+                matched.append(f)
+                break
+    return matched

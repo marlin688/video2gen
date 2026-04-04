@@ -790,8 +790,14 @@ def run_agent(
     topic: str,
     model: str | None,
     duration: int,
+    auto_confirm: bool = False,
+    auto_confirm_threshold: int = 85,
 ):
-    """Agent 驱动的脚本编排：素材 → 大纲 → script.json。"""
+    """Agent 驱动的脚本编排：素材 → 大纲 → script.json。
+
+    auto_confirm: True 时根据评分自动确认大纲，不需人工交互。
+    auto_confirm_threshold: 自动确认的最低分数（0-100）。
+    """
     model = model or cfg.script_model
     output_dir = cfg.output_dir / project_id
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -844,14 +850,26 @@ def run_agent(
         state.agent_sources = _build_source_records(sources)
         state.save(cfg.output_dir)
 
-    # ── 大纲预览 + 人工确认 ─────────────────────────────────
+    # ── 大纲预览 + 自动/人工确认 ─────────────────────────────
     if not state.outline_reviewed:
         outline = json.loads(outline_path.read_text(encoding="utf-8"))
         _print_outline_preview(outline)
 
-        if not click.confirm("\n✅ 确认大纲？", default=True):
-            click.echo("💡 请手动编辑 outline.json 后重新运行 v2g agent")
-            return
+        # 自动评分：检查大纲结构质量
+        score = _score_outline(outline, duration)
+        click.echo(f"\n📊 大纲评分: {score}/100")
+
+        if auto_confirm:
+            if score >= auto_confirm_threshold:
+                click.echo(f"   ✅ 自动确认（≥{auto_confirm_threshold}分）")
+            else:
+                click.echo(f"   ❌ 评分不足（<{auto_confirm_threshold}分），中止")
+                click.echo("💡 请手动编辑 outline.json 后重新运行")
+                return
+        else:
+            if not click.confirm("\n✅ 确认大纲？", default=True):
+                click.echo("💡 请手动编辑 outline.json 后重新运行 v2g agent")
+                return
 
         state.outline_reviewed = True
         state.save(cfg.output_dir)
@@ -1078,6 +1096,64 @@ def _generate_outline_md(outline: dict, output_path: Path):
         lines.append("\n")
 
     output_path.write_text("".join(lines), encoding="utf-8")
+
+
+def _score_outline(outline: dict, target_duration: int = 240) -> int:
+    """对大纲进行结构质量评分（0-100）。
+
+    评分维度（各 20 分，共 100）：
+    1. 段落数量：6-10 段满分，<4 或 >15 不及格
+    2. 结构完整性：有 intro + body + outro
+    3. 素材多样性：A/B/C 三种都有
+    4. 时长匹配：总预估时长与目标时长偏差 <30%
+    5. 内容充实度：每段都有 theme 和 key_points
+    """
+    items = outline.get("outline", [])
+    score = 0
+
+    # 1. 段落数量 (20 分)
+    n = len(items)
+    if 6 <= n <= 10:
+        score += 20
+    elif 4 <= n <= 12:
+        score += 12
+    elif n >= 3:
+        score += 5
+
+    # 2. 结构完整性 (20 分)
+    sections = {item.get("section", "") for item in items}
+    if "intro" in sections:
+        score += 7
+    if "body" in sections:
+        score += 7
+    if "outro" in sections:
+        score += 6
+
+    # 3. 素材多样性 (20 分)
+    all_materials = set()
+    for item in items:
+        for m in item.get("suggested_materials", []):
+            all_materials.add(m)
+    score += min(len(all_materials) * 7, 20)
+
+    # 4. 时长匹配 (20 分)
+    total_est = sum(item.get("est_duration", 0) for item in items)
+    if total_est > 0 and target_duration > 0:
+        ratio = total_est / target_duration
+        if 0.7 <= ratio <= 1.3:
+            score += 20
+        elif 0.5 <= ratio <= 1.5:
+            score += 12
+        else:
+            score += 5
+
+    # 5. 内容充实度 (20 分)
+    if items:
+        filled = sum(1 for item in items if item.get("theme") and item.get("key_points"))
+        fill_rate = filled / len(items)
+        score += int(fill_rate * 20)
+
+    return min(score, 100)
 
 
 def _print_outline_preview(outline: dict):

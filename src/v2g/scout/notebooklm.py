@@ -72,7 +72,7 @@ async def _analyze_sources(sources: list[str], topic: str) -> dict:
 
 def run_notebooklm(cfg, sources: list[str], topic: str) -> Path | None:
     """NotebookLM 分析主流程。"""
-    from v2g.knowledge.obsidian import ObsidianWriter
+    from v2g.scout.obsidian import ObsidianWriter
 
     click.echo("📓 NotebookLM 深度分析")
 
@@ -105,9 +105,9 @@ def run_notebooklm(cfg, sources: list[str], topic: str) -> Path | None:
 def _write_notebooklm_report(
     writer, today: date, topic: str, sources: list[str], result: dict
 ) -> Path:
-    from v2g.knowledge.ideation import _topic_slug
+    from v2g.scout.ideation import _topic_slug
 
-    nlm_dir = writer.vault / "knowledge" / "notebooklm"
+    nlm_dir = writer.vault / "scout" / "notebooklm"
     nlm_dir.mkdir(parents=True, exist_ok=True)
     path = nlm_dir / f"{today}-{_topic_slug(topic)}.md"
 

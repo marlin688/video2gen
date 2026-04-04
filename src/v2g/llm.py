@@ -100,11 +100,28 @@ def is_minimax_model(model: str) -> bool:
 
 
 def call_llm(system_prompt: str, user_message: str, model: str,
-             temperature: float = 0.3, max_tokens: int = 16000) -> str:
+             temperature: float = 0.3, max_tokens: int = 16000,
+             fallback_model: str | None = None) -> str:
     """统一 LLM 调用接口，根据模型名称自动路由。
 
     MiniMax 模型优先走官方 API (TTS_MINMAX_KEY)，失败时 fallback 到 GPT 代理。
+    fallback_model: 主模型失败时自动切换到此模型重试（一次）。
+      - 显式传入优先；未传入时自动读取 SCOUT_FALLBACK_MODEL 环境变量。
     """
+    fb = fallback_model or os.environ.get("SCOUT_FALLBACK_MODEL") or None
+    try:
+        return _call_llm_single(system_prompt, user_message, model, temperature, max_tokens)
+    except Exception as e:
+        if fb and fb != model:
+            click.echo(f"   ⚠️ {model} 失败: {e}")
+            click.echo(f"   🔄 Fallback → {fb}")
+            return _call_llm_single(system_prompt, user_message, fb, temperature, max_tokens)
+        raise
+
+
+def _call_llm_single(system_prompt: str, user_message: str, model: str,
+                     temperature: float, max_tokens: int) -> str:
+    """单次 LLM 调用，根据模型名称路由到具体 provider。"""
     if is_gemini_model(model):
         return _call_gemini(system_prompt, user_message, model, temperature, max_tokens)
     if is_zhipu_model(model):
@@ -348,11 +365,16 @@ def _call_zhipu(system_prompt: str, user_message: str, model: str,
     if not api_key:
         raise click.ClickException("未设置 ZHIPU_API_KEY")
 
+    base_url = os.environ.get("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+
     client = OpenAI(
         api_key=api_key,
-        base_url="https://open.bigmodel.cn/api/paas/v4",
+        base_url=base_url,
         http_client=_make_http_client("zhipu"),
     )
+
+    # 推理模型 (glm-5 等) 需要更大的 max_tokens 给 reasoning
+    effective_max = max_tokens * 4 if "glm-5" in model.lower() else max_tokens
 
     response = client.chat.completions.create(
         model=model,
@@ -361,7 +383,7 @@ def _call_zhipu(system_prompt: str, user_message: str, model: str,
             {"role": "user", "content": user_message},
         ],
         temperature=temperature,
-        max_tokens=max_tokens,
+        max_tokens=effective_max,
     )
 
     # 提取 usage
@@ -372,5 +394,9 @@ def _call_zhipu(system_prompt: str, user_message: str, model: str,
         usage_output = response.usage.completion_tokens or 0
     get_tracker().record_llm(model, usage_input, usage_output)
 
-    result = response.choices[0].message.content or ""
+    # 推理模型可能把内容放在 reasoning_content，content 为空
+    msg = response.choices[0].message
+    result = msg.content or ""
+    if not result and hasattr(msg, "reasoning_content") and msg.reasoning_content:
+        result = msg.reasoning_content
     return result

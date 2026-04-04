@@ -5,7 +5,7 @@ setup:
 	cd remotion-video && npm install
 
 setup-full:
-	pip install -e ".[dev,knowledge,subtitle]"
+	pip install -e ".[dev,scout,subtitle]"
 	cd remotion-video && npm install
 
 test:

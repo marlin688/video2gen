@@ -77,7 +77,7 @@ def _normalize_story(hit: dict) -> dict:
 def analyze_stories_with_llm(stories: list[dict], model: str) -> str:
     """用 LLM 分析 HN 热帖，返回 Markdown。"""
     from v2g.llm import call_llm
-    from v2g.knowledge import _load_prompt
+    from v2g.scout import _load_prompt
 
     if not stories:
         return "*今日无新帖*"
@@ -90,7 +90,7 @@ def analyze_stories_with_llm(stories: list[dict], model: str) -> str:
             f"  链接: {s.get('url', 'N/A')}"
         )
 
-    system_prompt = _load_prompt("knowledge_hn.md")
+    system_prompt = _load_prompt("scout_hn.md")
     user_message = "以下是近期 Hacker News 上的 AI 相关热门帖子：\n\n" + "\n\n".join(story_lines)
 
     try:
@@ -103,9 +103,9 @@ def analyze_stories_with_llm(stories: list[dict], model: str) -> str:
 def run_hn_monitor(cfg, hours: int = 24, min_points: int = 20) -> "Path | None":
     """Hacker News 监控主流程。"""
     from datetime import date
-    from v2g.knowledge.store import KnowledgeStore
-    from v2g.knowledge.obsidian import ObsidianWriter
-    from v2g.knowledge.telegram import send_telegram
+    from v2g.scout.store import ScoutStore
+    from v2g.scout.obsidian import ObsidianWriter
+    from v2g.scout.telegram import send_telegram
 
     click.echo("🟧 Hacker News 监控")
 
@@ -120,7 +120,7 @@ def run_hn_monitor(cfg, hours: int = 24, min_points: int = 20) -> "Path | None":
     stories = [_normalize_story(h) for h in raw_stories]
 
     # 去重
-    with KnowledgeStore(cfg.knowledge_db_path) as store:
+    with ScoutStore(cfg.scout_db_path) as store:
         new_stories = store.filter_new("hn", stories, lambda s: s["story_id"])
         click.echo(f"   📊 新帖子: {len(new_stories)} / {len(stories)}")
 
@@ -130,7 +130,7 @@ def run_hn_monitor(cfg, hours: int = 24, min_points: int = 20) -> "Path | None":
 
         # LLM 分析
         click.echo("   🤖 LLM 分析中...")
-        analysis = analyze_stories_with_llm(new_stories, cfg.knowledge_model)
+        analysis = analyze_stories_with_llm(new_stories, cfg.scout_model)
 
         # 标记已见
         store.mark_seen_batch("hn", new_stories, lambda s: s["story_id"])
@@ -151,10 +151,33 @@ def run_hn_monitor(cfg, hours: int = 24, min_points: int = 20) -> "Path | None":
 
 
 def _write_hn_report(writer, today, stories: list[dict], analysis: str):
-    """写入 HN 报告到 Obsidian。"""
-    path = writer.vault / "knowledge" / "hn" / f"{today}-hn.md"
-    (writer.vault / "knowledge" / "hn").mkdir(parents=True, exist_ok=True)
+    """写入 HN 报告到 Obsidian。
 
+    如果当天报告已存在，追加新帖子到末尾，而非覆盖完整报告。
+    """
+    path = writer.vault / "scout" / "hn" / f"{today}-hn.md"
+    (writer.vault / "scout" / "hn").mkdir(parents=True, exist_ok=True)
+
+    # 追加模式：当天报告已存在时，只追加新帖子
+    if path.exists():
+        existing = path.read_text(encoding="utf-8")
+        new_lines = ["\n## 新增帖子\n"]
+        if analysis:
+            new_lines += [analysis, ""]
+        for s in stories:
+            # 跳过已存在的帖子
+            if s["hn_url"] in existing:
+                continue
+            new_lines.append(f"### [{s['title']}]({s['hn_url']})")
+            new_lines.append(f"⬆ {s['points']} | 💬 {s['num_comments']} | @{s['author']}")
+            if s.get("url"):
+                new_lines.append(f"[原文链接]({s['url']})")
+            new_lines.append("")
+        if len(new_lines) > 1:  # 有实际新内容才追加
+            path.write_text(existing.rstrip() + "\n\n" + "\n".join(new_lines), encoding="utf-8")
+        return path
+
+    # 首次写入：完整报告
     lines = [
         "---",
         f"date: {today}",
@@ -182,7 +205,7 @@ def _write_hn_report(writer, today, stories: list[dict], analysis: str):
 
 def _format_hn_telegram(stories: list[dict]) -> str:
     """格式化 HN 帖子为 Telegram HTML。"""
-    from v2g.knowledge.telegram import _escape_html
+    from v2g.scout.telegram import _escape_html
 
     lines = ["<b>🟧 Hacker News AI 热帖</b>\n"]
     for i, s in enumerate(stories, 1):

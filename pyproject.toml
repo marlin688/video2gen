@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-knowledge = ["feedparser>=6.0"]
+scout = ["feedparser>=6.0"]
 notebooklm = ["notebooklm-py[browser]>=0.1"]
 subtitle = ["mlx-whisper>=0.4"]
 dev = ["pytest>=8.0"]

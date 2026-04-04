@@ -11,9 +11,9 @@ def generate_titles(topic: str, angle: str, model: str, context: str = "",
                     history: str = "") -> str:
     """LLM 生成分层标题。"""
     from v2g.llm import call_llm
-    from v2g.knowledge import _load_prompt
+    from v2g.scout import _load_prompt
 
-    system_prompt = _load_prompt("knowledge_title.md")
+    system_prompt = _load_prompt("scout_title.md")
     user_message = f"话题: {topic}"
     if angle:
         user_message += f"\n切入角度: {angle}"
@@ -28,8 +28,8 @@ def generate_titles(topic: str, angle: str, model: str, context: str = "",
 def run_title(cfg, topic: str, angle: str = "",
               history_file: str | None = None) -> Path | None:
     """标题生成主流程。"""
-    from v2g.knowledge import _load_today_context as load_ctx
-    from v2g.knowledge.obsidian import ObsidianWriter
+    from v2g.scout import _load_today_context as load_ctx
+    from v2g.scout.obsidian import ObsidianWriter
 
     click.echo("📛 标题生成")
 
@@ -46,7 +46,7 @@ def run_title(cfg, topic: str, angle: str = "",
     click.echo(f"   📌 话题: {topic}")
     click.echo("   🤖 LLM 生成中...")
 
-    result = generate_titles(topic, angle, cfg.knowledge_model, context, history)
+    result = generate_titles(topic, angle, cfg.scout_model, context, history)
     if not result:
         click.echo("   ⚠️ 生成失败")
         return None
@@ -61,7 +61,7 @@ def _load_title_history(vault_path: Path, history_file: str | None = None) -> st
 
     优先级:
     1. 用户指定的 JSON/CSV 文件 (--history)
-    2. 自动扫描 vault/knowledge/scripts/ 下的历史 title 文件
+    2. 自动扫描 vault/scout/scripts/ 下的历史 title 文件
     """
     if history_file:
         return _load_history_from_file(history_file)
@@ -95,7 +95,7 @@ def _load_history_from_file(file_path: str) -> str:
 
 def _scan_vault_titles(vault_path: Path) -> str:
     """扫描 Obsidian vault 中的历史 title 文件，提取已生成的标题作为参考。"""
-    scripts_dir = vault_path / "knowledge" / "scripts"
+    scripts_dir = vault_path / "scout" / "scripts"
     if not scripts_dir.exists():
         return ""
 
@@ -131,8 +131,8 @@ def _scan_vault_titles(vault_path: Path) -> str:
 
 
 def _write_title_report(writer, today: date, topic: str, content: str) -> Path:
-    from v2g.knowledge.ideation import _topic_slug
-    scripts_dir = writer.vault / "knowledge" / "scripts"
+    from v2g.scout.ideation import _topic_slug
+    scripts_dir = writer.vault / "scout" / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
     path = scripts_dir / f"{today}-title-{_topic_slug(topic)}.md"
 

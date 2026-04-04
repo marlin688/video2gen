@@ -1,4 +1,4 @@
-"""Twitter/X 监控：Apify 抓取 + 规则粗筛 + LLM 精评 + softmax 选择。"""
+"""Twitter/X 监控：TwitterAPI.io 搜索 + 规则粗筛 + LLM 精评 + softmax 选择。"""
 
 import math
 import random
@@ -7,121 +7,136 @@ import time
 import click
 
 
-def fetch_tweets_apify(
-    token: str,
+def _search_one_query(
+    api_key: str, query: str, query_type: str = "Top",
+    max_items: int = 40, max_pages: int = 2,
+) -> list[dict]:
+    """单个查询的分页抓取，带 429 重试。"""
+    import httpx
+
+    tweets = []
+    cursor = None
+
+    for _ in range(max_pages):
+        if len(tweets) >= max_items:
+            break
+
+        params = {"query": query, "queryType": query_type}
+        if cursor:
+            params["cursor"] = cursor
+
+        # 带重试的请求
+        for retry in range(3):
+            try:
+                resp = httpx.get(
+                    "https://api.twitterapi.io/twitter/tweet/advanced_search",
+                    headers={"X-API-Key": api_key},
+                    params=params,
+                    timeout=30.0,
+                )
+                if resp.status_code == 429:
+                    wait = 2 ** retry + 1
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                break
+            except Exception as e:
+                if retry == 2:
+                    click.echo(f"   ⚠️ 查询失败: {e}")
+                    return tweets
+                time.sleep(2)
+
+        data = resp.json()
+        page_tweets = data.get("tweets", [])
+        if not page_tweets:
+            break
+
+        tweets.extend(page_tweets)
+
+        cursor = data.get("next_cursor") or data.get("cursor")
+        if not cursor or not data.get("has_next_page", False):
+            break
+        time.sleep(1.5)
+
+    return tweets[:max_items]
+
+
+def fetch_tweets_twitterapi(
+    api_key: str,
     keywords: list[str],
     authors: list[str],
     max_tweets: int = 100,
-    poll_interval: int = 5,
-    timeout: int = 300,
 ) -> list[dict]:
-    """通过 Apify Twitter Scraper 抓取推文（异步轮询模型）。"""
+    """通过 TwitterAPI.io Advanced Search 抓取推文。
+
+    策略：分关键词多次查询 + Top 排序获取高质量推文 + 合并去重。
+    Docs: https://docs.twitterapi.io/api-reference/endpoint/tweet_advanced_search
+    """
     import httpx
 
-    if not token:
-        raise click.ClickException("APIFY_TOKEN 未设置")
+    if not api_key:
+        raise click.ClickException("TWITTER_API_IO_KEY 未设置")
 
-    # 构造搜索 query
-    search_terms = []
-    if keywords:
-        search_terms.extend(keywords)
-    if authors:
-        search_terms.extend([f"from:{a}" for a in authors])
-
-    if not search_terms:
+    if not keywords and not authors:
         raise click.ClickException("TWITTER_KEYWORDS 和 TWITTER_AUTHORS 均未设置")
 
-    search_query = " OR ".join(search_terms)
-    click.echo(f"   🐦 Twitter 搜索: {search_query[:80]}...")
+    all_tweets = {}  # tweet_id → tweet，自动去重
+    per_query = max(20, max_tweets // max(len(keywords) + len(authors), 1))
 
-    # 构造搜索 URL（apidojo/tweet-scraper 使用 startUrls 方式）
-    search_url = f"https://x.com/search?q={search_query}&f=live"
+    # 按关键词分别查询（Top 排序拿高互动推文）
+    for kw in keywords:
+        query = f"{kw} min_faves:5"  # 过滤零互动噪音
+        click.echo(f"   🔍 \"{kw}\"...")
+        results = _search_one_query(api_key, query, "Top", per_query)
+        for t in results:
+            tid = t.get("id", "")
+            if tid and tid not in all_tweets:
+                all_tweets[tid] = t
 
-    # 启动 Apify Actor run
-    try:
-        resp = httpx.post(
-            "https://api.apify.com/v2/acts/apidojo~tweet-scraper/runs",
-            params={"token": token},
-            json={
-                "startUrls": [{"url": search_url}],
-                "maxItems": max_tweets,
-            },
-            timeout=30.0,
-        )
-        resp.raise_for_status()
-        run_data = resp.json().get("data", {})
-        run_id = run_data.get("id")
-        if not run_id:
-            click.echo("   ⚠️ Apify 启动失败: 无 run ID")
-            return []
-    except Exception as e:
-        click.echo(f"   ⚠️ Apify 启动失败: {e}")
-        return []
+    # 按作者查询
+    for author in authors:
+        query = f"from:{author}"
+        click.echo(f"   🔍 @{author}...")
+        results = _search_one_query(api_key, query, "Latest", per_query)
+        for t in results:
+            tid = t.get("id", "")
+            if tid and tid not in all_tweets:
+                all_tweets[tid] = t
 
-    click.echo(f"   ⏳ Apify run {run_id[:8]}... 等待完成")
-
-    # 轮询等待完成
-    elapsed = 0
-    while elapsed < timeout:
-        time.sleep(poll_interval)
-        elapsed += poll_interval
-        try:
-            status_resp = httpx.get(
-                f"https://api.apify.com/v2/actor-runs/{run_id}",
-                params={"token": token},
-                timeout=15.0,
-            )
-            status = status_resp.json().get("data", {}).get("status", "")
-            if status == "SUCCEEDED":
-                break
-            if status in ("FAILED", "ABORTED", "TIMED-OUT"):
-                click.echo(f"   ⚠️ Apify run 失败: {status}")
-                return []
-        except Exception as e:
-            click.echo(f"   ⚠️ 状态查询失败: {e}")
-    else:
-        click.echo(f"   ⚠️ Apify 超时 ({timeout}s)")
-        return []
-
-    # 获取结果
-    try:
-        dataset_id = run_data.get("defaultDatasetId")
-        items_resp = httpx.get(
-            f"https://api.apify.com/v2/datasets/{dataset_id}/items",
-            params={"token": token, "format": "json"},
-            timeout=30.0,
-        )
-        items_resp.raise_for_status()
-        tweets = items_resp.json()
-        click.echo(f"   ✅ 抓取 {len(tweets)} 条推文")
-        return tweets
-    except Exception as e:
-        click.echo(f"   ⚠️ 获取推文数据失败: {e}")
-        return []
+    tweets = list(all_tweets.values())
+    click.echo(f"   ✅ 抓取 {len(tweets)} 条推文（去重后）")
+    return tweets[:max_tweets]
 
 
 def _normalize_tweet(raw: dict) -> dict:
-    """统一 Apify 返回的推文字段。"""
+    """统一 TwitterAPI.io 返回的推文字段。"""
+    author = raw.get("author", {})
     return {
-        "tweet_id": raw.get("id") or raw.get("id_str", ""),
-        "author": raw.get("author", {}).get("userName", "") or raw.get("user", {}).get("screen_name", ""),
-        "text": raw.get("text") or raw.get("full_text", ""),
-        "created_at": raw.get("createdAt") or raw.get("created_at", ""),
-        "likes": raw.get("likeCount") or raw.get("favorite_count", 0),
-        "retweets": raw.get("retweetCount") or raw.get("retweet_count", 0),
-        "replies": raw.get("replyCount") or raw.get("reply_count", 0),
+        "tweet_id": raw.get("id", ""),
+        "author": author.get("userName", "") or author.get("name", ""),
+        "text": raw.get("text", ""),
+        "created_at": raw.get("createdAt", ""),
+        "likes": raw.get("likeCount", 0) or 0,
+        "retweets": raw.get("retweetCount", 0) or 0,
+        "replies": raw.get("replyCount", 0) or 0,
         "url": raw.get("url", ""),
     }
 
 
-def rule_filter(tweets: list[dict], min_likes: int = 10) -> list[dict]:
-    """规则粗筛：likes 阈值 + 排除纯 RT。"""
+def rule_filter(tweets: list[dict], min_likes: int = 0) -> list[dict]:
+    """规则粗筛：排除纯 RT、spam、空内容。"""
     result = []
     for t in tweets:
-        if t.get("likes", 0) < min_likes:
-            continue
         text = t.get("text", "")
+        if not text or len(text) < 20:
+            continue
         if text.startswith("RT @"):
+            continue
+        # 排除明显的 spam（加密货币 pump、过多 emoji）
+        spam_signals = ("CA:", "Quick Buy", "TXs/Vol", "pump", "🐋 Whale")
+        if any(s in text for s in spam_signals):
+            continue
+        if t.get("likes", 0) < min_likes:
             continue
         result.append(t)
     return result
@@ -131,12 +146,12 @@ def score_tweets_with_llm(tweets: list[dict], model: str) -> list[dict]:
     """LLM 精评推文，返回带分数的推文列表。"""
     import json as json_mod
     from v2g.llm import call_llm
-    from v2g.knowledge import _load_prompt
+    from v2g.scout import _load_prompt
 
     if not tweets:
         return []
 
-    system_prompt = _load_prompt("knowledge_twitter.md")
+    system_prompt = _load_prompt("scout_twitter.md")
 
     # 构造推文摘要
     tweet_lines = []
@@ -221,22 +236,24 @@ def softmax_select(
 def run_twitter_monitor(cfg, temperature: float = 0.5, max_tweets: int = 100) -> "Path | None":
     """Twitter 监控主流程。"""
     from datetime import date
-    from v2g.knowledge.store import KnowledgeStore
-    from v2g.knowledge.obsidian import ObsidianWriter
-    from v2g.knowledge.telegram import send_telegram, format_tweet_digest
+    from v2g.scout.store import ScoutStore
+    from v2g.scout.obsidian import ObsidianWriter
+    from v2g.scout.telegram import send_telegram, format_tweet_digest
 
     click.echo("🐦 Twitter 监控")
 
-    if not cfg.apify_token:
-        click.echo("   ⚠️ APIFY_TOKEN 未设置，跳过 Twitter 监控")
+    import os
+    twitter_api_key = os.environ.get("TWITTER_API_IO_KEY", "")
+    if not twitter_api_key:
+        click.echo("   ⚠️ TWITTER_API_IO_KEY 未设置，跳过 Twitter 监控")
         return None
 
     keywords = [k.strip() for k in cfg.twitter_keywords.split(",") if k.strip()]
     authors = [a.strip() for a in cfg.twitter_authors.split(",") if a.strip()]
 
     # 抓取
-    raw_tweets = fetch_tweets_apify(
-        cfg.apify_token, keywords, authors, max_tweets=max_tweets
+    raw_tweets = fetch_tweets_twitterapi(
+        twitter_api_key, keywords, authors, max_tweets=max_tweets
     )
     if not raw_tweets:
         click.echo("   ℹ️ 未抓取到推文")
@@ -246,7 +263,7 @@ def run_twitter_monitor(cfg, temperature: float = 0.5, max_tweets: int = 100) ->
     tweets = [_normalize_tweet(t) for t in raw_tweets]
 
     # 去重
-    with KnowledgeStore(cfg.knowledge_db_path) as store:
+    with ScoutStore(cfg.scout_db_path) as store:
         new_tweets = store.filter_new("twitter", tweets, lambda t: t["tweet_id"])
         click.echo(f"   📊 新推文: {len(new_tweets)} / {len(tweets)}")
 
@@ -261,7 +278,7 @@ def run_twitter_monitor(cfg, temperature: float = 0.5, max_tweets: int = 100) ->
         # LLM 精评
         if filtered:
             click.echo("   🤖 LLM 评分中...")
-            scored = score_tweets_with_llm(filtered, cfg.knowledge_model)
+            scored = score_tweets_with_llm(filtered, cfg.scout_model)
         else:
             scored = new_tweets
 

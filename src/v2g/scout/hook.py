@@ -9,9 +9,9 @@ import click
 def generate_hooks(topic: str, angle: str, model: str, context: str = "") -> str:
     """LLM 生成 5 个钩子变体。"""
     from v2g.llm import call_llm
-    from v2g.knowledge import _load_prompt
+    from v2g.scout import _load_prompt
 
-    system_prompt = _load_prompt("knowledge_hook.md")
+    system_prompt = _load_prompt("scout_hook.md")
     user_message = f"话题: {topic}"
     if angle:
         user_message += f"\n切入角度: {angle}"
@@ -23,8 +23,8 @@ def generate_hooks(topic: str, angle: str, model: str, context: str = "") -> str
 
 def run_hook(cfg, topic: str, angle: str = "") -> Path | None:
     """钩子生成主流程。"""
-    from v2g.knowledge import _load_today_context as load_ctx
-    from v2g.knowledge.obsidian import ObsidianWriter
+    from v2g.scout import _load_today_context as load_ctx
+    from v2g.scout.obsidian import ObsidianWriter
 
     click.echo("🎣 钩子生成")
 
@@ -38,7 +38,7 @@ def run_hook(cfg, topic: str, angle: str = "") -> Path | None:
         click.echo(f"   🎯 角度: {angle}")
     click.echo("   🤖 LLM 生成中...")
 
-    result = generate_hooks(topic, angle, cfg.knowledge_model, context)
+    result = generate_hooks(topic, angle, cfg.scout_model, context)
     if not result:
         click.echo("   ⚠️ 生成失败")
         return None
@@ -49,8 +49,8 @@ def run_hook(cfg, topic: str, angle: str = "") -> Path | None:
 
 
 def _write_hook_report(writer, today: date, topic: str, content: str) -> Path:
-    from v2g.knowledge.ideation import _topic_slug
-    hook_dir = writer.vault / "knowledge" / "scripts"
+    from v2g.scout.ideation import _topic_slug
+    hook_dir = writer.vault / "scout" / "scripts"
     hook_dir.mkdir(parents=True, exist_ok=True)
     path = hook_dir / f"{today}-hook-{_topic_slug(topic)}.md"
 

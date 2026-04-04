@@ -68,9 +68,9 @@ def extract_and_summarize(
     """抓取文章正文 + LLM 摘要。"""
     from v2g.fetcher import fetch_article
     from v2g.llm import call_llm
-    from v2g.knowledge import _load_prompt
+    from v2g.scout import _load_prompt
 
-    system_prompt = _load_prompt("knowledge_article.md")
+    system_prompt = _load_prompt("scout_article.md")
     results = []
 
     for entry in entries:
@@ -113,8 +113,8 @@ def extract_and_summarize(
 def run_article_monitor(cfg, urls: list[str] | None = None) -> "Path | None":
     """文章监控主流程。"""
     from datetime import date
-    from v2g.knowledge.store import KnowledgeStore
-    from v2g.knowledge.obsidian import ObsidianWriter
+    from v2g.scout.store import ScoutStore
+    from v2g.scout.obsidian import ObsidianWriter
 
     click.echo("📰 文章监控")
 
@@ -146,7 +146,7 @@ def run_article_monitor(cfg, urls: list[str] | None = None) -> "Path | None":
         return None
 
     # 去重
-    with KnowledgeStore(cfg.knowledge_db_path) as store:
+    with ScoutStore(cfg.scout_db_path) as store:
         new_entries = store.filter_new("article", all_entries, lambda e: e.get("url", ""))
         click.echo(f"   📊 新文章: {len(new_entries)} / {len(all_entries)}")
 
@@ -156,7 +156,7 @@ def run_article_monitor(cfg, urls: list[str] | None = None) -> "Path | None":
 
         # 抓取 + 摘要
         click.echo("   🤖 抓取 + LLM 摘要中...")
-        articles = extract_and_summarize(new_entries, cfg.knowledge_model)
+        articles = extract_and_summarize(new_entries, cfg.scout_model)
 
         # 标记已见
         store.mark_seen_batch("article", new_entries, lambda e: e.get("url", ""))

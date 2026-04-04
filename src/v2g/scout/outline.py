@@ -11,9 +11,9 @@ def generate_outline(
 ) -> str:
     """LLM 生成视频大纲。"""
     from v2g.llm import call_llm
-    from v2g.knowledge import _load_prompt
+    from v2g.scout import _load_prompt
 
-    system_prompt = _load_prompt("knowledge_outline.md")
+    system_prompt = _load_prompt("scout_outline.md")
     user_message = f"话题: {topic}\n目标时长: {duration // 60} 分钟"
     if angle:
         user_message += f"\n切入角度: {angle}"
@@ -25,8 +25,8 @@ def generate_outline(
 
 def run_outline(cfg, topic: str, angle: str = "", duration: int = 600) -> Path | None:
     """大纲生成主流程。"""
-    from v2g.knowledge import _load_today_context as load_ctx
-    from v2g.knowledge.obsidian import ObsidianWriter
+    from v2g.scout import _load_today_context as load_ctx
+    from v2g.scout.obsidian import ObsidianWriter
 
     click.echo("📋 大纲生成")
 
@@ -41,7 +41,7 @@ def run_outline(cfg, topic: str, angle: str = "", duration: int = 600) -> Path |
     click.echo(f"   ⏱️ 目标时长: {duration // 60} 分钟")
     click.echo("   🤖 LLM 生成中...")
 
-    result = generate_outline(topic, angle, cfg.knowledge_model, duration, context)
+    result = generate_outline(topic, angle, cfg.scout_model, duration, context)
     if not result:
         click.echo("   ⚠️ 生成失败")
         return None
@@ -52,8 +52,8 @@ def run_outline(cfg, topic: str, angle: str = "", duration: int = 600) -> Path |
 
 
 def _write_outline_report(writer, today: date, topic: str, content: str) -> Path:
-    from v2g.knowledge.ideation import _topic_slug
-    scripts_dir = writer.vault / "knowledge" / "scripts"
+    from v2g.scout.ideation import _topic_slug
+    scripts_dir = writer.vault / "scout" / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
     path = scripts_dir / f"{today}-outline-{_topic_slug(topic)}.md"
 
@@ -77,7 +77,7 @@ def _write_outline_report(writer, today: date, topic: str, content: str) -> Path
 def _load_ideation_context(vault_path: Path, today: date, topic: str) -> str:
     """查找今日匹配的 ideation 报告作为补充上下文。"""
     import re
-    ideation_dir = vault_path / "knowledge" / "ideation"
+    ideation_dir = vault_path / "scout" / "ideation"
     if not ideation_dir.exists():
         return ""
     slug = re.sub(r"[^\w\u4e00-\u9fff]+", "-", topic)[:20].strip("-").lower()

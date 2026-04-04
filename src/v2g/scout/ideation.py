@@ -108,9 +108,9 @@ def analyze_competition(
 ) -> str:
     """LLM 竞争格局分析 + 创意生成。"""
     from v2g.llm import call_llm
-    from v2g.knowledge import _load_prompt
+    from v2g.scout import _load_prompt
 
-    system_prompt = _load_prompt("knowledge_ideation.md")
+    system_prompt = _load_prompt("scout_ideation.md")
 
     # 构造视频摘要
     if videos:
@@ -146,6 +146,11 @@ def extract_topics_from_daily(vault_path: Path, today: date) -> list[str]:
 
     content = daily_path.read_text(encoding="utf-8")
 
+    # 质量门控：digest 太短或含"不完整/缺失"等信号说明数据质量差，不提取话题
+    _bad_signals = ("不完整", "缺失", "无法生成", "需要完整", "没有可用")
+    if len(content.strip()) < 200 or any(s in content[:300] for s in _bad_signals):
+        return []
+
     # 截取"内容创作建议"部分（到下一个 ### 或文件结束）
     match = re.search(r"###?\s*内容创作建议(.*?)(?=###|\Z)", content, re.DOTALL)
     section = match.group(1) if match else content
@@ -156,11 +161,17 @@ def extract_topics_from_daily(vault_path: Path, today: date) -> list[str]:
     # 模式2: 「选题」
     topics.extend(re.findall(r"[「「](.+?)[」」]", section))
 
-    # 去重（模糊匹配：如果 A 是 B 的子串则视为重复），过滤过短/过长
+    # 过滤明显不是话题的内容（知识源名称、通用标签等）
+    _noise = {"GitHub 趋势", "Hacker News", "Twitter 精选", "文章摘要",
+              "每日汇总", "知识源", "内容创作", "汇总"}
+
+    # 去重（模糊匹配：如果 A 是 B 的子串则视为重复），过滤过短/过长/噪音
     unique = []
     for t in topics:
         t = t.strip().strip("「」「」""\"'")
         if len(t) <= 4 or len(t) >= 50:
+            continue
+        if t in _noise:
             continue
         # 检查是否已有类似话题
         is_dup = any(t in existing or existing in t for existing in unique)
@@ -177,7 +188,7 @@ def _topic_slug(topic: str) -> str:
 
 def run_ideation(cfg, topic: str | None = None, from_daily: bool = False) -> list[Path]:
     """创意构思主流程。"""
-    from v2g.knowledge.obsidian import ObsidianWriter
+    from v2g.scout.obsidian import ObsidianWriter
 
     click.echo("💡 创意构思 + 竞品分析")
 
@@ -205,8 +216,8 @@ def run_ideation(cfg, topic: str | None = None, from_daily: bool = False) -> lis
     # 读取今日知识源上下文（给 LLM 参考）
     context = ""
     for source_file in [
-        writer.vault / "knowledge" / "github" / f"{today}-trending.md",
-        writer.vault / "knowledge" / "hn" / f"{today}-hn.md",
+        writer.vault / "scout" / "github" / f"{today}-trending.md",
+        writer.vault / "scout" / "hn" / f"{today}-hn.md",
     ]:
         if source_file.exists():
             # 只取分析部分（前 1000 字），避免 prompt 过长
@@ -226,7 +237,7 @@ def run_ideation(cfg, topic: str | None = None, from_daily: bool = False) -> lis
 
         # LLM 分析
         click.echo("   🤖 LLM 竞品分析中...")
-        analysis = analyze_competition(videos, t, cfg.knowledge_model, context)
+        analysis = analyze_competition(videos, t, cfg.scout_model, context)
 
         # Obsidian 输出
         path = _write_ideation_report(writer, today, t, videos, analysis)
@@ -240,7 +251,7 @@ def _write_ideation_report(
     writer, today: date, topic: str, videos: list[dict], analysis: str
 ) -> Path:
     slug = _topic_slug(topic)
-    ideation_dir = writer.vault / "knowledge" / "ideation"
+    ideation_dir = writer.vault / "scout" / "ideation"
     ideation_dir.mkdir(parents=True, exist_ok=True)
     path = ideation_dir / f"{today}-{slug}.md"
 

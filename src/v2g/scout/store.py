@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-class KnowledgeStore:
+class ScoutStore:
     """轻量级 SQLite 存储，用于知识源去重。支持 context manager。"""
 
     def __init__(self, db_path: Path):

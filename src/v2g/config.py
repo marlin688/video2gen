@@ -33,14 +33,15 @@ class Config:
     # API 平台
     api_platform: str = ""
 
-    # Knowledge Sources
+    # Scout Sources
     obsidian_vault_path: Path = field(default_factory=lambda: Path(""))
-    knowledge_model: str = "claude-sonnet-4-5-20250929"
+    scout_model: str = "claude-sonnet-4-5-20250929"
+    scout_fallback_model: str = ""
     github_topics: str = "ai,ml,llm,agent,rag"
     apify_token: str = ""
     twitter_keywords: str = ""
     twitter_authors: str = ""
-    knowledge_db_path: Path = field(default_factory=lambda: Path("data/knowledge.db"))
+    scout_db_path: Path = field(default_factory=lambda: Path("data/scout.db"))
     hn_keywords: str = "AI,LLM,Claude,GPT,agent,RAG"
     article_rss_urls: str = ""
     telegram_bot_token: str = ""
@@ -68,12 +69,13 @@ class Config:
             video_crf=int(os.environ.get("VIDEO_CRF", str(defaults.video_crf))),
             api_platform=os.environ.get("API_PLATFORM", ""),
             obsidian_vault_path=Path(os.environ.get("OBSIDIAN_VAULT_PATH", "")),
-            knowledge_model=os.environ.get("KNOWLEDGE_MODEL", defaults.knowledge_model),
+            scout_model=os.environ.get("SCOUT_MODEL", defaults.scout_model),
+            scout_fallback_model=os.environ.get("SCOUT_FALLBACK_MODEL", ""),
             github_topics=os.environ.get("GITHUB_TOPICS", defaults.github_topics),
             apify_token=os.environ.get("APIFY_TOKEN", ""),
             twitter_keywords=os.environ.get("TWITTER_KEYWORDS", ""),
             twitter_authors=os.environ.get("TWITTER_AUTHORS", ""),
-            knowledge_db_path=Path(os.environ.get("KNOWLEDGE_DB_PATH", str(defaults.knowledge_db_path))),
+            scout_db_path=Path(os.environ.get("SCOUT_DB_PATH", str(defaults.scout_db_path))),
             hn_keywords=os.environ.get("HN_KEYWORDS", defaults.hn_keywords),
             article_rss_urls=os.environ.get("ARTICLE_RSS_URLS", ""),
             telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),

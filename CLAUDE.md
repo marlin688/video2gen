@@ -53,18 +53,18 @@ v2g assemble <video_id>                   # Stage 5b: FFmpeg → final/video.mp4
 v2g multi "url1;url2" --topic "topic" [--project-id]  # Multi-source pipeline (Remotion backend)
 v2g agent <project_id> -s <source> -t <topic> [--model] [--duration]  # Agent multi-source script orchestration
 v2g status <video_id>                     # Check pipeline progress
-v2g knowledge all                         # Run all knowledge sources + daily digest
-v2g knowledge github [--since 7]          # GitHub AI trending repos
-v2g knowledge hn [--hours 24]             # Hacker News AI hot posts
-v2g knowledge article [--urls "url1;url2"]# Article monitor (RSS / manual URL / inbox)
-v2g knowledge ideation "topic"            # Competitive analysis + content ideation (optional YOUTUBE_API_KEY)
-v2g knowledge ideation --from-daily       # Auto-extract topics from daily digest
-v2g knowledge twitter [--temperature 0.5] # Twitter/X monitor (requires APIFY_TOKEN)
-v2g knowledge title "topic" --history t.json  # Title generation with historical performance benchmarking
-v2g knowledge waterfall "topic" --video-id ID # Content waterfall: video → blog + Twitter thread + LinkedIn
-v2g knowledge waterfall "topic" --url URL     # Content waterfall from article URL
-v2g knowledge waterfall "topic" --file path   # Content waterfall from local file
-v2g knowledge shorts "topic" --video-id ID    # Short-form repurpose: long → 30/60/90s scripts
+v2g scout all                         # Run all knowledge sources + daily digest
+v2g scout github [--since 7]          # GitHub AI trending repos
+v2g scout hn [--hours 24]             # Hacker News AI hot posts
+v2g scout article [--urls "url1;url2"]# Article monitor (RSS / manual URL / inbox)
+v2g scout ideation "topic"            # Competitive analysis + content ideation (optional YOUTUBE_API_KEY)
+v2g scout ideation --from-daily       # Auto-extract topics from daily digest
+v2g scout twitter [--temperature 0.5] # Twitter/X monitor (requires APIFY_TOKEN)
+v2g scout title "topic" --history t.json  # Title generation with historical performance benchmarking
+v2g scout waterfall "topic" --video-id ID # Content waterfall: video → blog + Twitter thread + LinkedIn
+v2g scout waterfall "topic" --url URL     # Content waterfall from article URL
+v2g scout waterfall "topic" --file path   # Content waterfall from local file
+v2g scout shorts "topic" --video-id ID    # Short-form repurpose: long → 30/60/90s scripts
 ```
 
 ### Remotion (from `remotion-video/`)
@@ -195,9 +195,9 @@ Platform proxy system (`config.py` `_apply_platform()`) maps platform-specific e
 - Switch via `TTS_ENGINE` env var. Each segment rendered separately to `voiceover/segments/seg_{id}.mp3`.
 - **Word-level alignment** (optional): After TTS, `mlx-whisper` (Apple Silicon GPU) extracts word-level timestamps → `voiceover/word_timing.json`. Used by `render.mjs` for precise SRT subtitle timing. Install: `pip install -e ".[subtitle]"`. Graceful fallback when unavailable.
 
-### Knowledge Source Automation (`knowledge/`)
+### Scout Automation (`scout/`)
 
-`v2g knowledge` implements automated topic discovery for AI Tech content creators. Three knowledge sources feed into an Obsidian vault:
+`v2g scout` implements automated topic discovery for AI Tech content creators. Three knowledge sources feed into an Obsidian vault:
 
 1. **GitHub Trending** (`github_trending.py`): Uses GitHub REST API `/search/repositories` (no token needed, 60 req/hour). Per-topic queries merged and deduped. LLM analyzes repos for content creation opportunities.
 2. **Hacker News** (`hn_monitor.py`): Uses HN Algolia API (free, no rate limit). Per-keyword queries merged and deduped. LLM identifies hot topics and discussion-worthy posts.
@@ -206,30 +206,30 @@ Platform proxy system (`config.py` `_apply_platform()`) maps platform-specific e
 
 Shared infrastructure:
 - **`store.py`**: Generic SQLite dedup store shared by all sources. Table `seen_items(source, item_id, data, fetched_at)`.
-- **`obsidian.py`**: `ObsidianWriter` class writes YAML-frontmatter Markdown to `{vault}/knowledge/{source}/` dirs. Falls back to `output/knowledge/` when `OBSIDIAN_VAULT_PATH` is unset.
+- **`obsidian.py`**: `ObsidianWriter` class writes YAML-frontmatter Markdown to `{vault}/scout/{source}/` dirs. Falls back to `output/scout/` when `OBSIDIAN_VAULT_PATH` is unset.
 - **`telegram.py`**: Telegram Bot notifications via httpx POST (HTML parse_mode). Best-effort, failures logged but not raised.
 
-`v2g knowledge all` runs GitHub + HN + articles sequentially, generates a daily digest, then auto-runs ideation on topics extracted from the digest.
+`v2g scout all` runs GitHub + HN + articles sequentially, generates a daily digest, then auto-runs ideation on topics extracted from the digest.
 
 5. **Ideation** (`ideation.py`): Takes a topic (user-specified or auto-extracted from daily digest), searches YouTube via Data API v3 for competitive landscape, then LLM generates 5-9 content ideas with Tier 1/Tier 2 ranking. Degrades gracefully without `YOUTUBE_API_KEY` (LLM-only ideation).
 
-Each source is idempotent per date (overwrites same-date files). SQLite dedup ensures no repeated processing across runs. Designed for cron scheduling: `0 8 * * * v2g knowledge all --quiet`.
+Each source is idempotent per date (overwrites same-date files). SQLite dedup ensures no repeated processing across runs. Designed for cron scheduling: `0 8 * * * v2g scout all --quiet`.
 
-### Content Distribution (`knowledge/`)
+### Content Distribution (`scout/`)
 
 Post-production distribution layer for repurposing finished content across platforms:
 
-6. **Content Waterfall** (`waterfall.py`): Takes video subtitles/scripts/articles and generates three formats: SEO blog post (800-1200 words), Twitter thread (7 tweets), and LinkedIn posts (2 versions). Input sources: `--video-id` (reads from sources/ or output/), `--url` (fetches article), `--file` (local file). Output: `knowledge/distribution/{date}-waterfall-{slug}.md`.
+6. **Content Waterfall** (`waterfall.py`): Takes video subtitles/scripts/articles and generates three formats: SEO blog post (800-1200 words), Twitter thread (7 tweets), and LinkedIn posts (2 versions). Input sources: `--video-id` (reads from sources/ or output/), `--url` (fetches article), `--file` (local file). Output: `scout/distribution/{date}-waterfall-{slug}.md`.
 
-7. **Short-form Repurpose** (`shorts.py`): Converts long-form content into three independent short video scripts (30s/60s/90s). Each version includes hook (oral + text overlay), core content points, and CTA. Not simple trimming — each version is re-conceived for its time constraint. Output: `knowledge/distribution/{date}-shorts-{slug}.md`.
+7. **Short-form Repurpose** (`shorts.py`): Converts long-form content into three independent short video scripts (30s/60s/90s). Each version includes hook (oral + text overlay), core content points, and CTA. Not simple trimming — each version is re-conceived for its time constraint. Output: `scout/distribution/{date}-shorts-{slug}.md`.
 
 Shared content loading (`_load_video_content()` in `__init__.py`): Resolves video content from multiple paths — `output/{id}/script.md` > `sources/{id}/subtitle_zh.srt` > `subtitle_en.srt`, or fetches from URL, or reads local file. Truncates to 8000 chars.
 
-### Title Historical Benchmarking (`knowledge/title.py`)
+### Title Historical Benchmarking (`scout/title.py`)
 
 The title generation skill supports historical performance data for data-driven title optimization:
 - `--history titles.json`: Load explicit performance data (`[{title, views, likes}]`), LLM references patterns from high-performing titles
-- Auto-scan: Without `--history`, automatically scans `knowledge/scripts/*-title-*.md` in the Obsidian vault for past generated titles as reference
+- Auto-scan: Without `--history`, automatically scans `scout/scripts/*-title-*.md` in the Obsidian vault for past generated titles as reference
 - Prompt instructs LLM to identify successful patterns and explicitly cite which historical title inspired each suggestion
 
 ### Prompt Engineering
@@ -241,16 +241,16 @@ The title generation skill supports historical performance data for data-driven 
 - `agent_system.md` — Agent role and orchestration principles
 - `agent_outline.md` — outline generation requirements and JSON format
 - `agent_script.md` — script expansion rules (reuses material type system from script_system.md)
-- `knowledge_github.md` — GitHub repo analysis (trending, top 3, emerging directions)
-- `knowledge_hn.md` — HN post analysis (trends, top 3, controversy detection)
-- `knowledge_article.md` — article summarization (TL;DR, key points, content angle)
-- `knowledge_daily.md` — daily digest generation (highlights, content suggestions, trends)
-- `knowledge_ideation.md` — competitive analysis + content ideation (landscape, 5-9 ideas with tiers)
-- `knowledge_hook.md` — 5-variant opening hook generation (oral/visual/text overlay)
-- `knowledge_title.md` — tiered title generation with historical benchmarking support
-- `knowledge_outline.md` — video outline (chapters, visual aids, references)
-- `knowledge_waterfall.md` — content waterfall distribution (blog + Twitter thread + LinkedIn)
-- `knowledge_shorts.md` — short-form repurpose (30/60/90s independent scripts)
+- `scout_github.md` — GitHub repo analysis (trending, top 3, emerging directions)
+- `scout_hn.md` — HN post analysis (trends, top 3, controversy detection)
+- `scout_article.md` — article summarization (TL;DR, key points, content angle)
+- `scout_daily.md` — daily digest generation (highlights, content suggestions, trends)
+- `scout_ideation.md` — competitive analysis + content ideation (landscape, 5-9 ideas with tiers)
+- `scout_hook.md` — 5-variant opening hook generation (oral/visual/text overlay)
+- `scout_title.md` — tiered title generation with historical benchmarking support
+- `scout_outline.md` — video outline (chapters, visual aids, references)
+- `scout_waterfall.md` — content waterfall distribution (blog + Twitter thread + LinkedIn)
+- `scout_shorts.md` — short-form repurpose (30/60/90s independent scripts)
 
 ### Remotion Components (`remotion-video/src/`)
 
@@ -289,7 +289,7 @@ See `.env.example` for the full list. Notable variables:
 - `GEMINI_API_KEY` — Google Gemini
 - `TTS_ENGINE` — `edge` (default) or `minimax`
 - `REMOTION_CHROME_EXECUTABLE` — override Chrome path for Remotion rendering
-- `OBSIDIAN_VAULT_PATH` — Obsidian vault directory (fallback: `output/knowledge/`)
+- `OBSIDIAN_VAULT_PATH` — Obsidian vault directory (fallback: `output/scout/`)
 - `GITHUB_TOPICS` — comma-separated topics for GitHub trending (default: `ai,ml,llm,agent,rag`)
 - `APIFY_TOKEN` — Apify API token (for Twitter monitoring)
 - `TWITTER_KEYWORDS`, `TWITTER_AUTHORS` — Twitter monitoring targets

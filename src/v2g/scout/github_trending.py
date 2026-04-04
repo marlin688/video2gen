@@ -39,7 +39,7 @@ def search_trending_repos(
                 },
                 headers={
                     "Accept": "application/vnd.github+json",
-                    "User-Agent": "video2gen-knowledge",
+                    "User-Agent": "video2gen-scout",
                 },
                 timeout=30.0,
             )
@@ -83,7 +83,7 @@ def filter_ai_repos(repos: list[dict], topic_keywords: list[str]) -> list[dict]:
 def analyze_repos_with_llm(repos: list[dict], model: str) -> str:
     """用 LLM 分析 GitHub 仓库列表，返回 Markdown 分析报告。"""
     from v2g.llm import call_llm
-    from v2g.knowledge import _load_prompt
+    from v2g.scout import _load_prompt
 
     if not repos:
         return "*今日无新仓库*"
@@ -103,7 +103,7 @@ def analyze_repos_with_llm(repos: list[dict], model: str) -> str:
             f"  {desc}"
         )
 
-    system_prompt = _load_prompt("knowledge_github.md")
+    system_prompt = _load_prompt("scout_github.md")
     user_message = "以下是本周 GitHub AI 领域热门新仓库：\n\n" + "\n\n".join(repo_lines)
 
     try:
@@ -116,9 +116,9 @@ def analyze_repos_with_llm(repos: list[dict], model: str) -> str:
 def run_github_trending(cfg) -> Path | None:
     """GitHub 趋势监控主流程。"""
     from datetime import date
-    from v2g.knowledge.store import KnowledgeStore
-    from v2g.knowledge.obsidian import ObsidianWriter
-    from v2g.knowledge.telegram import send_telegram, format_github_digest
+    from v2g.scout.store import ScoutStore
+    from v2g.scout.obsidian import ObsidianWriter
+    from v2g.scout.telegram import send_telegram, format_github_digest
 
     click.echo("📦 GitHub 趋势监控")
 
@@ -131,28 +131,30 @@ def run_github_trending(cfg) -> Path | None:
         return None
 
     # 去重
-    with KnowledgeStore(cfg.knowledge_db_path) as store:
+    with ScoutStore(cfg.scout_db_path) as store:
         new_repos = store.filter_new("github", repos, lambda r: r.get("full_name", ""))
         click.echo(f"   📊 新仓库: {len(new_repos)} / {len(repos)}")
 
+        if not new_repos:
+            click.echo("   ℹ️ 无新仓库，保留已有报告")
+            return None
+
         # 关键词过滤
-        filtered = filter_ai_repos(new_repos, topics) if new_repos else []
+        filtered = filter_ai_repos(new_repos, topics)
         click.echo(f"   🎯 AI 相关: {len(filtered)}")
 
         # LLM 分析
         analysis = ""
         if filtered:
             click.echo("   🤖 LLM 分析中...")
-            analysis = analyze_repos_with_llm(filtered, cfg.knowledge_model)
+            analysis = analyze_repos_with_llm(filtered, cfg.scout_model)
 
         # 标记已见
-        if new_repos:
-            store.mark_seen_batch("github", new_repos, lambda r: r.get("full_name", ""))
+        store.mark_seen_batch("github", new_repos, lambda r: r.get("full_name", ""))
 
-    # 写入 Obsidian
+    # 写入 Obsidian（只在有新数据时写入）
     writer = ObsidianWriter(cfg.obsidian_vault_path)
     today = date.today()
-    # 写入所有新仓库（包含过滤前），分析只针对 AI 相关的
     path = writer.write_github_report(today, filtered or new_repos, analysis)
     click.echo(f"   📝 已写入: {path}")
 

@@ -9,9 +9,9 @@ import click
 def generate_shorts(content: str, topic: str, model: str, context: str = "") -> str:
     """LLM 生成三个时长版本的短视频脚本。"""
     from v2g.llm import call_llm
-    from v2g.knowledge import _load_prompt
+    from v2g.scout import _load_prompt
 
-    system_prompt = _load_prompt("knowledge_shorts.md")
+    system_prompt = _load_prompt("scout_shorts.md")
     user_message = f"话题: {topic}\n\n## 原始内容\n{content}"
     if context:
         user_message += f"\n\n## 背景参考\n{context}"
@@ -22,8 +22,8 @@ def generate_shorts(content: str, topic: str, model: str, context: str = "") -> 
 def run_shorts(cfg, topic: str, video_id: str | None = None,
                url: str | None = None, file_path: str | None = None) -> Path | None:
     """短视频再利用主流程。"""
-    from v2g.knowledge import _load_today_context as load_ctx, _load_video_content
-    from v2g.knowledge.obsidian import ObsidianWriter
+    from v2g.scout import _load_today_context as load_ctx, _load_video_content
+    from v2g.scout.obsidian import ObsidianWriter
 
     click.echo("🎬 短视频再利用")
 
@@ -43,7 +43,7 @@ def run_shorts(cfg, topic: str, video_id: str | None = None,
     click.echo(f"   📄 {source_desc}")
     click.echo("   🤖 LLM 生成中...")
 
-    result = generate_shorts(content, topic, cfg.knowledge_model, context)
+    result = generate_shorts(content, topic, cfg.scout_model, context)
     if not result:
         click.echo("   ⚠️ 生成失败")
         return None
@@ -55,8 +55,8 @@ def run_shorts(cfg, topic: str, video_id: str | None = None,
 
 def _write_shorts_report(writer, today: date, topic: str, content: str,
                          source_desc: str = "") -> Path:
-    from v2g.knowledge.ideation import _topic_slug
-    dist_dir = writer.vault / "knowledge" / "distribution"
+    from v2g.scout.ideation import _topic_slug
+    dist_dir = writer.vault / "scout" / "distribution"
     dist_dir.mkdir(parents=True, exist_ok=True)
     path = dist_dir / f"{today}-shorts-{_topic_slug(topic)}.md"
 

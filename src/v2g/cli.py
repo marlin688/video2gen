@@ -336,143 +336,143 @@ def material_list(cfg):
 @main.group()
 @click.option("--quiet", is_flag=True, help="安静模式 (适合 cron)")
 @click.pass_obj
-def knowledge(cfg: Config, quiet):
+def scout(cfg: Config, quiet):
     """知识源监控 (GitHub / Twitter / 文章)"""
     pass
 
 
-@knowledge.command("github")
+@scout.command("github")
 @click.option("--since", default=7, type=int, help="查看最近 N 天 (默认 7)")
 @click.option("--min-stars", default=50, type=int, help="最低星标数 (默认 50)")
 @click.pass_obj
-def knowledge_github(cfg: Config, since, min_stars):
+def scout_github(cfg: Config, since, min_stars):
     """GitHub AI 趋势监控"""
-    from v2g.knowledge.github_trending import run_github_trending
+    from v2g.scout.github_trending import run_github_trending
     run_github_trending(cfg)
 
 
-@knowledge.command("hn")
+@scout.command("hn")
 @click.option("--hours", default=24, type=int, help="搜索最近 N 小时 (默认 24)")
 @click.option("--min-points", default=20, type=int, help="最低 points (默认 20)")
 @click.pass_obj
-def knowledge_hn(cfg: Config, hours, min_points):
+def scout_hn(cfg: Config, hours, min_points):
     """Hacker News AI 热帖监控"""
-    from v2g.knowledge.hn_monitor import run_hn_monitor
+    from v2g.scout.hn_monitor import run_hn_monitor
     run_hn_monitor(cfg, hours=hours, min_points=min_points)
 
 
-@knowledge.command("twitter")
+@scout.command("twitter")
 @click.option("--temperature", default=0.5, type=float, help="softmax temperature (默认 0.5)")
 @click.option("--max-tweets", default=100, type=int, help="最大抓取数 (默认 100)")
 @click.pass_obj
-def knowledge_twitter(cfg: Config, temperature, max_tweets):
+def scout_twitter(cfg: Config, temperature, max_tweets):
     """Twitter/X AI 话题监控 (需要 APIFY_TOKEN)"""
-    from v2g.knowledge.twitter_monitor import run_twitter_monitor
+    from v2g.scout.twitter_monitor import run_twitter_monitor
     run_twitter_monitor(cfg, temperature=temperature, max_tweets=max_tweets)
 
 
-@knowledge.command("article")
+@scout.command("article")
 @click.option("--urls", default=None, help="文章 URL (分号分隔)")
 @click.pass_obj
-def knowledge_article(cfg: Config, urls):
+def scout_article(cfg: Config, urls):
     """文章监控 (RSS / 手动 URL / inbox)"""
-    from v2g.knowledge.article_monitor import run_article_monitor
+    from v2g.scout.article_monitor import run_article_monitor
     url_list = [u.strip() for u in urls.split(";")] if urls else None
     run_article_monitor(cfg, urls=url_list)
 
 
-@knowledge.command("ideation")
+@scout.command("ideation")
 @click.argument("topic", required=False, default=None)
 @click.option("--from-daily", is_flag=True, help="从今日 daily digest 自动提取话题")
 @click.pass_obj
-def knowledge_ideation(cfg: Config, topic, from_daily):
+def scout_ideation(cfg: Config, topic, from_daily):
     """创意构思 + 竞品分析 (YouTube 竞争格局)"""
-    from v2g.knowledge.ideation import run_ideation
+    from v2g.scout.ideation import run_ideation
     if not topic and not from_daily:
         raise click.ClickException("请指定话题或使用 --from-daily")
     run_ideation(cfg, topic=topic, from_daily=from_daily)
 
 
-@knowledge.command("hook")
+@scout.command("hook")
 @click.argument("topic")
 @click.option("--angle", "-a", default="", help="切入角度")
 @click.pass_obj
-def knowledge_hook(cfg: Config, topic, angle):
+def scout_hook(cfg: Config, topic, angle):
     """生成 5 个开场钩子变体 (前 30 秒)"""
-    from v2g.knowledge.hook import run_hook
+    from v2g.scout.hook import run_hook
     run_hook(cfg, topic, angle)
 
 
-@knowledge.command("title")
+@scout.command("title")
 @click.argument("topic")
 @click.option("--angle", "-a", default="", help="切入角度")
 @click.option("--history", "-h", default=None, help="历史标题 JSON 文件 [{title, views, likes}]")
 @click.pass_obj
-def knowledge_title(cfg: Config, topic, angle, history):
+def scout_title(cfg: Config, topic, angle, history):
     """生成分层标题 (Tier 1 稳健 / Tier 2 冒险) + 缩略图文字 + 历史对标"""
-    from v2g.knowledge.title import run_title
+    from v2g.scout.title import run_title
     run_title(cfg, topic, angle, history_file=history)
 
 
-@knowledge.command("outline")
+@scout.command("outline")
 @click.argument("topic")
 @click.option("--angle", "-a", default="", help="切入角度")
 @click.option("--duration", "-d", default=600, type=int, help="目标时长秒数 (默认 600)")
 @click.pass_obj
-def knowledge_outline(cfg: Config, topic, angle, duration):
+def scout_outline(cfg: Config, topic, angle, duration):
     """生成视频大纲 (章节 + 视觉建议 + 参考资料)"""
-    from v2g.knowledge.outline import run_outline
+    from v2g.scout.outline import run_outline
     run_outline(cfg, topic, angle, duration)
 
 
-@knowledge.command("waterfall")
+@scout.command("waterfall")
 @click.argument("topic")
 @click.option("--video-id", "-v", default=None, help="视频 ID (读取字幕/脚本)")
 @click.option("--url", "-u", default=None, help="文章 URL")
 @click.option("--file", "-f", "file_path", default=None, help="本地文件路径")
 @click.pass_obj
-def knowledge_waterfall(cfg: Config, topic, video_id, url, file_path):
+def scout_waterfall(cfg: Config, topic, video_id, url, file_path):
     """内容瀑布: 视频/文章 → 博客 + Twitter 帖串 + LinkedIn 帖子"""
-    from v2g.knowledge.waterfall import run_waterfall
+    from v2g.scout.waterfall import run_waterfall
     run_waterfall(cfg, topic, video_id=video_id, url=url, file_path=file_path)
 
 
-@knowledge.command("shorts")
+@scout.command("shorts")
 @click.argument("topic")
 @click.option("--video-id", "-v", default=None, help="视频 ID (读取字幕/脚本)")
 @click.option("--url", "-u", default=None, help="文章 URL")
 @click.option("--file", "-f", "file_path", default=None, help="本地文件路径")
 @click.pass_obj
-def knowledge_shorts(cfg: Config, topic, video_id, url, file_path):
+def scout_shorts(cfg: Config, topic, video_id, url, file_path):
     """短视频再利用: 长内容 → 30/60/90 秒短视频脚本"""
-    from v2g.knowledge.shorts import run_shorts
+    from v2g.scout.shorts import run_shorts
     run_shorts(cfg, topic, video_id=video_id, url=url, file_path=file_path)
 
 
-@knowledge.command("notebooklm")
+@scout.command("notebooklm")
 @click.argument("topic")
 @click.option("--source", "-s", "sources", multiple=True, required=True,
               help="YouTube URL / 文章 URL / PDF 路径 (可多次指定)")
 @click.pass_obj
-def knowledge_notebooklm(cfg: Config, topic, sources):
+def scout_notebooklm(cfg: Config, topic, sources):
     """NotebookLM 深度分析 (Google 服务器处理，不消耗本地 token)
 
-    示例: v2g knowledge notebooklm "Claude Code" -s "https://youtube.com/watch?v=xxx" -s paper.pdf
+    示例: v2g scout notebooklm "Claude Code" -s "https://youtube.com/watch?v=xxx" -s paper.pdf
     """
-    from v2g.knowledge.notebooklm import run_notebooklm
+    from v2g.scout.notebooklm import run_notebooklm
     run_notebooklm(cfg, list(sources), topic)
 
 
-@knowledge.command("script")
+@scout.command("script")
 @click.argument("topic")
 @click.option("--angle", "-a", default="", help="切入角度")
 @click.option("--duration", "-d", default=600, type=int, help="目标时长秒数 (默认 600)")
 @click.pass_obj
-def knowledge_script(cfg: Config, topic, angle, duration):
+def scout_script(cfg: Config, topic, angle, duration):
     """一键运行: 钩子 + 标题 + 大纲"""
-    from v2g.knowledge.hook import run_hook
-    from v2g.knowledge.title import run_title
-    from v2g.knowledge.outline import run_outline
+    from v2g.scout.hook import run_hook
+    from v2g.scout.title import run_title
+    from v2g.scout.outline import run_outline
 
     run_hook(cfg, topic, angle)
     click.echo()
@@ -482,9 +482,9 @@ def knowledge_script(cfg: Config, topic, angle, duration):
     click.echo("\n✅ 脚本三件套生成完成")
 
 
-@knowledge.command("all")
+@scout.command("all")
 @click.pass_obj
-def knowledge_all(cfg: Config):
+def scout_all(cfg: Config):
     """运行全部知识源 + 生成每日汇总"""
     from datetime import date
 
@@ -492,7 +492,7 @@ def knowledge_all(cfg: Config):
 
     # GitHub
     try:
-        from v2g.knowledge.github_trending import run_github_trending
+        from v2g.scout.github_trending import run_github_trending
         path = run_github_trending(cfg)
         if path:
             results["github"] = path
@@ -503,7 +503,7 @@ def knowledge_all(cfg: Config):
 
     # Hacker News
     try:
-        from v2g.knowledge.hn_monitor import run_hn_monitor
+        from v2g.scout.hn_monitor import run_hn_monitor
         path = run_hn_monitor(cfg)
         if path:
             results["hn"] = path
@@ -512,9 +512,20 @@ def knowledge_all(cfg: Config):
 
     click.echo()
 
+    # Twitter
+    try:
+        from v2g.scout.twitter_monitor import run_twitter_monitor
+        path = run_twitter_monitor(cfg)
+        if path:
+            results["twitter"] = path
+    except Exception as e:
+        click.echo(f"⚠️ Twitter 监控失败: {e}")
+
+    click.echo()
+
     # Articles
     try:
-        from v2g.knowledge.article_monitor import run_article_monitor
+        from v2g.scout.article_monitor import run_article_monitor
         path = run_article_monitor(cfg)
         if path:
             results["articles"] = path
@@ -523,44 +534,62 @@ def knowledge_all(cfg: Config):
 
     click.echo()
 
-    # 每日汇总
-    if results:
-        click.echo("📋 生成每日汇总...")
-        try:
-            from v2g.knowledge.obsidian import ObsidianWriter
-            from v2g.llm import call_llm
-            from v2g.knowledge import _load_prompt
+    # 每日汇总（即使本次无新数据，也读取当天已有报告生成 digest）
+    today = date.today()
+    click.echo("📋 生成每日汇总...")
+    try:
+        from v2g.scout.obsidian import ObsidianWriter
+        from v2g.llm import call_llm
+        from v2g.scout import _load_prompt
 
-            # 读取各源报告内容
-            sections_input = {}
-            for name, path in results.items():
-                try:
-                    content = path.read_text(encoding="utf-8")[:2000]
+        # 优先用本次新产出的路径，否则回退到当天已有的报告文件
+        vault = Path(cfg.obsidian_vault_path) if cfg.obsidian_vault_path and str(cfg.obsidian_vault_path) != "." else Path("output")
+        fallback_paths = {
+            "github": vault / "scout" / "github" / f"{today}-trending.md",
+            "hn": vault / "scout" / "hn" / f"{today}-hn.md",
+            "twitter": vault / "scout" / "twitter" / f"{today}-curated.md",
+            "articles": vault / "scout" / "articles" / f"{today}-articles.md",
+        }
+        sections_input = {}
+        for name in ("github", "hn", "twitter", "articles"):
+            src = results.get(name) or fallback_paths[name]
+            try:
+                if src.exists():
+                    content = src.read_text(encoding="utf-8")[:4000]
                     sections_input[name] = content
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
-            if sections_input:
-                system_prompt = _load_prompt("knowledge_daily.md")
-                user_msg = "\n\n---\n\n".join(
-                    f"## {name}\n{content}" for name, content in sections_input.items()
-                )
-                digest = call_llm(system_prompt, user_msg, cfg.knowledge_model, temperature=0.3, max_tokens=1000)
+        if sections_input:
+            system_prompt = _load_prompt("scout_daily.md")
+            user_msg = "\n\n---\n\n".join(
+                f"## {name}\n{content}" for name, content in sections_input.items()
+            )
+            digest = call_llm(system_prompt, user_msg, cfg.scout_model, temperature=0.3, max_tokens=1000)
 
+            # 质量检查：digest 太短或 LLM 明确表示无法生成时跳过写入
+            _bad_signals = ("无法生成", "需要完整", "没有可用")
+            digest_stripped = digest.strip()
+            if len(digest_stripped) < 80:
+                click.echo(f"   ⚠️ 汇总内容过短（{len(digest_stripped)}字），跳过写入")
+            elif any(s in digest_stripped[:200] for s in _bad_signals):
+                click.echo(f"   ⚠️ 汇总质量不佳（LLM 表示数据不足），跳过写入")
+            else:
                 writer = ObsidianWriter(cfg.obsidian_vault_path)
-                digest_path = writer.write_daily_digest(date.today(), {"汇总": digest})
+                digest_path = writer.write_daily_digest(today, {"汇总": digest})
                 click.echo(f"   📝 每日汇总: {digest_path}")
-        except Exception as e:
-            click.echo(f"   ⚠️ 汇总生成失败: {e}")
+        else:
+            click.echo("   ℹ️ 无当天报告可汇总")
+    except Exception as e:
+        click.echo(f"   ⚠️ 汇总生成失败: {e}")
 
     # 创意构思（从 daily digest 提取话题）
-    if results:
-        click.echo()
-        try:
-            from v2g.knowledge.ideation import run_ideation
-            run_ideation(cfg, from_daily=True)
-        except Exception as e:
-            click.echo(f"⚠️ 创意构思失败: {e}")
+    click.echo()
+    try:
+        from v2g.scout.ideation import run_ideation
+        run_ideation(cfg, from_daily=True)
+    except Exception as e:
+        click.echo(f"⚠️ 创意构思失败: {e}")
 
     click.echo("\n✅ 知识源监控完成")
 

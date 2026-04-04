@@ -37,6 +37,8 @@ def run_title(cfg, topic: str, angle: str = "",
     today = date.today()
 
     context = load_ctx(writer.vault, today)
+    from v2g.scout.context import load_notebooklm_context
+    context += load_notebooklm_context(writer.vault, today, topic)
 
     # 加载历史标题数据
     history = _load_title_history(writer.vault, history_file)

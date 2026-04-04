@@ -450,29 +450,79 @@ def scout_shorts(cfg: Config, topic, video_id, url, file_path):
 
 
 @scout.command("notebooklm")
-@click.argument("topic")
-@click.option("--source", "-s", "sources", multiple=True, required=True,
+@click.argument("topic", required=False, default=None)
+@click.option("--source", "-s", "sources", multiple=True,
               help="YouTube URL / 文章 URL / PDF 路径 (可多次指定)")
+@click.option("--from-ideation", is_flag=True, help="从今日 ideation 自动选话题 + 提取 URL")
 @click.pass_obj
-def scout_notebooklm(cfg: Config, topic, sources):
+def scout_notebooklm(cfg: Config, topic, sources, from_ideation):
     """NotebookLM 深度分析 (Google 服务器处理，不消耗本地 token)
 
     示例: v2g scout notebooklm "Claude Code" -s "https://youtube.com/watch?v=xxx" -s paper.pdf
+    \b
+    或从 ideation 自动读取:
+    v2g scout notebooklm --from-ideation
     """
+    from datetime import date
     from v2g.scout.notebooklm import run_notebooklm
+
+    if from_ideation:
+        from v2g.scout.url_extractor import (
+            list_ideation_topics, select_topic_interactive,
+            extract_urls_from_vault, match_urls_to_topic,
+        )
+        vault = Path(cfg.obsidian_vault_path) if cfg.obsidian_vault_path and str(cfg.obsidian_vault_path) != "." else Path("output")
+        today = date.today()
+        topics = list_ideation_topics(vault, today)
+        selected = select_topic_interactive(topics)
+        if not selected:
+            return
+        topic = selected["title"]
+        # 自动提取匹配的 URL
+        all_urls = extract_urls_from_vault(vault, today)
+        matched = match_urls_to_topic(all_urls, selected)
+        if matched:
+            click.echo(f"   🔗 匹配到 {len(matched)} 个相关 URL:")
+            for u in matched:
+                click.echo(f"      [{u['source_type']}] {u['title'][:50] or u['url'][:50]}")
+            sources = [u["url"] for u in matched]
+        else:
+            click.echo("   ⚠️ 未匹配到相关 URL，请手动指定 -s")
+            return
+
+    if not topic:
+        raise click.ClickException("请指定话题或使用 --from-ideation")
+    if not sources:
+        raise click.ClickException("请指定 -s URL 或使用 --from-ideation")
+
     run_notebooklm(cfg, list(sources), topic)
 
 
 @scout.command("script")
-@click.argument("topic")
+@click.argument("topic", required=False, default=None)
 @click.option("--angle", "-a", default="", help="切入角度")
 @click.option("--duration", "-d", default=600, type=int, help="目标时长秒数 (默认 600)")
+@click.option("--from-ideation", is_flag=True, help="从今日 ideation 自动选话题和角度")
 @click.pass_obj
-def scout_script(cfg: Config, topic, angle, duration):
+def scout_script(cfg: Config, topic, angle, duration, from_ideation):
     """一键运行: 钩子 + 标题 + 大纲"""
     from v2g.scout.hook import run_hook
     from v2g.scout.title import run_title
     from v2g.scout.outline import run_outline
+
+    if from_ideation:
+        from datetime import date
+        from v2g.scout.url_extractor import list_ideation_topics, select_topic_interactive
+        vault = Path(cfg.obsidian_vault_path) if cfg.obsidian_vault_path and str(cfg.obsidian_vault_path) != "." else Path("output")
+        topics = list_ideation_topics(vault, date.today())
+        selected = select_topic_interactive(topics)
+        if not selected:
+            return
+        topic = selected["title"]
+        angle = angle or selected.get("angle_context", "")
+
+    if not topic:
+        raise click.ClickException("请指定话题或使用 --from-ideation")
 
     run_hook(cfg, topic, angle)
     click.echo()
@@ -480,6 +530,69 @@ def scout_script(cfg: Config, topic, angle, duration):
     click.echo()
     run_outline(cfg, topic, angle, duration)
     click.echo("\n✅ 脚本三件套生成完成")
+
+
+@scout.command("plan")
+@click.option("--skip-notebooklm", is_flag=True, help="跳过 NotebookLM 分析")
+@click.option("--duration", "-d", default=600, type=int, help="目标时长秒数 (默认 600)")
+@click.option("--topic-index", "-i", default=None, type=int, help="直接选择第 N 个话题（非交互模式）")
+@click.pass_obj
+def scout_plan(cfg: Config, skip_notebooklm, duration, topic_index):
+    """一键脚本规划: 选话题 → NotebookLM(可选) → 钩子 + 标题 + 大纲"""
+    from datetime import date
+    from v2g.scout.url_extractor import (
+        list_ideation_topics, select_topic_interactive,
+        extract_urls_from_vault, match_urls_to_topic,
+    )
+    from v2g.scout.hook import run_hook
+    from v2g.scout.title import run_title
+    from v2g.scout.outline import run_outline
+
+    vault = Path(cfg.obsidian_vault_path) if cfg.obsidian_vault_path and str(cfg.obsidian_vault_path) != "." else Path("output")
+    today = date.today()
+
+    # 1. 选话题
+    click.echo("📋 选择话题\n")
+    topics = list_ideation_topics(vault, today)
+    selected = select_topic_interactive(topics, topic_index)
+    if not selected:
+        return
+
+    topic = selected["title"]
+    angle = selected.get("angle_context", "")
+    click.echo()
+
+    # 2. NotebookLM 深度分析（可选）
+    if not skip_notebooklm:
+        try:
+            from v2g.scout.notebooklm import run_notebooklm
+
+            all_urls = extract_urls_from_vault(vault, today)
+            matched = match_urls_to_topic(all_urls, selected)
+            if matched:
+                click.echo(f"🔗 匹配到 {len(matched)} 个相关 URL:")
+                for u in matched:
+                    click.echo(f"   [{u['source_type']}] {u['title'][:50] or u['url'][:50]}")
+                click.echo()
+                sources = [u["url"] for u in matched]
+                run_notebooklm(cfg, sources, topic)
+            else:
+                click.echo("ℹ️ 未匹配到相关 URL，跳过 NotebookLM\n")
+        except ImportError:
+            click.echo("ℹ️ notebooklm-py 未安装，跳过 NotebookLM 分析\n")
+        except Exception as e:
+            click.echo(f"⚠️ NotebookLM 分析失败: {e}\n")
+    else:
+        click.echo("ℹ️ 跳过 NotebookLM 分析\n")
+
+    # 3. 脚本三件套
+    click.echo("📝 生成脚本规划\n")
+    run_hook(cfg, topic, angle)
+    click.echo()
+    run_title(cfg, topic, angle)
+    click.echo()
+    run_outline(cfg, topic, angle, duration)
+    click.echo("\n✅ 脚本规划完成")
 
 
 @scout.command("all")

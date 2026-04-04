@@ -36,6 +36,8 @@ def run_outline(cfg, topic: str, angle: str = "", duration: int = 600) -> Path |
     # 加载 daily + 匹配的 ideation 报告
     context = load_ctx(writer.vault, today)
     context += _load_ideation_context(writer.vault, today, topic)
+    from v2g.scout.context import load_notebooklm_context
+    context += load_notebooklm_context(writer.vault, today, topic)
 
     click.echo(f"   📌 话题: {topic}")
     click.echo(f"   ⏱️ 目标时长: {duration // 60} 分钟")

@@ -32,6 +32,8 @@ def run_hook(cfg, topic: str, angle: str = "") -> Path | None:
     today = date.today()
 
     context = load_ctx(writer.vault, today)
+    from v2g.scout.context import load_notebooklm_context
+    context += load_notebooklm_context(writer.vault, today, topic)
 
     click.echo(f"   📌 话题: {topic}")
     if angle:

@@ -642,23 +642,17 @@ def scout_produce(cfg: Config, topic_index, duration, model, skip_download):
     # 3. 下载视频
     downloaded_ids = []
     if videos_to_download:
-        # 预检：lecture2note 是否可用
-        try:
-            import importlib
-            importlib.import_module("l2n")
-            _l2n_available = True
-        except ImportError:
-            _l2n_available = False
-            click.echo("⚠️ lecture2note 未安装，跳过视频下载（pip install -e ../lecture2note）\n")
-
-        if _l2n_available:
+        from v2g.preparer import _which
+        if not _which("yt-dlp"):
+            click.echo("⚠️ yt-dlp 未安装，跳过视频下载（pip install yt-dlp）\n")
+        else:
             click.echo("📥 下载视频\n")
             for v in videos_to_download:
                 vid = v["video_id"]
                 click.echo(f"   📥 [{v['channel'][:15]}] {v['title'][:40]}...")
                 try:
                     from v2g.preparer import run_prepare
-                    run_prepare(cfg, vid, model=cfg.script_model)
+                    run_prepare(cfg, vid)
                     downloaded_ids.append(vid)
                     click.echo(f"   ✅ {vid} 下载完成")
                 except Exception as e:
@@ -847,7 +841,7 @@ def run(cfg: Config, video_id_or_url, model, whisper_model, auto):
 def preview(cfg: Config, video_id):
     """渲染各段关键帧预览 (比完整渲染快 10x+)"""
     import subprocess
-    remotion_dir = Path(__file__).parent.parent.parent.parent / "remotion-video"
+    remotion_dir = Path(__file__).parent.parent.parent / "remotion-video"
     preview_mjs = remotion_dir / "preview.mjs"
     if not preview_mjs.exists():
         raise click.ClickException(f"preview.mjs 不存在: {preview_mjs}")

@@ -23,73 +23,120 @@ AI 驱动的 YouTube 二创视频自动生成流水线。覆盖从**选题发现
 
 - Python >= 3.11
 - Node.js >= 18
-- FFmpeg / FFprobe
-- [lecture2note](../lecture2note/) 和 [youtube-trending](../youtube-trending/) 兄弟项目
+- yt-dlp（视频/字幕下载）
+- FFmpeg（视频合并 + Remotion 渲染，强烈推荐）
 
 ### 安装
 
 ```bash
-# 一键安装（推荐）
-make setup
+# 1. 创建虚拟环境（首次）
+python3 -m venv .venv
 
-# 或手动安装
+# 2. 激活虚拟环境
+source .venv/bin/activate
+
+# 3. 安装项目 + 依赖
 pip install -e .
-cd remotion-video && npm install
+pip install yt-dlp
 
-# 完整安装（含知识源、词级对齐、测试框架）
-make setup-full
+# 4. 安装 Remotion 前端依赖
+cd remotion-video && npm install && cd ..
+
+# 5. 安装 FFmpeg（macOS，如未安装）
+brew install ffmpeg
 ```
 
 ### 配置
 
-复制 `.env.example` 为 `.env` 并填写必要的 API Key：
-
 ```bash
+# 1. 复制环境变量模板
 cp .env.example .env
 
-# 查看所有配置项及当前值
+# 2. 编辑 .env，填入 API Key
+#    至少需要一个 LLM 的 Key（ANTHROPIC_API_KEY / GPT_API_KEY / ZHIPU_API_KEY）
+
+# 3. 每次使用前，加载环境变量
+source .env
+
+# 4. 查看所有配置项及当前值
 v2g config
 ```
 
-关键配置项：
+> **注意**：每次打开新终端都需要执行 `source .venv/bin/activate && source .env`。可以写个 alias 简化：
+> ```bash
+> alias v2g-env='source /path/to/video2gen/.venv/bin/activate && source /path/to/video2gen/.env'
+> ```
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `ANTHROPIC_API_KEY` | Claude API 密钥 | — |
-| `SCRIPT_MODEL` | 脚本生成模型 | `claude-sonnet-4-5-20250929` |
-| `ZHIPU_API_KEY` | 智谱 GLM API 密钥 | — |
-| `GPT_API_KEY` | OpenAI 兼容接口密钥 | — |
-| `GPT_BASE_URL` | OpenAI 兼容接口地址 | — |
-| `TTS_MINMAX_KEY` | MiniMax API 密钥（TTS + 文本模型共用） | — |
-| `TTS_ENGINE` | TTS 引擎 (`edge` / `minimax`) | `edge` |
-| `V2G_THEME` | Remotion 渲染主题 | `tech-blue` |
-| `V2G_MAX_TOKENS` | 单次执行 token 上限（防止 Agent 失控） | 不限制 |
-| `VIDEO_RESOLUTION` | 输出分辨率 | `1920x1080` |
+关键配置项（`.env`）：
+
+| 变量 | 说明 | 必需 |
+|------|------|------|
+| `ANTHROPIC_API_KEY` | Claude API 密钥 | 至少一个 LLM Key |
+| `GPT_API_KEY` / `GPT_BASE_URL` | OpenAI 兼容接口 | 可选 |
+| `ZHIPU_API_KEY` | 智谱 GLM API | 可选 |
+| `TTS_ENGINE` | TTS 引擎 (`edge` / `minimax`) | 默认 `edge`（免费） |
+| `TTS_MINMAX_KEY` | MiniMax API 密钥 | `minimax` 引擎时必需 |
+| `SCRIPT_MODEL` | 脚本生成模型 | 默认 `claude-sonnet-4-5-20250929` |
+| `V2G_THEME` | Remotion 渲染主题 | 默认 `tech-blue` |
+| `OBSIDIAN_VAULT_PATH` | Obsidian vault 路径 | 可选，默认 `output/` |
+| `YOUTUBE_API_KEY` | YouTube Data API v3 | 可选，ideation 竞品分析用 |
+| `TWITTER_API_IO_KEY` | TwitterAPI.io 密钥 | 可选，Twitter 监控用 |
 
 ## 使用方式
 
-### 单视频流水线
+### 从零到成品视频（推荐流程）
 
-全自动执行，含人工审核环节：
+三条命令完成选题到脚本，再三条命令生成视频：
 
 ```bash
-v2g run <video_id_or_url>
+# 激活环境
+source .venv/bin/activate && source .env
+
+# ---- 阶段 1: 选题 ----
+v2g scout all                    # 跑 GitHub+HN+Twitter+文章+日报+创意构思
+
+# ---- 阶段 2: 规划 ----
+v2g scout plan -i 1              # 选第 1 个话题 → 钩子 + 标题 + 大纲
+
+# ---- 阶段 3: 生产 ----
+v2g scout produce -i 1           # 下载竞品视频 + agent 生成 script.json
+#    → 自动执行 TTS + slides + 质量门控
+
+# ---- 阶段 4: 渲染 ----
+v2g tts <project_id>             # TTS 配音（如果 produce 没自动完成）
+v2g slides <project_id>          # 生成幻灯片
+v2g preview <project_id>         # 静帧预览（快速检查视觉效果）
+# 在 remotion-video/ 目录下渲染最终视频：
+cd remotion-video
+node render.mjs <project_id> --output-dir ../output
+```
+
+最终产出在 `output/<project_id>/final/`：
+- `video.mp4` — 成品视频
+- `subtitles.srt` — SRT 字幕
+
+### 单视频流水线
+
+针对单个 YouTube 视频的全流程：
+
+```bash
+v2g run <video_id_or_url>            # 全自动（含人工审核环节）
+v2g run <video_id_or_url> --auto     # 全自动跳过审核
 ```
 
 分步执行：
 
 ```bash
-v2g select --csv trending.csv     # 1. 从热榜选择视频
-v2g prepare <video_id>            # 2. 下载 + 生成字幕
-v2g script <video_id>             # 3. AI 生成脚本
-v2g review <video_id>             # 4. 人工审核脚本
-v2g tts <video_id>                # 5. 文本转语音
-v2g slides <video_id>             # 6. 生成幻灯片
-v2g record <video_id>             # 7. 截图转视频（可选）
-v2g assemble <video_id>           # 8. FFmpeg 合成 → final.mp4
+v2g prepare <video_id>            # 1. 下载视频 + 英文字幕（yt-dlp）
+v2g script <video_id>             # 2. AI 生成脚本
+v2g review <video_id>             # 3. 人工审核脚本
+v2g tts <video_id>                # 4. 文本转语音
+v2g slides <video_id>             # 5. 生成幻灯片
+v2g preview <video_id>            # 6. 静帧预览（可选，推荐）
+v2g assemble <video_id>           # 7. FFmpeg 合成 → final/video.mp4
 ```
 
-### Agent 智能编排（推荐）
+### Agent 智能编排
 
 从 markdown、公众号文章 URL、视频字幕等多种素材自动编排脚本：
 
@@ -97,15 +144,13 @@ v2g assemble <video_id>           # 8. FFmpeg 合成 → final.mp4
 v2g agent my-video \
   -s article.md \
   -s "https://mp.weixin.qq.com/s/xxx" \
-  -s sources/VIDEO_ID/subtitle_zh.srt \
+  -s sources/VIDEO_ID/subtitle_en.srt \
   -t "AI编程工具横评" \
   --duration 300
 
 # 支持指定模型 (默认 Claude，可选 glm-5 / minimax-m2.7 等)
 v2g agent my-video -s notes.md -t "主题" --model glm-5
 ```
-
-工作流：素材抓取/读取 → 交叉分析 → 大纲生成 → 人工确认 → 展开 script.json → 衔接 TTS/slides/render。
 
 ### 多源合成
 
@@ -115,19 +160,7 @@ v2g agent my-video -s notes.md -t "主题" --model glm-5
 v2g multi "url1;url2;url3" --topic "主题" --project-id my-project
 ```
 
-多源模式使用 Remotion 渲染，输出 `final_remotion.mp4`。
-
-### Remotion 预览
-
-```bash
-cd remotion-video
-npm run dev      # 启动 Remotion Studio 交互式预览
-npm run build    # TypeScript 类型检查
-```
-
-### 内容自动化系统
-
-从选题发现到脚本生成的三阶段全流程自动化，输出到 `output/` 目录（可直接用 Obsidian 打开）：
+### Scout 内容自动化
 
 ```bash
 # ---- 检索（发现话题）----
@@ -139,18 +172,13 @@ v2g scout article --urls "url1;url2" # 文章/公众号抓取 + LLM 摘要
 v2g scout ideation "话题"            # 竞品分析 + 5-9 个内容创意
 v2g scout ideation --from-daily      # 从每日汇总自动提取话题
 
-# ---- 规划（选题+深度分析+脚本规划）----
+# ---- 规划（选题+脚本规划）----
 v2g scout plan [-i N]                # 一键规划：选话题 → NotebookLM(可选) → hook+title+outline
 v2g scout plan --skip-notebooklm     # 跳过 NotebookLM
 v2g scout script "话题" -a "角度"    # 一键三连：钩子 + 标题 + 大纲
-v2g scout hook "话题" -a "角度"      # 5 个开场钩子变体 (口播/视觉/文字叠加)
-v2g scout title "话题" -a "角度"     # 分层标题 (Tier 1/2) + 缩略图文字
-v2g scout title "话题" --history t.json  # 标题生成 + 历史表现对标
-v2g scout outline "话题" -d 600      # 视频大纲 (章节/视觉建议/参考资料)
-v2g scout notebooklm "话题" -s URL   # NotebookLM 深度分析 (不消耗本地 token)
 
 # ---- 生产（自动生成 script.json）----
-v2g scout produce [-i N] [--model M] # 一键生产：选视频→下载→agent→script.json（全自动）
+v2g scout produce [-i N] [--model M] # 一键生产：选视频→下载→agent→script.json
 v2g scout produce --skip-download    # 跳过视频下载
 
 # ---- 内容分发（一鱼多吃）----
@@ -158,48 +186,11 @@ v2g scout waterfall "话题" -v VIDEO_ID   # 内容瀑布: → 博客 + Twitter 
 v2g scout shorts "话题" -v VIDEO_ID      # 短视频再利用: → 30/60/90 秒脚本
 ```
 
-**典型工作流（三条命令完成选题到脚本）：**
-
-```bash
-v2g scout all                        # 1. 早上跑一次，发现话题 + 自动构思
-v2g scout plan -i 1                  # 2. 选第 1 个话题，深度分析 + 钩子/标题/大纲
-v2g scout produce -i 1               # 3. 自动下载竞品视频 + agent 生成 script.json
-# → output/{project_id}/script.json 已就绪，接下来 tts → slides → render
-```
-
 配合 cron 实现全自动：
 
 ```cron
-0 8 * * * cd /path/to/video2gen && v2g scout all --quiet >> logs/scout.log 2>&1
+0 8 * * * cd /path/to/video2gen && source .venv/bin/activate && source .env && v2g scout all --quiet >> logs/scout.log 2>&1
 ```
-
-输出目录结构（可直接作为 Obsidian vault 打开）：
-
-```
-output/
-├── daily/                    # 每日汇总（含 [[wiki-links]] 交叉引用）
-└── scout/
-    ├── github/               # GitHub 趋势报告
-    ├── hn/                   # Hacker News 热帖报告
-    ├── twitter/              # Twitter/X 话题报告
-    ├── articles/             # 文章摘要
-    ├── ideation/             # 竞品分析 + 创意列表
-    ├── scripts/              # 钩子 / 标题 / 大纲
-    ├── notebooklm/           # NotebookLM 深度分析报告
-    └── distribution/         # 内容瀑布 / 短视频脚本
-```
-
-配置项（`.env`，全部可选）：
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `GITHUB_TOPICS` | GitHub 监控主题 | `ai,ml,llm,agent,rag` |
-| `OBSIDIAN_VAULT_PATH` | Obsidian vault 路径 | `output/`（不设置也能用） |
-| `ARTICLE_RSS_URLS` | RSS 订阅 URL（逗号分隔） | — |
-| `TWITTER_API_IO_KEY` | TwitterAPI.io 密钥（Twitter 监控用） | — |
-| `YOUTUBE_API_KEY` | YouTube Data API v3（竞品分析 + produce 用） | —（无则降级） |
-| `TELEGRAM_BOT_TOKEN` | Telegram 推送通知 | — |
-| `TELEGRAM_CHAT_ID` | Telegram Chat ID | — |
 
 ### 工具命令
 
@@ -214,70 +205,31 @@ v2g config                      # 列出所有配置项及当前值
 
 ```
 video2gen/
-├── src/v2g/                    # Python 后端 (35 模块)
+├── .env.example                # 环境变量模板
+├── .venv/                      # Python 虚拟环境
+├── src/v2g/                    # Python 后端
 │   ├── cli.py                  # CLI 入口 (20+ 子命令)
 │   ├── pipeline.py             # 流水线编排 + 预检 + 质量门控
-│   ├── agent.py                # Agent 多源编排（两阶段：大纲→分段脚本）
-│   ├── scriptwriter.py         # LLM 脚本生成 + JSON 修复
-│   ├── llm.py                  # 多模型路由（Claude / GPT / Gemini / GLM / MiniMax）
-│   ├── schema.py               # Pydantic v2 结构验证（镜像 types.ts）
-│   ├── eval.py                 # 规则化质量评估（critical/warning/info 三级）
-│   ├── cost.py                 # 成本追踪 + token 上限 + 降级事件记录
+│   ├── agent.py                # Agent 多源编排（大纲→分段脚本）
+│   ├── preparer.py             # yt-dlp 视频下载 + 字幕下载
+│   ├── llm.py                  # 多模型路由（Claude/GPT/Gemini/GLM/MiniMax）
 │   ├── tts.py                  # 双引擎 TTS（edge-tts / MiniMax）
-│   ├── subtitle.py             # mlx-whisper 词级字幕对齐（可选）
-│   ├── slides.py               # 幻灯片生成
-│   ├── editor.py               # FFmpeg 视频合成
-│   ├── config.py               # 配置加载 + 平台代理
-│   ├── checkpoint.py           # 断点续传状态管理
-│   ├── fetcher.py              # 网页/公众号文章抓取（trafilatura）
-│   ├── preparer.py             # 视频下载 + 字幕生成
-│   ├── recorder.py             # 截图转录屏视频
+│   ├── schema.py               # Pydantic v2 结构验证（镜像 types.ts）
+│   ├── eval.py                 # 规则化质量评估
 │   ├── scout/                  # Scout 自动化 (14 模块)
-│   │   ├── github_trending.py  # GitHub REST API 趋势搜索
-│   │   ├── hn_monitor.py       # Hacker News Algolia API 热帖
-│   │   ├── article_monitor.py  # 文章监控 (RSS / URL / inbox)
-│   │   ├── twitter_monitor.py  # Twitter/X 监控 (Apify)
-│   │   ├── ideation.py         # 竞品分析 + 创意构思
-│   │   ├── hook.py / title.py / outline.py  # 脚本规划三件套
-│   │   ├── waterfall.py        # 内容瀑布 (博客/Twitter/LinkedIn)
-│   │   ├── shorts.py           # 短视频再利用 (30/60/90s)
-│   │   ├── store.py            # 通用 SQLite 去重
-│   │   ├── obsidian.py         # Obsidian vault Markdown 输出
-│   │   └── telegram.py         # Telegram Bot 通知
 │   └── prompts/                # LLM 提示词模板 (17 个 .md)
 ├── remotion-video/             # TypeScript 前端 (Remotion 4.x + React 19)
-│   ├── src/
-│   │   ├── VideoComposition.tsx # 主合成容器（通过 registry 动态分发）
-│   │   ├── types.ts            # 类型定义（与 schema.py 保持同步）
-│   │   └── registry/           # 组件库（Schema × Style 两层模型）
-│   │       ├── registry.ts     # 组件注册表 (resolve / resolveForSegment)
-│   │       ├── theme.ts        # 主题系统 (tech-blue / warm-purple / emerald-dark)
-│   │       └── styles/         # 12 个视觉组件实现
-│   │           ├── slide/      # tech-dark, glass-morphism, chalk-board
-│   │           ├── terminal/   # aurora, vscode
-│   │           ├── code-block/ # 语法高亮 + 行号 + 注解
-│   │           ├── social-card/# Twitter/GitHub/HN 卡片
-│   │           ├── diagram/    # 流程/架构图 (节点+边)
-│   │           ├── hero-stat/  # 大数字 + countUp 动画
-│   │           ├── browser/    # Chrome 浏览器框模拟
-│   │           ├── recording/  # 录屏播放
-│   │           └── source-clip/# 原视频片段
-│   ├── render.mjs              # Python→Remotion 渲染桥接
-│   └── preview.mjs             # 静帧预览生成 (10x faster)
-├── tests/                      # 纯函数测试 (eval + schema, 27 cases)
-├── Makefile                    # setup / test / preflight / clean
-├── pyproject.toml
-└── .env.example
+│   ├── src/registry/           # 组件库（12 个视觉组件）
+│   ├── render.mjs              # 最终视频渲染
+│   └── preview.mjs             # 静帧预览
+├── sources/                    # 下载的视频 + 字幕
+├── output/                     # 项目工作目录 + 最终产出
+└── tests/                      # 测试 (eval + schema)
 ```
 
 ## 组件库系统
 
 视频渲染采用 **Schema × Style 两层模型**，将数据契约（稳定）与视觉实现（频繁迭代）解耦：
-
-- **Schema** — 定义数据结构：slide（PPT）、terminal（终端）、recording（录屏）、source-clip（原片）
-- **Style** — 实现视觉效果：每个 schema 可以有多种风格，通过 `component` 字段在 script.json 中指定
-
-当前可用组件（12 个）：
 
 | 组件 ID | 说明 | Schema |
 |---------|------|--------|
@@ -288,60 +240,30 @@ video2gen/
 | `terminal.vscode` | VS Code 编辑器模拟 | terminal |
 | `code-block.default` | 语法高亮 + 行号 + 注解 | code-block |
 | `social-card.default` | Twitter/GitHub/HN 卡片 | social-card |
-| `diagram.default` | 流程/架构图（节点+边，LR/TB 布局） | diagram |
-| `hero-stat.default` | 大数字 + countUp 动画 + 趋势箭头 | hero-stat |
+| `diagram.default` | 流程/架构图（节点+边） | diagram |
+| `hero-stat.default` | 大数字 + countUp 动画 | hero-stat |
 | `browser.default` | Chrome 浏览器框模拟 | browser |
 | `recording.default` | 录屏视频播放 | recording |
-| `source-clip.default` | 原视频片段裁剪（底部 15% 裁切） | source-clip |
+| `source-clip.default` | 原视频片段裁剪 | source-clip |
 
-新增组件只需：写一个 style 文件 + `init.ts` 加一行 import，框架代码无需改动。
-
-## 三种素材类型
-
-脚本中每个段落指定一种素材类型（向后兼容），也可通过 `component` 字段直接指定视觉组件：
-
-| 类型 | 说明 | 默认组件 | 占比 |
-|------|------|---------|------|
-| **A (PPT 幻灯片)** | AI 生成的图文幻灯片，支持 6 种布局 | `slide.tech-dark` | ~30% |
-| **B (录屏)** | 用户提供的屏幕录制，缺失时自动降级为动画模拟 | `recording.default` / `terminal.aurora` | ~50% |
-| **C (原片剪辑)** | 原视频片段，限 10 秒内，自动调速匹配配音时长 | `source-clip.default` | ~20% |
-
-## 渲染后端对比
-
-| 特性 | FFmpeg (`v2g assemble`) | Remotion (`render.mjs`) |
-|------|------------------------|----------------------|
-| 输出文件 | `final/video.mp4` | `final/video.mp4` + `final/subtitles.srt` |
-| 速度 | 快 | 较慢 |
-| 动画效果 | 基础 | 丰富（12 种 React 组件） |
-| 字幕 | ASS 烧录 | SRT（支持 mlx-whisper 词级对齐） |
-| 适用场景 | 单视频快速合成 | 多源 / Agent 精品合成 |
+新增组件只需：写一个 style 文件 + `init.ts` 加一行 import。
 
 ## 容错与降级
 
 | 环节 | 正常路径 | 降级路径 |
 |------|----------|----------|
+| 视频下载 | yt-dlp + FFmpeg 合并最佳画质 | 无 FFmpeg → 下载已合并单流（画质较低） |
 | 词级对齐 | mlx-whisper → `word_timing.json` | 不可用时按字符数均分时长 |
-| B 素材渲染 | 检测到 `seg_*.mp4` → `recording.default` | 无录屏 → `terminal.aurora` 动画 |
+| B 素材渲染 | 检测到录屏 → `recording.default` | 无录屏 → `terminal.aurora` 动画 |
 | Agent 脚本 | 骨架 + 3 段批量填充 | 失败 → 单次生成 + 截断自动续写 |
 | 组件解析 | `segment.component` 显式指定 | 未指定 → 按 material 走默认映射 |
-| TTS 引擎 | 环境变量选择 edge-tts 或 MiniMax | **无自动降级**（失败即中断） |
-
-降级事件自动记录到 `checkpoint.json` 的 `cost_summary.degradations` 字段。
-
-## 开发
-
-```bash
-make setup-full    # 安装全部依赖（含 pytest, feedparser, mlx-whisper）
-make test          # 运行测试（27 cases, eval + schema 纯函数）
-make preflight     # 检测运行环境依赖
-```
 
 ## 已知限制
 
 - **仅支持中文旁白**：`narration_zh` 是唯一旁白字段，TTS 语音和 prompt 模板均针对中文
 - **Remotion 许可**：Remotion 框架个人/小团队免费，SaaS 需付费许可（[详情](https://remotion.dev/license)）
 - **质量评估盲区**：`eval.py` 只检查结构规则（段数/字数/素材比例），不评估叙事质量
-- **跨语言契约**：`schema.py`（Python）和 `types.ts`（TypeScript）手动同步，修改一侧后须同步另一侧
+- **跨语言契约**：`schema.py`（Python）和 `types.ts`（TypeScript）手动同步
 
 ## 许可证
 

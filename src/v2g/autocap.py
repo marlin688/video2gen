@@ -156,13 +156,18 @@ def _capture_webpage(page, url: str, screenshots_dir: Path, start_idx: int,
     count = 0
     try:
         click.echo(f"      🌐 访问: {url[:60]}")
-        page.goto(url, timeout=30000, wait_until="domcontentloaded")
+        resp = page.goto(url, timeout=30000, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
+
+        # HTTP 状态码检测
+        if resp and resp.status >= 400:
+            click.echo(f"      ❌ HTTP {resp.status}，跳过")
+            return 0
 
         if _is_blocked_page(page):
             page.wait_for_timeout(5000)
             if _is_blocked_page(page):
-                click.echo(f"      ❌ 被反爬拦截，跳过")
+                click.echo(f"      ❌ 被反爬拦截或错误页面，跳过")
                 return 0
 
         # GitHub 文件路径：直接导航到具体文件
@@ -356,7 +361,7 @@ def _extract_tweet_id(url: str) -> str | None:
 
 
 def _is_blocked_page(page) -> bool:
-    """检测页面是否被 Cloudflare/Captcha 等拦截。"""
+    """检测页面是否被拦截或为错误页面（404/500 等）。"""
     try:
         text = page.text_content("body") or ""
         block_signals = [
@@ -367,6 +372,14 @@ def _is_blocked_page(page) -> bool:
             "enable javascript",
             "captcha",
             "请完成安全验证",
+            # 错误页面检测
+            "page not found",
+            "404 not found",
+            "the requested page could not be found",
+            "this page doesn't exist",
+            "page does not exist",
+            "404 error",
+            "500 internal server error",
         ]
         text_lower = text.lower()
         return any(signal in text_lower for signal in block_signals)

@@ -270,7 +270,7 @@ const inputProps = {
 // ═══ SRT 字幕生成 ═══
 
 // 尝试加载 word_timing.json (mlx-whisper 词级对齐)
-const wordTimingPath = path.join(outputDir, "voiceover", "word_timing.json");
+const wordTimingPath = path.join(videoDir, "voiceover", "word_timing.json");
 let wordTiming = null;
 if (fs.existsSync(wordTimingPath)) {
   wordTiming = JSON.parse(fs.readFileSync(wordTimingPath, "utf-8"));

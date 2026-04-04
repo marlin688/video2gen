@@ -173,6 +173,16 @@ def eval_script(script: dict, video_id: str = "") -> dict:
     check("使用高级组件 (0-3)", component_count <= 3,
           detail=f"{component_count} 个高级组件")
 
+    # --- 按 weight 分级汇总 ---
+    critical_failed = [c for c in report["checks"] if not c["passed"] and c["weight"] >= 3]
+    warning_failed = [c for c in report["checks"] if not c["passed"] and c["weight"] == 2]
+    info_failed = [c for c in report["checks"] if not c["passed"] and c["weight"] <= 1]
+
+    report["critical_failed"] = critical_failed
+    report["warning_failed"] = warning_failed
+    report["info_failed"] = info_failed
+    report["has_critical"] = len(critical_failed) > 0
+
     return report
 
 
@@ -201,25 +211,46 @@ def run_eval(cfg: Config, video_id: str) -> dict:
 
 
 def print_eval_report(report: dict):
-    """格式化输出评估报告。"""
+    """格式化输出评估报告（按 critical/warning/info 分级）。"""
     score = report["score"]
     max_score = report["max_score"]
     pct = score / max(max_score, 1) * 100
 
     click.echo(f"\n📋 脚本质量评估: {report['video_id']}")
-    click.echo(f"   总分: {score}/{max_score} ({pct:.0f}%)\n")
+    click.echo(f"   总分: {score}/{max_score} ({pct:.0f}%)")
 
-    for c in report["checks"]:
-        icon = "✅" if c["passed"] else "❌"
-        detail = f" — {c['detail']}" if c.get("detail") else ""
-        weight = f" (×{c['weight']})" if c["weight"] > 1 else ""
-        click.echo(f"   {icon} {c['name']}{weight}{detail}")
+    # 按分级输出失败项
+    critical_failed = report.get("critical_failed", [])
+    warning_failed = report.get("warning_failed", [])
+    info_failed = report.get("info_failed", [])
+
+    if critical_failed:
+        click.echo(f"\n   🔴 Critical ({len(critical_failed)}):")
+        for c in critical_failed:
+            detail = f" — {c['detail']}" if c.get("detail") else ""
+            click.echo(f"      ❌ {c['name']} (×{c['weight']}){detail}")
+
+    if warning_failed:
+        click.echo(f"\n   🟡 Warning ({len(warning_failed)}):")
+        for c in warning_failed:
+            detail = f" — {c['detail']}" if c.get("detail") else ""
+            click.echo(f"      ❌ {c['name']} (×{c['weight']}){detail}")
+
+    if info_failed:
+        click.echo(f"\n   ℹ️  Info ({len(info_failed)}):")
+        for c in info_failed:
+            detail = f" — {c['detail']}" if c.get("detail") else ""
+            click.echo(f"      ❌ {c['name']}{detail}")
+
+    passed_count = sum(1 for c in report["checks"] if c["passed"])
+    if passed_count > 0:
+        click.echo(f"\n   ✅ Passed: {passed_count} 项通过")
 
     # Schema 验证错误详情
     schema_errors = report.get("schema_errors", [])
     if schema_errors:
         click.echo(f"\n   🔴 结构验证错误 ({len(schema_errors)} 项):")
-        for i, err in enumerate(schema_errors[:10], 1):  # 最多显示 10 条
+        for i, err in enumerate(schema_errors[:10], 1):
             click.echo(f"      {i}. {err}")
         if len(schema_errors) > 10:
             click.echo(f"      ... 还有 {len(schema_errors) - 10} 项")

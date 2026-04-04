@@ -1,5 +1,6 @@
 """Click CLI 入口。"""
 
+import os
 from pathlib import Path
 
 import click
@@ -63,7 +64,7 @@ def script(cfg: Config, video_id, model):
     model = model or cfg.script_model
     state = run_script(cfg, video_id, model)
     click.echo(f"\n✅ 脚本已生成:")
-    click.echo(f"   脚本: output/{video_id}/script.md")
+    click.echo(f"   脚本: output/{video_id}/script.json (可读版: script.md)")
     click.echo(f"   录屏指南: output/{video_id}/recording_guide.md")
     click.echo(f"   录屏放入: output/{video_id}/recordings/")
     click.echo(f"   完成后运行: v2g review {video_id}")
@@ -77,6 +78,17 @@ def review(cfg: Config, video_id):
     state = PipelineState.load(cfg.output_dir, video_id)
     if not state.scripted:
         raise click.ClickException("脚本尚未生成，请先运行 v2g script")
+
+    # 检测 script.md 是否被编辑过但 script.json 未同步
+    script_json = cfg.output_dir / video_id / "script.json"
+    script_md = cfg.output_dir / video_id / "script.md"
+    if script_md.exists() and script_json.exists():
+        if script_md.stat().st_mtime > script_json.stat().st_mtime:
+            click.echo("⚠️  检测到 script.md 修改时间晚于 script.json")
+            click.echo("   script.json 是 TTS/渲染的数据源 (source of truth)")
+            click.echo("   如已修改 script.md 中的旁白，请同步修改到 script.json 的 narration_zh 字段")
+            if not click.confirm("确认 script.json 已是最终版本？"):
+                return
 
     # 检查录屏素材状态
     from v2g.editor import check_recordings
@@ -165,6 +177,11 @@ def multi(cfg: Config, urls, topic, project_id, model, whisper_model):
     if len(url_list) < 2:
         raise click.ClickException("至少需要 2 个视频 URL (分号分隔)")
 
+    # 预检
+    from v2g.pipeline import preflight_check, _print_preflight
+    status, warnings = preflight_check("multi", model)
+    _print_preflight(status, warnings)
+
     # 生成 project_id
     if not project_id:
         slug = re.sub(r"[^\w\u4e00-\u9fff]+", "_", topic)[:20].strip("_")
@@ -200,7 +217,7 @@ def multi(cfg: Config, urls, topic, project_id, model, whisper_model):
     # 人工审核
     if not state.script_reviewed:
         click.echo(f"\n✋ 暂停: 审阅脚本")
-        click.echo(f"   脚本: output/{project_id}/script.md")
+        click.echo(f"   脚本: output/{project_id}/script.json (可读版: script.md)")
         click.echo(f"   完成后运行: v2g review {project_id}")
         click.echo(f"   然后继续: v2g multi \"{urls}\" --topic \"{topic}\" --project-id {project_id}")
         return
@@ -233,6 +250,11 @@ def agent_cmd(cfg: Config, project_id, sources, topic, model, duration):
 
     示例: v2g agent my-video -s article.md -s "https://mp.weixin.qq.com/s/xxx" -t "AI工具横评"
     """
+    # 预检
+    from v2g.pipeline import preflight_check, _print_preflight
+    status, warnings = preflight_check("agent", model or cfg.script_model)
+    _print_preflight(status, warnings)
+
     from v2g.agent import run_agent
     run_agent(cfg, project_id, sources, topic, model, duration)
 
@@ -575,6 +597,61 @@ def preview(cfg: Config, video_id):
     )
     if result.returncode != 0:
         raise click.ClickException("预览渲染失败")
+
+
+@main.command("config")
+@click.pass_obj
+def config_list(cfg: Config):
+    """列出所有配置项及当前值（对比 .env.example）"""
+    import re
+    from pathlib import Path
+
+    env_example = Path(__file__).parent.parent.parent.parent / ".env.example"
+    if not env_example.exists():
+        raise click.ClickException(f".env.example 不存在: {env_example}")
+
+    # 从 .env.example 解析所有变量名和注释
+    lines = env_example.read_text(encoding="utf-8").splitlines()
+    current_section = ""
+    entries: list[tuple[str, str, str]] = []  # (name, current_value, section)
+
+    for line in lines:
+        line = line.strip()
+        if line.startswith("# ---") and line.endswith("---"):
+            current_section = line.strip("# -").strip()
+            continue
+        if line.startswith("#") and "=" in line:
+            # 被注释掉的变量 (可选配置)
+            var_line = line.lstrip("# ")
+            name = var_line.split("=")[0].strip()
+            if name and name.isupper():
+                val = os.environ.get(name, "")
+                entries.append((name, val, current_section))
+        elif "=" in line and not line.startswith("#"):
+            name = line.split("=")[0].strip()
+            if name and name.isupper():
+                val = os.environ.get(name, "")
+                entries.append((name, val, current_section))
+
+    # 输出
+    click.echo("📋 v2g 配置一览\n")
+    last_section = ""
+    set_count = 0
+    for name, val, section in entries:
+        if section != last_section:
+            click.echo(f"\n  [{section}]")
+            last_section = section
+        if val:
+            # 隐藏 API key 中间部分
+            display = val
+            if "KEY" in name or "TOKEN" in name:
+                display = val[:6] + "..." + val[-4:] if len(val) > 12 else "***"
+            click.echo(f"    ✅ {name} = {display}")
+            set_count += 1
+        else:
+            click.echo(f"    ⬜ {name}")
+
+    click.echo(f"\n  共 {len(entries)} 项，已设置 {set_count} 项")
 
 
 @main.command("eval")

@@ -41,7 +41,7 @@ export interface ScriptSegment {
     language: string;
     code: string[];
     highlightLines?: number[];
-    annotations?: Record<number, string>;
+    annotations?: Record<string, string>;
   };
   // social-card 组件
   social_card?: {
@@ -79,9 +79,10 @@ export interface ScriptData {
   title: string;
   description: string;
   tags: string[];
-  source_channel: string;
-  total_duration_hint: number;
+  source_channel?: string;
+  total_duration_hint?: number;
   segments: ScriptSegment[];
+  sources_used?: string[];
 }
 
 export interface SegmentTiming {

@@ -236,5 +236,7 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
         align_voiceover(voiceover_dir)
     except Exception as e:
         click.echo(f"   ⚠️ 词级对齐失败 (非致命): {e}")
+        from v2g.cost import get_tracker
+        get_tracker().record_degradation("subtitle", "mlx-whisper", "char-split", str(e))
 
     return state

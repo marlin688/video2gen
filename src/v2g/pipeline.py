@@ -1,10 +1,97 @@
 """全流程编排：串联所有阶段 + 人工审核暂停。"""
 
+import os
+import shutil
+from pathlib import Path
+
 import click
 
 from v2g.config import Config
 from v2g.checkpoint import PipelineState
 from v2g.preparer import _extract_video_id
+
+
+def preflight_check(mode: str = "single", model: str = ""):
+    """流水线预检：秒级检测依赖，返回 (status, warnings)。
+
+    status: "passed" | "degraded" | "blocked"
+    mode: "single" | "multi" | "agent"
+    """
+    warnings: list[str] = []
+    blocked = False
+
+    # 1. ffmpeg / ffprobe
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        warnings.append("ffmpeg/ffprobe 未安装 (视频合成必需)")
+        blocked = True
+
+    # 2. LLM API key (根据 model 前缀检测)
+    model_lower = (model or "").lower()
+    if model_lower.startswith("glm"):
+        if not os.environ.get("ZHIPU_API_KEY"):
+            warnings.append("ZHIPU_API_KEY 未设置")
+            blocked = True
+    elif model_lower.startswith("gemini"):
+        if not os.environ.get("GEMINI_API_KEY"):
+            warnings.append("GEMINI_API_KEY 未设置")
+            blocked = True
+    elif model_lower.startswith(("gpt", "o1", "o3", "o4", "deepseek", "qwen")):
+        if not os.environ.get("GPT_API_KEY"):
+            warnings.append("GPT_API_KEY 未设置")
+            blocked = True
+    elif model_lower.startswith("minimax"):
+        if not os.environ.get("TTS_MINMAX_KEY"):
+            warnings.append("TTS_MINMAX_KEY 未设置 (MiniMax 模型)")
+            blocked = True
+    else:
+        # 默认走 Anthropic
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            warnings.append("ANTHROPIC_API_KEY 未设置")
+            blocked = True
+
+    # 3. TTS 引擎依赖
+    tts_engine = os.environ.get("TTS_ENGINE", "").lower()
+    if tts_engine == "minimax" and not os.environ.get("TTS_MINMAX_KEY"):
+        warnings.append("TTS_ENGINE=minimax 但 TTS_MINMAX_KEY 未设置")
+        blocked = True
+
+    # 4. Remotion (multi/agent 模式需要)
+    if mode in ("multi", "agent"):
+        if not shutil.which("node"):
+            warnings.append("node 未安装 (Remotion 渲染必需)")
+            blocked = True
+        remotion_dir = Path(__file__).parent.parent.parent / "remotion-video"
+        if not (remotion_dir / "node_modules").exists():
+            warnings.append("remotion-video/node_modules 不存在，需运行 npm install")
+
+    # 5. mlx-whisper (可选，仅提示)
+    try:
+        import mlx_whisper  # noqa: F401
+    except ImportError:
+        warnings.append("mlx-whisper 未安装 (词级字幕对齐不可用，将使用字符均分)")
+
+    # 确定状态
+    if blocked:
+        status = "blocked"
+    elif len(warnings) > 0:
+        status = "degraded"
+    else:
+        status = "passed"
+
+    return status, warnings
+
+
+def _print_preflight(status: str, warnings: list[str]):
+    """打印预检结果，blocked 时抛出异常。"""
+    if not warnings:
+        return
+    icon_map = {"passed": "✅", "degraded": "⚠️", "blocked": "❌"}
+    click.echo(f"\n🔍 预检 [{icon_map.get(status, '?')} {status}]")
+    for w in warnings:
+        prefix = "❌" if status == "blocked" and not w.startswith("mlx-whisper") else "ℹ️"
+        click.echo(f"   {prefix} {w}")
+    if status == "blocked":
+        raise click.ClickException("预检未通过，请修复上述问题后重试")
 
 
 def _run_quality_gate(cfg: Config, video_id: str, model: str,
@@ -28,12 +115,21 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
     report = eval_script(script, video_id)
     pct = eval_score_pct(report)
 
-    click.echo(f"\n📋 质量门控: {pct:.0f}% (阈值: {threshold:.0f}%)")
-    if pct >= threshold:
-        click.echo(f"   ✅ 通过")
+    click.echo(f"\n📋 质量门控: {pct:.0f}%")
+
+    # 按 critical 级别判断是否通过（而非百分比阈值）
+    if not report.get("has_critical"):
+        warning_failed = report.get("warning_failed", [])
+        if warning_failed:
+            click.echo(f"   ⚠️ 通过 (有 {len(warning_failed)} 个警告)")
+            for w in warning_failed:
+                detail = f": {w.get('detail', '')}" if w.get("detail") else ""
+                click.echo(f"      - {w['name']}{detail}")
+        else:
+            click.echo(f"   ✅ 通过")
         return
 
-    # 低于阈值，打印失败项
+    # 有 critical 失败，打印详情
     print_eval_report(report)
 
     if regen_fn is None and max_retries > 0:
@@ -41,14 +137,14 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
         regen_fn = lambda c, v, m: run_script(c, v, m)
 
     if regen_fn is None:
-        click.echo(f"⚠️ 质量未达标 ({pct:.0f}%)，无重试函数，继续使用当前脚本")
+        click.echo(f"⚠️ 存在 critical 问题 ({pct:.0f}%)，无重试函数，继续使用当前脚本")
         return
 
-    failed = [c["name"] for c in report["checks"] if not c["passed"]]
+    critical_names = [c["name"] for c in report.get("critical_failed", [])]
 
     for attempt in range(1, max_retries + 1):
-        click.echo(f"\n🔄 质量不达标，重试 {attempt}/{max_retries}...")
-        click.echo(f"   失败项: {', '.join(failed)}")
+        click.echo(f"\n🔄 存在 critical 问题，重试 {attempt}/{max_retries}...")
+        click.echo(f"   Critical 项: {', '.join(critical_names)}")
 
         # 清除 scripted 状态并重新生成
         state = PipelineState.load(cfg.output_dir, video_id)
@@ -62,14 +158,18 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
         pct = eval_score_pct(report)
 
         click.echo(f"   📋 重试结果: {pct:.0f}%")
-        if pct >= threshold:
-            click.echo(f"   ✅ 通过")
+        if not report.get("has_critical"):
+            warning_failed = report.get("warning_failed", [])
+            if warning_failed:
+                click.echo(f"   ⚠️ 通过 (有 {len(warning_failed)} 个警告)")
+            else:
+                click.echo(f"   ✅ 通过")
             return
 
-        failed = [c["name"] for c in report["checks"] if not c["passed"]]
+        critical_names = [c["name"] for c in report.get("critical_failed", [])]
 
     # 所有重试用完，打印报告但继续流程（不阻断）
-    click.echo(f"\n⚠️ {max_retries} 次重试后仍未达标 ({pct:.0f}%)，继续使用当前脚本")
+    click.echo(f"\n⚠️ {max_retries} 次重试后仍有 critical 问题 ({pct:.0f}%)，继续使用当前脚本")
     print_eval_report(report)
 
 
@@ -78,6 +178,10 @@ def run_pipeline(cfg: Config, video_id_or_url: str, model: str,
     """执行完整流水线，在人工审核点暂停（auto=True 时跳过审核）。"""
     from v2g.cost import reset_tracker, get_tracker
     reset_tracker()
+
+    # 预检
+    status, warnings = preflight_check("single", model)
+    _print_preflight(status, warnings)
 
     video_id = _extract_video_id(video_id_or_url)
     state = PipelineState.load(cfg.output_dir, video_id)
@@ -117,10 +221,10 @@ def run_pipeline(cfg: Config, video_id_or_url: str, model: str,
             click.echo("\n" + "=" * 50)
             click.echo("✋ 暂停: 脚本审核")
             click.echo("=" * 50)
-            click.echo(f"   脚本: output/{video_id}/script.md")
+            click.echo(f"   脚本: output/{video_id}/script.json (可读版: script.md)")
             click.echo(f"   录屏指南: output/{video_id}/recording_guide.md")
             click.echo(f"\n   请完成以下操作:")
-            click.echo(f"   1. 审阅并编辑 script.md / script.json")
+            click.echo(f"   1. 审阅 script.md，如需修改请直接编辑 script.json (source of truth)")
             click.echo(f"   2. 按 recording_guide.md 录制操作视频")
             click.echo(f"   3. 将录屏放入 output/{video_id}/recordings/")
             click.echo(f"   4. 运行: v2g review {video_id}")

@@ -675,11 +675,15 @@ def _generate_script_phased(
         skeleton = _extract_json(skeleton_resp)
     except Exception as e:
         click.echo(f"   ⚠️ 骨架生成失败，回退到单次完整调用: {e}")
+        from v2g.cost import get_tracker
+        get_tracker().record_degradation("agent_script", "phased", "oneshot", str(e))
         return _generate_script_oneshot(outline_str, system_prompt, model, output_dir)
 
     segments = skeleton.get("segments", [])
     if not segments:
         click.echo("   ⚠️ 骨架无 segments，回退到单次完整调用")
+        from v2g.cost import get_tracker
+        get_tracker().record_degradation("agent_script", "phased", "oneshot", "skeleton has no segments")
         return _generate_script_oneshot(outline_str, system_prompt, model, output_dir)
 
     click.echo(f"   ✅ 骨架: {len(segments)} 段")
@@ -1060,7 +1064,10 @@ def _generate_outline_md(outline: dict, output_path: Path):
 
     for i, item in enumerate(outline.get("outline", []), 1):
         section = section_map.get(item.get("section", "body"), "主体")
-        materials = " + ".join(material_map.get(m, m) for m in item.get("suggested_materials", []))
+        materials = " + ".join(
+            material_map.get(m, str(m)) if isinstance(m, str) else str(m)
+            for m in item.get("suggested_materials", [])
+        )
         refs = item.get("source_refs", [])
         est = item.get("est_duration", "?")
 

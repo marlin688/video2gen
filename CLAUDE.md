@@ -296,3 +296,46 @@ See `.env.example` for the full list. Notable variables:
 - `ARTICLE_RSS_URLS` — comma-separated RSS feed URLs
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — Telegram push notifications
 - `YOUTUBE_API_KEY` — YouTube Data API v3 (optional, for ideation competitive analysis)
+
+### Fallback & Degradation Strategy
+
+| Stage | Normal Path | Fallback | Trigger |
+|-------|-------------|----------|---------|
+| Word alignment | mlx-whisper → `word_timing.json` | Character-proportional duration split | mlx-whisper not installed |
+| B-material render | `seg_*.mp4` detected → `recording.default` | `terminal.aurora` animated TUI | No recording file for segment |
+| Agent script gen | Skeleton + 3-segment batch fill | Single-shot + auto-detect truncation + continuation prompt | Phased generation throws exception |
+| Component resolve | `segment.component` explicit style ID | Material type → schema default (A→slide, B→terminal, C→source-clip) | component field absent or unresolved |
+| TTS engine | `TTS_ENGINE` env var selects edge-tts or MiniMax | **No auto-fallback** — pipeline fails if chosen engine is unavailable | N/A |
+
+### Known Limitations
+
+- **Chinese-only narration**: `narration_zh` is the only narration field. TTS voices (`zh-CN-YunxiNeural`, MiniMax Chinese voices), prompts, and eval rules all assume Chinese. Multi-language support requires schema changes.
+- **Remotion license**: Remotion framework uses a [commercial license](https://remotion.dev/license). Free for personal use and companies with <3 employees. SaaS/larger teams require a paid license.
+- **Eval blind spots**: `eval.py` only checks structural rules (segment count, material ratios, character count, punctuation). No semantic quality assessment (narrative coherence, hook effectiveness, terminology consistency).
+- **Render performance**: No benchmarks recorded. `preview.mjs` claims "10x+ faster than full render" but no timing data. Full Remotion render for 5-8 min video is significantly slower than FFmpeg path.
+- **No test coverage for LLM/TTS/pipeline**: Only `eval.py` and `schema.py` have unit tests. Core modules (`llm.py`, `agent.py`, `tts.py`) require real API keys and are not easily testable without mocks.
+
+## Agent Operating Rules
+
+Rules for Claude Code when executing v2g pipeline stages:
+
+### Source of Truth
+
+- **`script.json` is the source of truth** for all downstream stages (TTS, slides, render). `script.md` is a read-only Markdown export for human review. Edits to `script.md` are silently ignored.
+- When modifying script content, always edit `script.json` directly.
+
+### Cross-Language Contract
+
+- **`schema.py` and `types.ts` must stay in sync.** When adding/removing/changing fields in either file, update the other immediately. The Pydantic model (`schema.py`) and TypeScript interface (`types.ts`) define the same `ScriptSegment` / `ScriptData` contract.
+- Run `pytest tests/test_schema.py` after schema changes to verify.
+
+### Quality Gate
+
+- Eval uses three severity levels: **critical** (weight≥3, must retry), **warning** (weight=2, log and continue), **info** (weight≤1, record only).
+- Only critical failures trigger automatic script regeneration. Don't retry on warnings alone.
+
+### Pipeline Execution
+
+- Always run `preflight_check()` before starting any pipeline mode (single/multi/agent). It detects missing dependencies in seconds.
+- After TTS, optionally run word-level alignment (`mlx-whisper`). It's a graceful degradation — absence doesn't break the pipeline.
+- Before full Remotion render, run `preview.mjs` to generate per-segment keyframe PNGs (10x faster).

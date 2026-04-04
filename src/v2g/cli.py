@@ -642,18 +642,28 @@ def scout_produce(cfg: Config, topic_index, duration, model, skip_download):
     # 3. 下载视频
     downloaded_ids = []
     if videos_to_download:
-        click.echo("📥 下载视频\n")
-        for v in videos_to_download:
-            vid = v["video_id"]
-            click.echo(f"   📥 [{v['channel'][:15]}] {v['title'][:40]}...")
-            try:
-                from v2g.preparer import run_prepare
-                run_prepare(cfg, vid, model=cfg.script_model)
-                downloaded_ids.append(vid)
-                click.echo(f"   ✅ {vid} 下载完成")
-            except Exception as e:
-                click.echo(f"   ⚠️ {vid} 下载失败: {e}")
-        click.echo()
+        # 预检：lecture2note 是否可用
+        try:
+            import importlib
+            importlib.import_module("l2n")
+            _l2n_available = True
+        except ImportError:
+            _l2n_available = False
+            click.echo("⚠️ lecture2note 未安装，跳过视频下载（pip install -e ../lecture2note）\n")
+
+        if _l2n_available:
+            click.echo("📥 下载视频\n")
+            for v in videos_to_download:
+                vid = v["video_id"]
+                click.echo(f"   📥 [{v['channel'][:15]}] {v['title'][:40]}...")
+                try:
+                    from v2g.preparer import run_prepare
+                    run_prepare(cfg, vid, model=cfg.script_model)
+                    downloaded_ids.append(vid)
+                    click.echo(f"   ✅ {vid} 下载完成")
+                except Exception as e:
+                    click.echo(f"   ⚠️ {vid} 下载失败: {e}")
+            click.echo()
 
     # 4. 组装 agent 素材
     click.echo("🔧 组装素材\n")

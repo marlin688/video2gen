@@ -925,9 +925,23 @@ def run_agent(
     b_count = sum(1 for s in segments if s.get("material") == "B")
 
     if b_count > 0:
-        click.echo(f"\n🖥️ 自动采集 B 类素材 ({b_count} 段)...")
-        from v2g.autocap import run_capture
-        run_capture(cfg, project_id)
+        # 预检：ffmpeg 是否可用（autocap → recorder 需要 ffmpeg 合成视频）
+        import shutil as _shutil
+        _ffmpeg_available = _shutil.which("ffmpeg") is not None
+        if not _ffmpeg_available:
+            try:
+                import imageio_ffmpeg
+                imageio_ffmpeg.get_ffmpeg_exe()
+                _ffmpeg_available = True
+            except (ImportError, RuntimeError):
+                pass
+
+        if _ffmpeg_available:
+            click.echo(f"\n🖥️ 自动采集 B 类素材 ({b_count} 段)...")
+            from v2g.autocap import run_capture
+            run_capture(cfg, project_id)
+        else:
+            click.echo(f"\n⚠️ ffmpeg 未安装，跳过 B 类素材自动采集（{b_count} 段将在渲染时使用终端模拟动画）")
 
     # ── 完成 ─────────────────────────────────────────────
     a = sum(1 for s in segments if s.get("material") == "A")

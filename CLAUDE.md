@@ -59,7 +59,13 @@ v2g scout hn [--hours 24]             # Hacker News AI hot posts
 v2g scout article [--urls "url1;url2"]# Article monitor (RSS / manual URL / inbox)
 v2g scout ideation "topic"            # Competitive analysis + content ideation (optional YOUTUBE_API_KEY)
 v2g scout ideation --from-daily       # Auto-extract topics from daily digest
-v2g scout twitter [--temperature 0.5] # Twitter/X monitor (requires APIFY_TOKEN)
+v2g scout twitter [--temperature 0.5] # Twitter/X monitor (requires TWITTER_API_IO_KEY)
+v2g scout plan [-i N]                 # One-click planning: pick topic → NotebookLM(opt) → hook+title+outline
+v2g scout plan --skip-notebooklm      # Skip NotebookLM deep analysis
+v2g scout produce [-i N] [--model M]  # One-click production: pick video → download → agent → script.json
+v2g scout produce --skip-download     # Skip video download (use existing sources/)
+v2g scout script "topic" -a "angle"   # Run hook + title + outline in one shot
+v2g scout notebooklm "topic" -s URL   # NotebookLM deep analysis (no local token cost)
 v2g scout title "topic" --history t.json  # Title generation with historical performance benchmarking
 v2g scout waterfall "topic" --video-id ID # Content waterfall: video → blog + Twitter thread + LinkedIn
 v2g scout waterfall "topic" --url URL     # Content waterfall from article URL

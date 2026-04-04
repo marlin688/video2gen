@@ -127,42 +127,44 @@ npm run build    # TypeScript 类型检查
 
 ### 内容自动化系统
 
-从选题发现到脚本规划的全流程自动化，输出到 `output/` 目录（可直接用 Obsidian 打开）：
+从选题发现到脚本生成的三阶段全流程自动化，输出到 `output/` 目录（可直接用 Obsidian 打开）：
 
 ```bash
-# ---- 知识源头（发现话题）----
-v2g scout all                        # 一键运行全部：知识源 + 汇总 + 创意构思
+# ---- 检索（发现话题）----
+v2g scout all                        # 一键运行全部：GitHub+HN+Twitter+digest+ideation
 v2g scout github [--since 7]         # GitHub AI 趋势 (免费)
 v2g scout hn [--hours 24]            # Hacker News AI 热帖 (免费)
+v2g scout twitter [--temperature 0.5]# Twitter/X 监控 (需要 TWITTER_API_IO_KEY)
 v2g scout article --urls "url1;url2" # 文章/公众号抓取 + LLM 摘要
-
-# ---- 创意构思（选择角度）----
 v2g scout ideation "话题"            # 竞品分析 + 5-9 个内容创意
 v2g scout ideation --from-daily      # 从每日汇总自动提取话题
 
-# ---- 脚本规划（准备拍摄）----
+# ---- 规划（选题+深度分析+脚本规划）----
+v2g scout plan [-i N]                # 一键规划：选话题 → NotebookLM(可选) → hook+title+outline
+v2g scout plan --skip-notebooklm     # 跳过 NotebookLM
 v2g scout script "话题" -a "角度"    # 一键三连：钩子 + 标题 + 大纲
 v2g scout hook "话题" -a "角度"      # 5 个开场钩子变体 (口播/视觉/文字叠加)
 v2g scout title "话题" -a "角度"     # 分层标题 (Tier 1/2) + 缩略图文字
 v2g scout title "话题" --history t.json  # 标题生成 + 历史表现对标
 v2g scout outline "话题" -d 600      # 视频大纲 (章节/视觉建议/参考资料)
+v2g scout notebooklm "话题" -s URL   # NotebookLM 深度分析 (不消耗本地 token)
+
+# ---- 生产（自动生成 script.json）----
+v2g scout produce [-i N] [--model M] # 一键生产：选视频→下载→agent→script.json（全自动）
+v2g scout produce --skip-download    # 跳过视频下载
 
 # ---- 内容分发（一鱼多吃）----
 v2g scout waterfall "话题" -v VIDEO_ID   # 内容瀑布: → 博客 + Twitter 帖串 + LinkedIn
 v2g scout shorts "话题" -v VIDEO_ID      # 短视频再利用: → 30/60/90 秒脚本
 ```
 
-**典型工作流：**
+**典型工作流（三条命令完成选题到脚本）：**
 
 ```bash
-v2g scout all                                    # 1. 早上跑一次，发现话题
-# → 打开 output/daily/ 看今日汇总，选一个话题
-v2g scout ideation "Claude Code 拆解"            # 2. 做竞品分析
-v2g scout script "Claude Code 拆解" -a "图解"    # 3. 生成钩子+标题+大纲
-# → 打开 output/scout/scripts/ review，开始拍摄
-# 拍完视频上传后...
-v2g scout waterfall "Claude Code 拆解" -v VIDEO_ID  # 4. 生成博客+社交帖
-v2g scout shorts "Claude Code 拆解" -v VIDEO_ID     # 5. 生成短视频脚本
+v2g scout all                        # 1. 早上跑一次，发现话题 + 自动构思
+v2g scout plan -i 1                  # 2. 选第 1 个话题，深度分析 + 钩子/标题/大纲
+v2g scout produce -i 1               # 3. 自动下载竞品视频 + agent 生成 script.json
+# → output/{project_id}/script.json 已就绪，接下来 tts → slides → render
 ```
 
 配合 cron 实现全自动：
@@ -179,9 +181,11 @@ output/
 └── scout/
     ├── github/               # GitHub 趋势报告
     ├── hn/                   # Hacker News 热帖报告
+    ├── twitter/              # Twitter/X 话题报告
     ├── articles/             # 文章摘要
     ├── ideation/             # 竞品分析 + 创意列表
     ├── scripts/              # 钩子 / 标题 / 大纲
+    ├── notebooklm/           # NotebookLM 深度分析报告
     └── distribution/         # 内容瀑布 / 短视频脚本
 ```
 
@@ -192,7 +196,8 @@ output/
 | `GITHUB_TOPICS` | GitHub 监控主题 | `ai,ml,llm,agent,rag` |
 | `OBSIDIAN_VAULT_PATH` | Obsidian vault 路径 | `output/`（不设置也能用） |
 | `ARTICLE_RSS_URLS` | RSS 订阅 URL（逗号分隔） | — |
-| `YOUTUBE_API_KEY` | YouTube Data API v3（竞品分析用） | —（无则降级） |
+| `TWITTER_API_IO_KEY` | TwitterAPI.io 密钥（Twitter 监控用） | — |
+| `YOUTUBE_API_KEY` | YouTube Data API v3（竞品分析 + produce 用） | —（无则降级） |
 | `TELEGRAM_BOT_TOKEN` | Telegram 推送通知 | — |
 | `TELEGRAM_CHAT_ID` | Telegram Chat ID | — |
 

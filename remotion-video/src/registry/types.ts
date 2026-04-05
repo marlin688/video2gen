@@ -172,6 +172,32 @@ export interface BrowserData {
   };
 }
 
+export interface ImageOverlayData {
+  schema: "image-overlay";
+  /** 图片文件路径（相对 public/） */
+  imagePath: string;
+  /** 叠加文字说明 */
+  overlayText?: string;
+  /** 文字位置 */
+  overlayPosition?: "top" | "center" | "bottom";
+  /** Ken Burns 效果方向 */
+  kenBurns?: "zoom-in" | "zoom-out" | "pan-left" | "pan-right";
+}
+
+export interface WebVideoData {
+  schema: "web-video";
+  /** 视频文件路径（下载后本地文件，相对 public/） */
+  videoFile: string;
+  /** 叠加文字说明 */
+  overlayText?: string;
+  /** 叠加位置 */
+  overlayPosition?: "top" | "bottom";
+  /** 滤镜（统一视觉风格） */
+  filter?: "none" | "desaturate" | "tint";
+  /** TTS 时长用于同步 */
+  ttsDuration: number;
+}
+
 /** 所有 schema 数据的 discriminated union */
 export type SegmentData =
   | SlideData
@@ -182,7 +208,9 @@ export type SegmentData =
   | SocialCardData
   | DiagramData
   | HeroStatData
-  | BrowserData;
+  | BrowserData
+  | ImageOverlayData
+  | WebVideoData;
 
 export type SchemaName = SegmentData["schema"];
 
@@ -200,6 +228,8 @@ export type SchemaDataMap = {
   diagram: DiagramData;
   "hero-stat": HeroStatData;
   browser: BrowserData;
+  "image-overlay": ImageOverlayData;
+  "web-video": WebVideoData;
 };
 
 // ---------------------------------------------------------------------------

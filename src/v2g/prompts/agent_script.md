@@ -149,8 +149,9 @@
 
 - segments 数量: 8-10 段（不要超过 10 段）
 - 总字数: 500-800 字（3-4 分钟 TTS）
-- 素材比例: 有字幕时 A ≤30% B ≥50% C ~20%；无字幕时 A ≤30% B ≥70%
-- 避免连续两段使用相同素材类型（视觉节奏：A→B→B→A→B→B→A）
+- 素材比例: A 40-60%, B ≥20%, C 可选（原创视频无需源视频片段）
+- 避免连续两段使用相同素材类型（视觉节奏：A→B→A→B 交替）
+- 视觉节奏控制：连续两个 segment 不得使用同一 schema 的组件（如 slide 后应接 terminal/diagram/code-block 等），每个脚本至少使用 3 种不同的视觉 schema
 - B 类素材的 recording_instruction 中尽可能包含 URL
 - bullet_points 禁止 emoji
 - 不要编造素材中没有的事实，但可以加入你自己的分析判断

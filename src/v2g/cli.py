@@ -971,5 +971,105 @@ def status(cfg: Config, video_id):
             click.echo(f"   📁 最终输出: {', '.join(finals)}")
 
 
+# ── 素材库管理 ────────────────────────────────────────────
+
+
+@main.group()
+def assets():
+    """素材库管理（入库、打标、检索、保鲜）"""
+
+
+@assets.command("ingest")
+@click.argument("project_id")
+@click.pass_obj
+def assets_ingest(cfg: Config, project_id):
+    """自产素材入库：切片 + 自动打标 + 写入 SQLite"""
+    from v2g.asset_store import AssetStore
+    from v2g.asset_ingest import ingest_from_video
+
+    db_path = cfg.output_dir / "assets.db"
+    with AssetStore(db_path) as store:
+        count = ingest_from_video(cfg, project_id, store)
+        total = store.count()
+        click.echo(f"✅ 入库 {count} 个片段，素材库总量: {total}")
+
+
+@assets.command("refresh")
+@click.pass_obj
+def assets_refresh(cfg: Config):
+    """月度保鲜扫描：标记过期素材"""
+    from v2g.asset_store import AssetStore
+
+    db_path = cfg.output_dir / "assets.db"
+    with AssetStore(db_path) as store:
+        marked = store.mark_stale()
+        stale = store.count_stale()
+        total = store.count()
+        click.echo(f"🔄 本次标记 {marked} 个素材为 possibly_outdated")
+        click.echo(f"   素材库: {total} 总量, {stale} 个过期")
+
+
+@assets.command("stats")
+@click.pass_obj
+def assets_stats(cfg: Config):
+    """查看素材库统计"""
+    from v2g.asset_store import AssetStore
+
+    db_path = cfg.output_dir / "assets.db"
+    if not db_path.exists():
+        click.echo("❌ 素材库不存在，请先运行 v2g assets ingest")
+        return
+
+    with AssetStore(db_path) as store:
+        total = store.count()
+        stale = store.count_stale()
+        click.echo(f"📊 素材库统计:")
+        click.echo(f"   总量: {total}")
+        click.echo(f"   过期: {stale}")
+
+        engagement = store.aggregate_engagement()
+        if engagement:
+            click.echo(f"\n   📈 留存表现 (样本≥5):")
+            for combo, score in engagement.items():
+                emoji = "↑" if score > 0 else "↓" if score < 0 else "→"
+                click.echo(f"      {emoji} {combo}: {score:+.2f}")
+
+
+@assets.command("annotate")
+@click.argument("project_id")
+@click.option("--retention", "retention_csv", required=True, type=click.Path(exists=True),
+              help="B 站留存率 CSV 文件路径")
+@click.pass_obj
+def assets_annotate(cfg: Config, project_id, retention_csv):
+    """完播率回标：将留存曲线映射到 segment"""
+    from v2g.asset_store import AssetStore
+    from v2g.retention import annotate_retention, print_retention_report
+
+    db_path = cfg.output_dir / "assets.db"
+    with AssetStore(db_path) as store:
+        results = annotate_retention(cfg, project_id, Path(retention_csv), store)
+        print_retention_report(results, project_id)
+
+
+@assets.command("context")
+@click.option("--limit", default=30, type=int, help="最大素材数")
+@click.pass_obj
+def assets_context(cfg: Config, limit):
+    """输出 LLM context 格式的素材列表"""
+    from v2g.asset_store import AssetStore
+
+    db_path = cfg.output_dir / "assets.db"
+    if not db_path.exists():
+        click.echo("素材库为空")
+        return
+
+    with AssetStore(db_path) as store:
+        ctx = store.to_context(limit=limit)
+        if ctx:
+            click.echo(ctx)
+        else:
+            click.echo("素材库为空")
+
+
 if __name__ == "__main__":
     main()

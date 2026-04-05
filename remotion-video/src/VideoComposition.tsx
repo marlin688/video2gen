@@ -7,7 +7,7 @@
 
 import {
   AbsoluteFill, Sequence, Series, staticFile,
-  useCurrentFrame, useVideoConfig, interpolate,
+  useCurrentFrame, useVideoConfig, interpolate, Easing,
 } from "remotion";
 import React from "react";
 import { Audio } from "@remotion/media";
@@ -20,6 +20,7 @@ import { ThemeProvider, getTheme } from "./registry/theme";
 import type {
   SlideData, TerminalData, RecordingData, SourceClipData,
   CodeBlockData, SocialCardData, DiagramData, HeroStatData, BrowserData,
+  ImageOverlayData, WebVideoData,
   SegmentData, StyleComponentProps,
 } from "./registry/types";
 
@@ -30,6 +31,8 @@ import type {
  * - 第一段只淡入不淡出，最后一段只淡出不淡入（避免开头/结尾突兀）
  */
 const FADE_FRAMES = 8;
+
+const SCALE_FRAMES = 12; // 入场微缩放持续帧数 (0.4s @30fps)
 
 const SegmentTransition: React.FC<{
   isFirst: boolean;
@@ -51,9 +54,17 @@ const SegmentTransition: React.FC<{
 
   const opacity = Math.min(fadeIn, fadeOut);
 
+  // 入场微缩放：从 0.97 → 1.0，配合 fade 形成"推入"感
+  const scale = interpolate(
+    frame, [0, SCALE_FRAMES], [0.97, 1],
+    { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) },
+  );
+
   return (
     <AbsoluteFill>
-      {children}
+      <AbsoluteFill style={{ transform: `scale(${scale})` }}>
+        {children}
+      </AbsoluteFill>
       {/* 黑色遮罩层实现 fade through black */}
       <AbsoluteFill
         style={{
@@ -198,6 +209,31 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
           repoInfo: seg.browser_content?.repoInfo,
         } satisfies BrowserData;
         break;
+
+      case "image-overlay":
+        data = {
+          schema: "image-overlay",
+          imagePath: seg.image_content?.image_path || "",
+          overlayText: seg.image_content?.overlay_text,
+          overlayPosition: seg.image_content?.overlay_position,
+          kenBurns: seg.image_content?.ken_burns || "zoom-in",
+        } satisfies ImageOverlayData;
+        break;
+
+      case "web-video": {
+        const ttsDur = t ? t.duration : 10;
+        data = {
+          schema: "web-video",
+          videoFile: seg.web_video?.source_url
+            ? `web_videos/${seg.web_video.source_url}`
+            : "",
+          overlayText: seg.web_video?.overlay_text,
+          overlayPosition: seg.web_video?.overlay_position,
+          filter: (seg.web_video?.filter || "none") as "none" | "desaturate" | "tint",
+          ttsDuration: ttsDur,
+        } satisfies WebVideoData;
+        break;
+      }
 
       default:
         return <AbsoluteFill style={{ backgroundColor: "#000" }} />;

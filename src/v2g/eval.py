@@ -61,9 +61,11 @@ def eval_script(script: dict, video_id: str = "") -> dict:
     a_ratio = a_count / max(seg_count, 1)
     b_ratio = b_count / max(seg_count, 1)
 
-    check("A素材 ≤40%", a_ratio <= 0.45, weight=2, detail=f"A={a_count}/{seg_count} ({a_ratio:.0%})")
-    check("B素材 ≥30%", b_ratio >= 0.25, weight=2, detail=f"B={b_count}/{seg_count} ({b_ratio:.0%})")
-    check("C素材存在", c_count > 0, detail=f"C={c_count}/{seg_count}")
+    check("A素材 40-60%", 0.35 <= a_ratio <= 0.65, weight=2,
+          detail=f"A={a_count}/{seg_count} ({a_ratio:.0%})")
+    check("B素材 ≥20%", b_ratio >= 0.15, weight=2,
+          detail=f"B={b_count}/{seg_count} ({b_ratio:.0%})")
+    check("C素材可选", True, detail=f"C={c_count}/{seg_count}")
 
     # --- 解说词质量 ---
     total_chars = 0
@@ -133,6 +135,28 @@ def eval_script(script: dict, video_id: str = "") -> dict:
         if segments[i].get("material") == segments[i - 1].get("material"):
             consecutive += 1
     check("素材类型交替", consecutive <= 2, detail=f"{consecutive} 处连续相同素材")
+
+    # --- 视觉 schema 多样性 ---
+    def _seg_schema(seg: dict) -> str:
+        comp = seg.get("component")
+        if comp:
+            return comp.split(".")[0]
+        mat = seg.get("material", "A")
+        return {"A": "slide", "B": "terminal", "C": "source-clip"}.get(mat, mat)
+
+    schemas_used = {_seg_schema(s) for s in segments}
+    check("视觉 schema 多样性", len(schemas_used) >= 3, weight=1,
+          detail=f"使用了 {len(schemas_used)} 种 schema: {sorted(schemas_used)}")
+
+    consecutive_schema = 0
+    prev_schema = None
+    for seg in segments:
+        cur = _seg_schema(seg)
+        if cur == prev_schema:
+            consecutive_schema += 1
+        prev_schema = cur
+    check("无连续相同 schema", consecutive_schema <= 1, weight=1,
+          detail=f"{consecutive_schema} 处连续相同 schema")
 
     # --- 脚本结构 (intro/body/outro) ---
     types = [s.get("type", "") for s in segments]

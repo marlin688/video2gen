@@ -75,7 +75,7 @@ class TestGrading:
         assert "JSON 结构合法" in critical_names
 
     def test_warning_on_material_ratio(self):
-        """全 A 段 → A素材 ≤40% 失败 (weight=2 → warning)。"""
+        """全 A 段 → A素材 40-60% 失败 (weight=2 → warning)。"""
         segments = [
             _seg(1, "intro", "A", "开场白。" * 5),
             *[_seg(i, "body", "A", f"第{i}段测试旁白。" * 3) for i in range(2, 10)],
@@ -87,8 +87,8 @@ class TestGrading:
         }
         report = eval_script(script, "test")
         warning_names = [c["name"] for c in report["warning_failed"]]
-        assert "A素材 ≤40%" in warning_names
-        assert "B素材 ≥30%" in warning_names
+        assert "A素材 40-60%" in warning_names
+        assert "B素材 ≥20%" in warning_names
 
     def test_info_on_missing_outro(self):
         """无 outro → weight=1 → info 级别。"""

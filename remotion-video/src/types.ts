@@ -74,6 +74,24 @@ export interface ScriptSegment {
     stats: Array<{ value: string; label: string; oldValue?: string; trend?: "up" | "down" | "neutral" }>;
     footnote?: string;
   };
+  // image-overlay 组件
+  image_content?: {
+    image_path: string;
+    overlay_text?: string;
+    overlay_position?: "top" | "center" | "bottom";
+    ken_burns?: "zoom-in" | "zoom-out" | "pan-left" | "pan-right";
+  };
+  // web-video 组件
+  web_video?: {
+    search_query: string;
+    source_url?: string;
+    clip_start?: number;
+    clip_end?: number;
+    overlay_text?: string;
+    overlay_position?: "top" | "bottom";
+    filter?: "none" | "desaturate" | "tint";
+    fallback_component?: string;
+  };
   // browser 组件
   browser_content?: {
     url: string;

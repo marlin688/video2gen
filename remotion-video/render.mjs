@@ -111,6 +111,22 @@ copyAsset(voiceoverSrc, path.join(publicDir, "voiceover.mp3"));
 // 复制 slides 目录
 copyAsset(path.join(videoDir, "slides"), path.join(publicDir, "slides"));
 
+// 复制 images 目录（图片叠加素材）
+const imagesSrc = path.join(videoDir, "images");
+const imagesDst = path.join(publicDir, "images");
+if (fs.existsSync(imagesSrc)) {
+  fs.cpSync(imagesSrc, imagesDst, { recursive: true });
+  console.log(`   复制: images/ (${fs.readdirSync(imagesSrc).length} 文件)`);
+}
+
+// 复制 web_videos 目录（网络视频素材）
+const webVideosSrc = path.join(videoDir, "web_videos");
+const webVideosDst = path.join(publicDir, "web_videos");
+if (fs.existsSync(webVideosSrc)) {
+  fs.cpSync(webVideosSrc, webVideosDst, { recursive: true });
+  console.log(`   复制: web_videos/ (${fs.readdirSync(webVideosSrc).length} 文件)`);
+}
+
 // 复制/创建 recordings 目录
 const recordingsSrc = path.join(videoDir, "recordings");
 const recordingsDst = path.join(publicDir, "recordings");

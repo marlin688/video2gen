@@ -58,3 +58,9 @@ import "./styles/hero-stat/progress";
 // browser (2 styles)
 import "./styles/browser/default";
 import "./styles/browser/github";
+
+// image-overlay (1 style)
+import "./styles/image-overlay/default";
+
+// web-video (1 style)
+import "./styles/web-video/default";

@@ -167,15 +167,15 @@ function DetailCard({ node, opacity, translateY, itemReveal }: {
   return (
     <div style={{
       flex: 1,
-      minWidth: 320,
+      minWidth: 280,
       maxWidth: 420,
       borderRadius: 16,
       background: t.surface,
       border: `1px solid ${t.surfaceBorder}`,
-      padding: "20px 24px",
+      padding: "16px 20px",
       display: "flex",
       flexDirection: "column",
-      gap: 14,
+      gap: 10,
       opacity,
       transform: `translateY(${translateY}px)`,
     }}>
@@ -311,7 +311,7 @@ const DiagramTreeCard: React.FC<StyleComponentProps<"diagram">> = ({ data }) => 
       flexDirection: "column",
       alignItems: "center",
       justifyContent: "center",
-      padding: "50px 80px",
+      padding: "30px 60px",
       gap: 0,
     }}>
       {/* 背景网格 */}
@@ -329,8 +329,8 @@ const DiagramTreeCard: React.FC<StyleComponentProps<"diagram">> = ({ data }) => 
         <div style={{
           position: "relative",
           zIndex: 1,
-          marginBottom: 20,
-          fontSize: 26,
+          marginBottom: 12,
+          fontSize: 24,
           color: t.textDim,
           fontFamily: t.monoFont,
           fontWeight: 600,
@@ -362,97 +362,101 @@ const DiagramTreeCard: React.FC<StyleComponentProps<"diagram">> = ({ data }) => 
         ))}
       </div>
 
-      {/* 连线区域（SVG） */}
-      <svg
-        width="100%"
-        height={60}
-        style={{
-          position: "relative",
-          zIndex: 1,
-          overflow: "visible",
-        }}
-      >
-        {cards.length > 0 && (() => {
-          const centerX = 50; // percent
-          const totalWidth = Math.min(cards.length * 25, 80); // percent
-          const startX = centerX - totalWidth / 2;
-          const stepX = cards.length > 1 ? totalWidth / (cards.length - 1) : 0;
+      {/* 连线 + 子卡片共用容器（保证坐标系一致） */}
+      {(() => {
+        const CARD_GAP = 24;
+        const CARD_MAX_W = 420;
+        const CARD_MIN_W = 280;
+        const SVG_H = 44;
+        // 推算卡片实际宽度（flex:1 + min/max 约束）
+        const n = cards.length || 1;
+        const containerW = 1500;
+        const rawW = (containerW - (n - 1) * CARD_GAP) / n;
+        const cardW = Math.max(CARD_MIN_W, Math.min(CARD_MAX_W, rawW));
+        const totalW = n * cardW + (n - 1) * CARD_GAP;
 
-          return (
-            <>
-              {/* 垂直主干 */}
+        // 每张卡片中心 x（相对于容器左边缘，px）
+        const centers = cards.map((_, i) => i * (cardW + CARD_GAP) + cardW / 2);
+
+        return (
+          <div style={{
+            position: "relative",
+            zIndex: 1,
+            width: totalW,
+            flexShrink: 0,
+          }}>
+            {/* SVG 连线层（绝对定位在卡片上方） */}
+            <svg
+              width={totalW}
+              height={SVG_H}
+              style={{ display: "block", overflow: "visible" }}
+            >
+              {/* 从顶部中心垂直向下到横线 */}
               <line
-                x1={`${centerX}%`} y1="0"
-                x2={`${centerX}%`} y2="30"
+                x1={totalW / 2} y1={0}
+                x2={totalW / 2} y2={SVG_H / 2}
                 stroke={t.surfaceBorder}
                 strokeWidth={2}
                 strokeDasharray="200"
                 strokeDashoffset={interpolate(lineP, [0, 1], [200, 0])}
               />
-              {/* 水平横线 */}
-              {cards.length > 1 && (
+              {/* 水平横线：从第一张卡片中心到最后一张 */}
+              {n > 1 && (
                 <line
-                  x1={`${startX}%`} y1="30"
-                  x2={`${startX + totalWidth}%`} y2="30"
+                  x1={centers[0]} y1={SVG_H / 2}
+                  x2={centers[n - 1]} y2={SVG_H / 2}
                   stroke={t.surfaceBorder}
                   strokeWidth={2}
-                  strokeDasharray="1000"
-                  strokeDashoffset={interpolate(lineP, [0, 1], [1000, 0])}
+                  strokeDasharray="2000"
+                  strokeDashoffset={interpolate(lineP, [0, 1], [2000, 0])}
                 />
               )}
-              {/* 向下分支 */}
-              {cards.map((_, i) => {
-                const x = cards.length === 1 ? centerX : startX + i * stepX;
+              {/* 每张卡片的垂直分支 */}
+              {centers.map((cx, i) => (
+                <line
+                  key={i}
+                  x1={cx} y1={SVG_H / 2}
+                  x2={cx} y2={SVG_H}
+                  stroke={t.surfaceBorder}
+                  strokeWidth={2}
+                  strokeDasharray="200"
+                  strokeDashoffset={interpolate(lineP, [0, 1], [200, 0])}
+                />
+              ))}
+            </svg>
+
+            {/* 子卡片 */}
+            <div style={{
+              display: "flex",
+              gap: CARD_GAP,
+              justifyContent: "center",
+            }}>
+              {cards.map((card, i) => {
+                const delay = cardBaseDelay + i * 8;
+                const cardP = spring({
+                  frame: Math.max(0, frame - delay),
+                  fps, config: { damping: 14, stiffness: 100 },
+                  durationInFrames: 20,
+                });
+                const itemP = spring({
+                  frame: Math.max(0, frame - delay - 10),
+                  fps, config: { damping: 18, stiffness: 60 },
+                  durationInFrames: 30,
+                });
                 return (
-                  <line
-                    key={i}
-                    x1={`${x}%`} y1="30"
-                    x2={`${x}%`} y2="60"
-                    stroke={t.surfaceBorder}
-                    strokeWidth={2}
-                    strokeDasharray="200"
-                    strokeDashoffset={interpolate(lineP, [0, 1], [200, 0])}
+                  <DetailCard
+                    key={card.id}
+                    node={card}
+                    opacity={interpolate(cardP, [0, 1], [0, 1])}
+                    translateY={interpolate(cardP, [0, 1], [40, 0])}
+                    itemReveal={itemP}
                   />
                 );
               })}
-            </>
-          );
-        })()}
-      </svg>
-
-      {/* 子卡片 */}
-      <div style={{
-        position: "relative",
-        zIndex: 1,
-        display: "flex",
-        gap: 24,
-        justifyContent: "center",
-        flexWrap: "wrap" as const,
-        maxWidth: 1500,
-      }}>
-        {cards.map((card, i) => {
-          const delay = cardBaseDelay + i * 8;
-          const cardP = spring({
-            frame: Math.max(0, frame - delay),
-            fps, config: { damping: 14, stiffness: 100 },
-            durationInFrames: 20,
-          });
-          const itemP = spring({
-            frame: Math.max(0, frame - delay - 10),
-            fps, config: { damping: 18, stiffness: 60 },
-            durationInFrames: 30,
-          });
-          return (
-            <DetailCard
-              key={card.id}
-              node={card}
-              opacity={interpolate(cardP, [0, 1], [0, 1])}
-              translateY={interpolate(cardP, [0, 1], [40, 0])}
-              itemReveal={itemP}
-            />
-          );
-        })}
-      </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 底部 footnote pills */}
       {footnotePills.length > 0 && (

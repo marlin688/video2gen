@@ -233,8 +233,9 @@ terminal_session 步骤类型说明：
 - 总字数 500-800 字（3-4 分钟 TTS）
 - segments 数量严格控制在 8-10 段（不要超过 10 段）
 - recording_instruction 控制在 80 字以内，写关键步骤即可
-- 素材占比: A ~40%, B ~40%, C ~20%
+- 素材占比: A 40-60%, B ≥20%, C 可选（原创视频无需源视频片段）
 - 素材 C 每段严格 ≤10 秒
 - source_start/source_end 必须基于提供的字幕时间线，不要瞎编
 - slide_content.bullet_points 禁止使用 emoji（不要 ❌✅⚠️📈 等），用纯文本
 - 不要编造原视频没有的事实，但可以加入你自己的分析和判断
+- 视觉节奏控制：连续两个 segment 不得使用同一 schema 的组件（如 slide 后应接 terminal/diagram/code-block 等），每个脚本至少使用 3 种不同的视觉 schema，segment 的 component 字段应体现多样性，不要全部省略让默认 slide 兜底

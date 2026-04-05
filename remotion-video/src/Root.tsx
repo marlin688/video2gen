@@ -531,6 +531,49 @@ const PREVIEWS: Record<string, SingleStyleProps> = {
       },
     },
   },
+  // ── 结构骨架 ──
+  "slide.hook-opener": {
+    styleId: "slide.hook-opener",
+    data: { schema: "slide", title: "你还在手写代码？", bullet_points: ["95% 的开发者不知道这个工具"], chart_hint: "" },
+  },
+  "slide.transition-bridge": {
+    styleId: "slide.transition-bridge",
+    data: { schema: "slide", title: "但是...", bullet_points: ["接下来的真实效果可能会颠覆你的认知"], chart_hint: "" },
+  },
+  "slide.cta-outro": {
+    styleId: "slide.cta-outro",
+    data: { schema: "slide", title: "如果觉得有用，别忘了", bullet_points: ["关注频道获取更多 AI 技巧", "点赞让更多人看到", "GitHub 链接在简介"], chart_hint: "" },
+  },
+  // ── 动态演示 ──
+  "slide.typing-demo": {
+    styleId: "slide.typing-demo",
+    data: { schema: "slide", title: "Prompt", bullet_points: ["请以资深技术编辑的身份，", "分析这篇论文的核心创新点，", "用 3 个要点总结，每个要点附带一个具体例子。"], chart_hint: "" },
+  },
+  "slide.before-after": {
+    styleId: "slide.before-after",
+    data: { schema: "slide", title: "开发效率对比", bullet_points: ["手动写 200 行代码", "调试 2 小时", "反复查文档", "---", "Claude 10 秒生成", "自动修复 Bug", "内置最佳实践"], chart_hint: "" },
+  },
+  "slide.live-counter": {
+    styleId: "slide.live-counter",
+    data: { schema: "slide", title: "效率提升", bullet_points: ["200行 → 0行 手动代码", "120分钟 → 10秒 调试时间", "15次 → 1次 迭代次数"], chart_hint: "" },
+  },
+  "slide.screen-capture-mock": {
+    styleId: "slide.screen-capture-mock",
+    data: { schema: "slide", title: "Claude Code 操作演示", bullet_points: ["打开终端", "输入 claude 启动 Agent", "选择项目目录", "输入 prompt 描述任务", "等待 Agent 自动执行", "查看生成的代码", "运行测试验证", "完成！提交代码"], chart_hint: "" },
+  },
+  // ── 叙事节奏 ──
+  "slide.problem-statement": {
+    styleId: "slide.problem-statement",
+    data: { schema: "slide", title: "Agent 系统的三大痛点", bullet_points: ["任务成功率不到 70%，随时可能跑偏", "换个模型效果就崩，完全不可迁移", "出了错没有恢复机制，只能从头来过"], chart_hint: "" },
+  },
+  "slide.solution-reveal": {
+    styleId: "slide.solution-reveal",
+    data: { schema: "slide", title: "Harness Engineering 解决方案", bullet_points: ["结构化任务拆解，每步可验证", "模型无关的执行框架，随时切换", "内置错误检测 + 自动恢复机制"], chart_hint: "" },
+  },
+  "slide.result-showcase": {
+    styleId: "slide.result-showcase",
+    data: { schema: "slide", title: "最终效果", bullet_points: ["95% 任务成功率", "3x 开发效率提升", "0 人工干预", "100% 可复现"], chart_hint: "" },
+  },
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

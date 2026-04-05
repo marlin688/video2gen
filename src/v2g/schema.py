@@ -134,6 +134,28 @@ class RepoInfo(BaseModel):
     pullRequests: str | None = None
 
 
+class ImageContent(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    image_path: str
+    overlay_text: str | None = None
+    overlay_position: Literal["top", "center", "bottom"] | None = None
+    ken_burns: Literal["zoom-in", "zoom-out", "pan-left", "pan-right"] | None = None
+
+
+class WebVideo(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    search_query: str
+    source_url: str | None = None
+    clip_start: float | None = None
+    clip_end: float | None = None
+    overlay_text: str | None = None
+    overlay_position: Literal["top", "bottom"] | None = None
+    filter: Literal["none", "desaturate", "tint"] | None = None
+    fallback_component: str | None = None
+
+
 class BrowserContent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -151,6 +173,7 @@ class BrowserContent(BaseModel):
 _VALID_SCHEMAS = frozenset([
     "slide", "terminal", "recording", "source-clip",
     "code-block", "social-card", "diagram", "hero-stat", "browser",
+    "image-overlay", "web-video",
 ])
 
 _COMPONENT_RE = re.compile(r"^([a-z][a-z0-9-]*)\.\w[\w-]*$")
@@ -175,6 +198,11 @@ class ScriptSegment(BaseModel):
     source_video_index: int | None = None
     source_start: float | None = None
     source_end: float | None = None
+
+    # 图片叠加组件
+    image_content: ImageContent | None = None
+    # 网络视频组件
+    web_video: WebVideo | None = None
 
     # 高级组件
     code_content: CodeContent | None = None
@@ -209,6 +237,14 @@ class ScriptSegment(BaseModel):
         if self.material == "A" and not self.component:
             if not self.slide_content:
                 errors.append("material=A 且无 component 时必须有 slide_content")
+
+        if self.component and self.component.startswith("image-overlay"):
+            if not self.image_content:
+                errors.append("使用 image-overlay 组件时必须有 image_content")
+
+        if self.component and self.component.startswith("web-video"):
+            if not self.web_video:
+                errors.append("使用 web-video 组件时必须有 web_video")
 
         if self.material == "B" and not self.component:
             if not self.terminal_session and not self.recording_instruction:

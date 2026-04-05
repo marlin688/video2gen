@@ -64,6 +64,13 @@ if (fs.existsSync(slidesSrc)) {
   fs.cpSync(slidesSrc, slidesDst, { recursive: true });
 }
 
+// 复制 images（图片叠加素材，preview 需要显示）
+const imagesSrc = path.join(videoDir, "images");
+const imagesDst = path.join(publicDir, "images");
+if (fs.existsSync(imagesSrc)) {
+  fs.cpSync(imagesSrc, imagesDst, { recursive: true });
+}
+
 // 空 recordings 目录（preview 不需要录屏）
 const recDst = path.join(publicDir, "recordings");
 if (!fs.existsSync(recDst)) fs.mkdirSync(recDst, { recursive: true });

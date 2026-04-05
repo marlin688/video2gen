@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-video2gen (v2g) is an automated pipeline for creating derivative (二创) video content from YouTube source videos using AI. It combines a Python backend (pipeline orchestration, LLM scripting, TTS) with a TypeScript/React frontend (Remotion video rendering).
+video2gen (v2g) is an automated pipeline for creating original AI Tech video content. It combines a Python backend (pipeline orchestration, LLM scripting, TTS, asset management) with a TypeScript/React frontend (Remotion video rendering). The pipeline supports topic discovery, script generation, multi-schema visual rendering, and a growing asset library with retention-based feedback loops.
 
 ## Directory Structure
 
@@ -24,12 +24,17 @@ output/{project_id}/             ← 项目工作目录
         word_timing.json         ← 词级时间戳 (mlx-whisper, 可选)
         segments/seg_*.mp3       ← 分段音频
     slides/slide_*.png           ← 幻灯片图片
+    images/                      ← 图片叠加素材 (image-overlay 组件用)
+    web_videos/                  ← 下载的网络视频片段 (web-video 组件用)
     recordings/seg_*.mp4         ← 录屏素材
+    asset_clips/seg_*.mp4        ← 素材库切片 (ingest 产物)
     clips/seg_*.mp4              ← FFmpeg 中间产物
     screenshots/                 ← recorder 中间产物
     final/                       ← 最终交付物
         video.mp4                ← 最终视频
         subtitles.srt            ← SRT 字幕
+
+output/assets.db                 ← 素材库 SQLite 数据库
 ```
 
 ## Commands
@@ -71,6 +76,11 @@ v2g scout waterfall "topic" --video-id ID # Content waterfall: video → blog + 
 v2g scout waterfall "topic" --url URL     # Content waterfall from article URL
 v2g scout waterfall "topic" --file path   # Content waterfall from local file
 v2g scout shorts "topic" --video-id ID    # Short-form repurpose: long → 30/60/90s scripts
+v2g assets ingest <project_id>            # Post-render: cut video into clips → auto-tag → SQLite
+v2g assets refresh                        # Monthly: mark stale assets (product_ui 3mo, terminal 6mo)
+v2g assets stats                          # Asset library statistics + engagement aggregation
+v2g assets context [--limit N]            # Output LLM-ready asset list for script generation
+v2g assets annotate <project_id> --retention <csv>  # Map B站 retention curve to segment scores
 ```
 
 ### Remotion (from `remotion-video/`)
@@ -112,7 +122,7 @@ Agent orchestration (v2g agent):
 2. Parses `checkpoint.json` to detect single vs multi-source mode
 3. Finds source videos in `sources/{video_id}/` (fallback: `output/subtitle/`)
 4. Auto-transcodes source videos (AV1/VP9 → H.264) if needed
-5. Copies assets into `remotion-video/public/` (auto-cleaned after render)
+5. Copies assets into `remotion-video/public/` (auto-cleaned after render): slides/, images/, web_videos/, recordings/, voiceover
 6. Generates `final/subtitles.srt` (uses `word_timing.json` for precise alignment when available, falls back to character-proportional splitting) and renders `final/video.mp4`
 
 Composition ID is hardcoded as `V2GVideo` in `Root.tsx`. Resolution is 1920x1080 @ 30fps.
@@ -121,7 +131,7 @@ Composition ID is hardcoded as `V2GVideo` in `Root.tsx`. Resolution is 1920x1080
 
 Visual rendering uses a two-layer model separating data contracts (Schema) from visual implementations (Style):
 
-- **Schemas** (stable): `slide`, `terminal`, `recording`, `source-clip`, `code-block`, `social-card`, `diagram`, `hero-stat`, `browser` — define data interfaces in `registry/types.ts`
+- **Schemas** (stable): `slide`, `terminal`, `recording`, `source-clip`, `code-block`, `social-card`, `diagram`, `hero-stat`, `browser`, `image-overlay`, `web-video` — define data interfaces in `registry/types.ts`
 - **Styles** (iterable): visual implementations in `registry/styles/{schema}/{name}.tsx` — self-register via `registry.register()` at import time
 - **Registry** (`registry/registry.ts`): `ComponentRegistry` class with `resolve()`, `resolveForSegment()`, `toLLMPromptTable()`
 - **Init** (`registry/init.ts`): imports all style files to trigger registration
@@ -134,14 +144,14 @@ Style ID format: `"{schema}.{style-name}"`, e.g. `"slide.tech-dark"`.
 
 To add a new visual style: create `registry/styles/{schema}/{name}.tsx` with `registry.register()` call at bottom + add import to `init.ts`.
 
-### Three Material Types
+### Three Material Types (Original Content Semantics)
 
 Each script segment specifies one of three material types, and optionally a `component` field (style ID like `"slide.tech-dark"`) for explicit visual component selection:
-- **A (PPT slides)** — AI-generated slide images. Layout detection happens in TypeScript (`registry/styles/slide/tech-dark.tsx` `detectLayout()`), not Python. 6 layout modes: code, compare, metric, grid, steps, standard.
-- **B (Screen recording)** — User-provided screen captures, or screenshots auto-converted via `v2g record`. Missing recordings fall back to `terminal.aurora` style (animated Claude Code TUI simulation) in Remotion, or a placeholder card in FFmpeg.
-- **C (Source clip)** — Trimmed + speed-adjusted clips from original video. Capped at 10 seconds, bottom 15% cropped to remove hardcoded subtitles.
+- **A (Generated visuals)** — AI-generated content: slide cards (6 auto-detected layouts), diagrams, code blocks, social cards, hero stats, browser mocks, **image overlays** (real screenshots/photos with Ken Burns effect + text overlay). The `component` field selects the visual schema.
+- **B (Recordings/demos)** — User-provided screen captures, or screenshots auto-converted via `v2g record`. Missing recordings fall back to `terminal.aurora` style (animated Claude Code TUI simulation) in Remotion, or a placeholder card in FFmpeg.
+- **C (Referenced materials)** — External content: **web video clips** (product demos, conference talks, downloaded via yt-dlp with overlay text + filter), or trimmed source clips. Web-video segments include a `fallback_component` for graceful degradation when download fails.
 
-Target ratio: A ≤30%, B ≥50%, C ~20%.
+Target ratio: A 40-60%, B ≥20%, C optional (original content may not need external references).
 
 ### Pipeline State
 
@@ -156,7 +166,7 @@ State persists in `output/{video_id}/checkpoint.json` (`PipelineState` dataclass
 
 ### Key Data Files
 
-- `script.json` — LLM-generated script with segments (id, type, material, component?, narration_zh, slide_content/recording_instruction/terminal_session/source timing). The optional `component` field specifies a style ID (e.g. `"slide.tech-dark"`); when absent, defaults by material type. B-material segments include `terminal_session` (structured terminal steps: input/output/status/tool/blank) for driving terminal animation when no recording exists. Multi-source mode adds `sources_used`, `total_duration_hint`.
+- `script.json` — LLM-generated script with segments (id, type, material, component?, narration_zh, slide_content/recording_instruction/terminal_session/source timing/image_content/web_video). The optional `component` field specifies a style ID (e.g. `"slide.tech-dark"`, `"image-overlay.default"`, `"web-video.default"`); when absent, defaults by material type. B-material segments include `terminal_session` (structured terminal steps: input/output/status/tool/blank) for driving terminal animation when no recording exists. A-material segments may use `image_content` (image_path, overlay_text, ken_burns) for image overlay. C-material segments may use `web_video` (search_query, source_url, fallback_component) for external video. Multi-source mode adds `sources_used`, `total_duration_hint`.
 - `script_meta.json` — Generation metadata: model name, prompt hash, timestamp, input/output char counts. Used for prompt version tracking.
 - `voiceover/timing.json` — `{segment_id: {file, duration, text_length}}` mapping from TTS output.
 - `voiceover/word_timing.json` — (optional) `{segment_id: [{word, start, end}, ...]}` word-level timestamps from mlx-whisper alignment.
@@ -192,7 +202,7 @@ Platform proxy system (`config.py` `_apply_platform()`) maps platform-specific e
 
 **Cost tracking** (`cost.py`): Module-level `CostTracker` singleton records token usage from every LLM call (extracted from API responses) and TTS character consumption. Summary saved to `checkpoint.json` `cost_summary` field and printed at pipeline end.
 
-**Schema validation** (`schema.py`): Pydantic v2 models mirror `remotion-video/src/types.ts`. `validate_script()` runs before `eval_script()` business rules, catching structural errors (wrong types, missing fields, invalid component IDs) before they reach the rendering layer.
+**Schema validation** (`schema.py`): Pydantic v2 models mirror `remotion-video/src/types.ts`. `validate_script()` runs before `eval_script()` business rules, catching structural errors (wrong types, missing fields, invalid component IDs) before they reach the rendering layer. Validates `image_content` for `image-overlay` components and `web_video` for `web-video` components.
 
 ### TTS Dual Engine (`tts.py`) + Word Alignment (`subtitle.py`)
 
@@ -257,12 +267,13 @@ The title generation skill supports historical performance data for data-driven 
 - `scout_outline.md` — video outline (chapters, visual aids, references)
 - `scout_waterfall.md` — content waterfall distribution (blog + Twitter thread + LinkedIn)
 - `scout_shorts.md` — short-form repurpose (30/60/90s independent scripts)
+- `asset_tag.md` — LLM multimodal tagging for external video assets (constrained enum output)
 
 ### Remotion Components (`remotion-video/src/`)
 
 - `VideoComposition.tsx` — main container, sequences segments via `<Series>`, dispatches to registered styles via `registry.resolveForSegment()`
 - `registry/` — Schema × Style component library system:
-  - `types.ts` — `SlideData`, `TerminalData`, `RecordingData`, `SourceClipData` schema interfaces + `StyleMeta`, `StyleComponentProps<S>` generics
+  - `types.ts` — `SlideData`, `TerminalData`, `RecordingData`, `SourceClipData`, `ImageOverlayData`, `WebVideoData` + 7 more schema interfaces + `StyleMeta`, `StyleComponentProps<S>` generics
   - `registry.ts` — `ComponentRegistry` class (register, resolve, resolveForSegment, toLLMPromptTable)
   - `init.ts` — import-triggers all style self-registration
   - `styles/slide/tech-dark.tsx` — PPT cards with 6 auto-detected layouts (default for material A)
@@ -277,8 +288,10 @@ The title generation skill supports historical performance data for data-driven 
   - `styles/diagram/default.tsx` — flow/architecture diagrams with nodes + edges, LR/TB layout
   - `styles/hero-stat/default.tsx` — big number display with countUp animation and trend arrows
   - `styles/browser/default.tsx` — Chrome browser frame simulation with address bar and content area
+  - `styles/image-overlay/default.tsx` — full-screen image with Ken Burns effect (zoom-in/out/pan) + gradient overlay + text (default for image-overlay schema)
+  - `styles/web-video/default.tsx` — external video playback with optional filter (desaturate/tint) + text overlay (default for web-video schema)
 - `components/` — legacy components (SlideSegment.tsx etc. still present for reference, but rendering goes through registry styles)
-- `types.ts` — `ScriptSegment` (includes optional `component?: string` field), `TimingMap`, `VideoCompositionProps` type definitions
+- `types.ts` — `ScriptSegment` (includes optional `component?: string`, `image_content?`, `web_video?` fields), `TimingMap`, `VideoCompositionProps` type definitions
 
 ### External Dependencies
 
@@ -303,6 +316,33 @@ See `.env.example` for the full list. Notable variables:
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — Telegram push notifications
 - `YOUTUBE_API_KEY` — YouTube Data API v3 (optional, for ideation competitive analysis)
 
+### Global Segment Animation
+
+`VideoComposition.tsx`'s `SegmentTransition` wrapper applies two effects to every segment:
+1. **Fade through black**: 8-frame (0.27s) fade in/out at segment boundaries
+2. **Entrance scale**: 12-frame (0.4s) subtle zoom from 0.97→1.0 with `Easing.out(cubic)`, creating a "push-in" feel
+
+Both effects apply globally — no per-component changes needed. All 30+ registered styles automatically get the animation.
+
+### Asset Library (`asset_store.py`)
+
+SQLite-based reusable asset library at `output/assets.db`. Follows `scout/store.py` patterns.
+
+**Enum tag system** (hardcoded, no free-form values):
+- `visual_type`: screen_recording, product_ui, terminal, browser, code_editor, diagram, chart, text_slide, person, screenshot, image_overlay, web_video
+- `product`: claude, claude-code, cursor, github, vscode, chatgpt, openai, anthropic, google, deepseek, gemini, other
+- `mood`: hook, problem, explain, demo, reveal, compare, celebrate, warning, summary, cta
+- `freshness`: current, possibly_outdated, evergreen
+
+**Lifecycle**:
+1. **Ingest** (`asset_ingest.py`): After render, `v2g assets ingest` reads script.json + timing.json → ffmpeg cuts video by segment → auto-tags from script metadata → SQLite insert
+2. **Search** (`AssetStore.search()`): Tag-based hard filter, ordered by `captured_date` DESC (newer assets first)
+3. **Context injection** (`asset_context.py`): `build_asset_context()` generates LLM-ready text listing available assets + engagement stats, for injection into script generation prompts
+4. **Freshness** (`AssetStore.mark_stale()`): product_ui/screenshot expire at 3 months, terminal/browser at 6 months, diagram/chart/text_slide are evergreen
+5. **Retention feedback** (`retention.py`): Maps B站 retention CSV to segment engagement scores (-1/0/1), stored per-asset for data-driven optimization
+
+**Asset preprocessing** (`asset_normalize.py`): Normalizes external assets to 1920x1080 H.264 — supports center-crop or Gaussian blur background fill for mismatched aspect ratios.
+
 ### Fallback & Degradation Strategy
 
 | Stage | Normal Path | Fallback | Trigger |
@@ -311,6 +351,7 @@ See `.env.example` for the full list. Notable variables:
 | B-material render | `seg_*.mp4` detected → `recording.default` | `terminal.aurora` animated TUI | No recording file for segment |
 | Agent script gen | Skeleton + 3-segment batch fill | Single-shot + auto-detect truncation + continuation prompt | Phased generation throws exception |
 | Component resolve | `segment.component` explicit style ID | Material type → schema default (A→slide, B→terminal, C→source-clip) | component field absent or unresolved |
+| Web-video render | `web_video.source_url` set → `web-video.default` | `fallback_component` field → specified component (e.g. `slide.tech-dark`) | source_url not set (download not confirmed) |
 | TTS engine | `TTS_ENGINE` env var selects edge-tts or MiniMax | **No auto-fallback** — pipeline fails if chosen engine is unavailable | N/A |
 
 ### Known Limitations

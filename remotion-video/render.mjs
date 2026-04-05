@@ -383,7 +383,7 @@ function generateSrt(script, timing) {
       }
     }
 
-    currentTime += duration;
+    currentTime += duration + (t.gap_after || 0);
   }
   return lines.join("\n");
 }

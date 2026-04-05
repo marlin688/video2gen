@@ -195,6 +195,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
           pageTitle: seg.browser_content?.pageTitle,
           contentLines: seg.browser_content?.contentLines || [],
           theme: (seg.browser_content?.theme || "dark") as "light" | "dark",
+          repoInfo: seg.browser_content?.repoInfo,
         } satisfies BrowserData;
         break;
 
@@ -211,13 +212,15 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
       <AbsoluteFill>
         {/* 视频片段序列（带段间淡入淡出转场） */}
         <Series>
-          {segments.map((seg, idx) => {
+          {segments.flatMap((seg, idx) => {
             const t = timing[String(seg.id)];
-            if (!t) return null;
+            if (!t) return [];
             const durationFrames = Math.round(t.duration * fps);
+            const gapFrames = Math.round((t.gap_after || 0) * fps);
             const isFirst = idx === 0;
             const isLast = idx === segments.length - 1;
-            return (
+
+            const items: React.ReactNode[] = [
               <Series.Sequence key={seg.id} durationInFrames={durationFrames}>
                 <SegmentTransition
                   isFirst={isFirst}
@@ -225,8 +228,18 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
                 >
                   {renderSegment(seg)}
                 </SegmentTransition>
-              </Series.Sequence>
-            );
+              </Series.Sequence>,
+            ];
+
+            if (gapFrames > 0 && !isLast) {
+              items.push(
+                <Series.Sequence key={`gap-${seg.id}`} durationInFrames={gapFrames}>
+                  <AbsoluteFill style={{ backgroundColor: "#000" }} />
+                </Series.Sequence>,
+              );
+            }
+
+            return items;
           })}
         </Series>
 

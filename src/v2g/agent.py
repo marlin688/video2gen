@@ -703,11 +703,19 @@ def _generate_script_phased(
         batch_ids = [s["id"] for s in batch]
         click.echo(f"      填充 seg {batch_ids}...")
 
+        # 收集已填充段的 narration 作为上下文，帮助后续批次承接和避免重复
+        filled_context = ""
+        for s in segments[:batch_start]:
+            nar = s.get("narration_zh", "")
+            if nar and not nar.endswith("..."):
+                filled_context += f"[seg {s['id']} ({s.get('type', 'body')})]: {nar}\n"
+
         fill_prompt = (
             f"你正在为一个视频脚本逐段填充内容。\n\n"
             f"## 脚本骨架 (全部段)\n{skeleton_summary}\n\n"
             f"## 大纲\n{outline_str}\n\n"
-            f"---\n\n"
+            + (f"## 已生成的段落（请承接上文，避免重复）\n{filled_context}\n" if filled_context else "")
+            + f"---\n\n"
             f"请填充 segment {batch_ids} 的完整内容。\n"
             f"输出格式: {{\"segments\": [{{完整的 segment 1}}, {{完整的 segment 2}}, ...]}}\n"
             f"每个 segment 必须包含完整的 narration_zh、slide_content/terminal_session 等所有数据字段。\n"

@@ -56,7 +56,16 @@ export interface ScriptSegment {
   // diagram 组件
   diagram?: {
     title?: string;
-    nodes: Array<{ id: string; label: string; type?: string }>;
+    nodes: Array<{
+      id: string;
+      label: string;
+      type?: string;
+      subtitle?: string;
+      items?: Array<{ text: string; tag?: string }>;
+      status?: string;
+      icon?: string;
+      keywords?: string[];
+    }>;
     edges: Array<{ from: string; to: string; label?: string }>;
     direction?: "LR" | "TB";
   };
@@ -72,6 +81,19 @@ export interface ScriptSegment {
     pageTitle?: string;
     contentLines: string[];
     theme?: "light" | "dark";
+    repoInfo?: {
+      owner: string;
+      repo: string;
+      branch?: string;
+      path?: string[];
+      commitAuthor?: string;
+      commitMessage?: string;
+      commitHash?: string;
+      files?: Array<{ name: string; type: "file" | "dir"; commitMessage?: string; highlight?: boolean }>;
+      stars?: string;
+      issues?: string;
+      pullRequests?: string;
+    };
   };
 }
 
@@ -89,6 +111,7 @@ export interface SegmentTiming {
   file: string;
   duration: number;
   text_length: number;
+  gap_after?: number;  // seconds of silence after this segment
 }
 
 export type TimingMap = Record<string, SegmentTiming>;

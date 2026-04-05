@@ -109,12 +109,31 @@ def _generate_segment_minimax(text: str, output_path: Path, voice_id: str, speed
     output_path.write_bytes(audio_bytes)
 
 
-def _concat_segments(segment_files: list[Path], output_path: Path):
-    """用 FFmpeg concat 合并所有 segment 音频。"""
+def _generate_silence(output_path: Path, duration_sec: float):
+    """生成指定时长的静音 MP3 文件。"""
+    subprocess.run(
+        [_get_ffmpeg_exe(), "-y", "-f", "lavfi",
+         "-i", f"anullsrc=r=44100:cl=mono",
+         "-t", str(duration_sec),
+         "-q:a", "9", "-acodec", "libmp3lame",
+         str(output_path)],
+        capture_output=True, text=True, timeout=30,
+    )
+
+
+def _concat_segments(segment_files: list[Path], output_path: Path, gap_sec: float = 0.0):
+    """用 FFmpeg concat 合并所有 segment 音频，段间可插入静音。"""
+    silence_file = None
+    if gap_sec > 0:
+        silence_file = output_path.parent / "silence.mp3"
+        _generate_silence(silence_file, gap_sec)
+
     list_file = output_path.parent / "concat_list.txt"
     with open(list_file, "w") as f:
-        for seg_file in segment_files:
+        for i, seg_file in enumerate(segment_files):
             f.write(f"file '{seg_file.resolve()}'\n")
+            if silence_file and i < len(segment_files) - 1:
+                f.write(f"file '{silence_file.resolve()}'\n")
 
     subprocess.run(
         [_get_ffmpeg_exe(), "-y", "-f", "concat", "-safe", "0",
@@ -123,6 +142,8 @@ def _concat_segments(segment_files: list[Path], output_path: Path):
         capture_output=True, text=True, timeout=300,
     )
     list_file.unlink(missing_ok=True)
+    if silence_file:
+        silence_file.unlink(missing_ok=True)
 
 
 def _detect_tts_engine() -> str:
@@ -170,6 +191,9 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
     timing = {}
     segment_files = []
 
+    # 段间静音时长（秒），通过环境变量配置
+    gap_sec = float(os.environ.get("TTS_SEGMENT_GAP", "0.5"))
+
     engine = _detect_tts_engine()
 
     if engine == "minimax":
@@ -203,6 +227,7 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
                 "file": str(seg_file),
                 "duration": duration,
                 "text_length": len(narration),
+                "gap_after": gap_sec,
             }
             segment_files.append(seg_file)
             click.echo(f"   ✅ {duration:.1f}s")
@@ -212,6 +237,12 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
             state.save(cfg.output_dir)
             raise click.ClickException(state.last_error)
 
+    # 最后一段不加静音
+    if timing:
+        last_key = str(segments[-1].get("id", 0))
+        if last_key in timing:
+            timing[last_key]["gap_after"] = 0
+
     # 保存时长信息
     timing_path = voiceover_dir / "timing.json"
     timing_path.write_text(json.dumps(timing, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -220,8 +251,8 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
     # 合并音频
     if segment_files:
         voiceover_path = voiceover_dir / "full.mp3"
-        click.echo("   🔗 合并音频...")
-        _concat_segments(segment_files, voiceover_path)
+        click.echo(f"   🔗 合并音频 (段间静音: {gap_sec}s)...")
+        _concat_segments(segment_files, voiceover_path, gap_sec=gap_sec)
         total_duration = sum(t["duration"] for t in timing.values())
         click.echo(f"   ✅ 总时长: {total_duration:.1f}s")
         state.voiceover = str(voiceover_path)

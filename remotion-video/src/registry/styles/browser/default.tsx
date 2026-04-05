@@ -275,6 +275,8 @@ const BrowserDefault: React.FC<StyleComponentProps<"browser">> = ({ data, segmen
             const isHeading = line.startsWith("## ") || line.startsWith("### ");
             const isList = line.startsWith("- ") || line.startsWith("• ");
             const isDivider = line === "---";
+            const isCode = line.startsWith("```") || line.startsWith("  ") || line.startsWith("\t");
+            const isBadge = line.startsWith("[") && line.includes("]");
             const lineOpacity = interpolate(
               frame, [12 + i * 3, 15 + i * 3], [0, 1],
               { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
@@ -291,9 +293,49 @@ const BrowserDefault: React.FC<StyleComponentProps<"browser">> = ({ data, segmen
               );
             }
 
+            if (isCode) {
+              return (
+                <div key={i} style={{
+                  fontSize: 18,
+                  fontFamily: "'SF Mono', 'Fira Code', monospace",
+                  color: t.accent,
+                  background: theme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)",
+                  padding: "8px 16px",
+                  borderRadius: 8,
+                  marginBottom: 6,
+                  opacity: lineOpacity,
+                }}>
+                  {line.replace(/^```\w*/, "").trim() || line}
+                </div>
+              );
+            }
+
+            if (isBadge) {
+              const badges = line.match(/\[([^\]]+)\]/g) || [];
+              return (
+                <div key={i} style={{
+                  display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" as const,
+                  opacity: lineOpacity,
+                }}>
+                  {badges.map((b, j) => (
+                    <span key={j} style={{
+                      padding: "4px 12px",
+                      borderRadius: 12,
+                      fontSize: 14,
+                      fontWeight: 600,
+                      background: theme === "dark" ? "rgba(138,180,248,0.15)" : "rgba(26,115,232,0.1)",
+                      color: t.accent,
+                    }}>
+                      {b.slice(1, -1)}
+                    </span>
+                  ))}
+                </div>
+              );
+            }
+
             return (
               <div key={i} style={{
-                fontSize: isHeading ? 28 : 24,
+                fontSize: isHeading ? 28 : 22,
                 fontWeight: isHeading ? 700 : 400,
                 color: isHeading ? t.pageTitle : t.pageText,
                 lineHeight: 1.7,

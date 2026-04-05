@@ -161,7 +161,7 @@ const HeroStatDefault: React.FC<StyleComponentProps<"hero-stat">> = ({ data, seg
         position: "relative",
         zIndex: 1,
         display: "flex",
-        alignItems: isMulti ? "flex-start" : "center",
+        alignItems: "center",
         justifyContent: "center",
         gap: isMulti ? 60 : 0,
         width: "100%",
@@ -207,6 +207,7 @@ const HeroStatDefault: React.FC<StyleComponentProps<"hero-stat">> = ({ data, seg
                   letterSpacing: "-0.02em",
                   display: "flex",
                   alignItems: "baseline",
+                  justifyContent: "center",
                   lineHeight: 1.1,
                 }}>
                   <AnimatedValue

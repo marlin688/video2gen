@@ -35,8 +35,8 @@ const C = {
   white: "#f0ece4",       // 粉笔白（略暖）
   gray: "#8a8578",        // 粉笔灰
   chalkDim: "#5a564e",    // 暗淡粉笔
-  titleFont: "'Caveat', 'Segoe Print', 'Comic Sans MS', cursive",
-  bodyFont:  "'Inter', 'Helvetica Neue', sans-serif",
+  titleFont: "'Inter', 'SF Pro Display', -apple-system, sans-serif",
+  bodyFont:  "'Inter', 'SF Pro Text', -apple-system, sans-serif",
 };
 
 /** 语义色列表，按顺序分配给各卡片 */
@@ -78,18 +78,9 @@ function titleAnim(frame: number, fps: number): React.CSSProperties {
   };
 }
 
-/** 手绘风 SVG filter (让边框看起来不完美) */
+/** 占位：已移除手绘 SVG filter，保持 DOM 兼容 */
 function ChalkFilter() {
-  return (
-    <svg width="0" height="0" style={{ position: "absolute" }}>
-      <defs>
-        <filter id="chalk-rough">
-          <feTurbulence type="turbulence" baseFrequency="0.04" numOctaves="4" result="noise" />
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.5" />
-        </filter>
-      </defs>
-    </svg>
-  );
+  return null;
 }
 
 /* ═══════════════ 布局检测 ═══════════════ */
@@ -137,7 +128,6 @@ function ChalkCard({ color, title, items, text, style, animStyle }: ChalkCardPro
       border: `2.5px solid ${color.border}`,
       borderRadius: 16,
       padding: "20px 24px",
-      filter: "url(#chalk-rough)",
       ...style,
       ...animStyle,
     }}>
@@ -377,8 +367,7 @@ function FlowLayout({ title, bullets, frame, fps }: {
                   padding: "16px 20px",
                   width: Math.min(200, 900 / bullets.length),
                   textAlign: "center",
-                  filter: "url(#chalk-rough)",
-                }}>
+                            }}>
                   <div style={{
                     fontFamily: C.bodyFont,
                     fontSize: 16, color: color.text,
@@ -445,8 +434,7 @@ function StandardLayout({ title, bullets, frame, fps }: {
               fontSize: 20,
               color: color.text,
               lineHeight: 1.5,
-              filter: "url(#chalk-rough)",
-              ...stag(frame, fps, i, 10, 6),
+                      ...stag(frame, fps, i, 10, 6),
             }}>
               <span style={{
                 display: "inline-block",
@@ -501,13 +489,6 @@ const SlideChalkBoard: React.FC<StyleComponentProps<"slide">> = ({ data, fps }) 
         backgroundSize: "40px 40px",
       }} />
 
-      {/* 黑板边框装饰 */}
-      <div style={{
-        position: "absolute", inset: 16,
-        border: `1.5px solid ${C.chalkDim}30`,
-        borderRadius: 8,
-        pointerEvents: "none",
-      }} />
 
       {layout === "compare" && <CompareLayout {...layoutProps} />}
       {layout === "grid" && <GridLayout {...layoutProps} />}
@@ -523,10 +504,10 @@ registry.register(
   {
     id: "slide.chalk-board",
     schema: "slide",
-    name: "黑板手绘风",
+    name: "暗色语义色卡",
     description:
-      "纯黑背景 + 语义色卡 (红/金/绿/蓝/紫) + 手绘粗糙边框。" +
-      "适合架构对比、流程图解、概念分类等结构化内容。" +
+      "纯黑背景 + 语义色卡 (红/金/绿/蓝/紫) 分类卡片。" +
+      "适合架构对比、概念分类、优劣势分析等结构化内容。" +
       "chart_hint 支持 vs/对比 → 左右对比布局。",
     isDefault: false,
     tags: ["diagram", "comparison", "architecture", "whiteboard"],

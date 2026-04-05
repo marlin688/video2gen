@@ -57,12 +57,24 @@ class SocialCard(BaseModel):
     language: str | None = None
 
 
+class DiagramNodeItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    text: str
+    tag: str | None = None
+
+
 class DiagramNode(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: str
     label: str
     type: str | None = None
+    subtitle: str | None = None
+    items: list[DiagramNodeItem] | None = None
+    status: str | None = None
+    icon: str | None = None
+    keywords: list[str] | None = None
 
 
 class DiagramEdge(BaseModel):
@@ -98,6 +110,30 @@ class HeroStat(BaseModel):
     footnote: str | None = None
 
 
+class RepoFileEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    name: str
+    type: Literal["file", "dir"]
+    commitMessage: str | None = None
+
+
+class RepoInfo(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    owner: str
+    repo: str
+    branch: str | None = None
+    path: list[str] | None = None
+    commitAuthor: str | None = None
+    commitMessage: str | None = None
+    commitHash: str | None = None
+    files: list[RepoFileEntry] | None = None
+    stars: str | None = None
+    issues: str | None = None
+    pullRequests: str | None = None
+
+
 class BrowserContent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -106,6 +142,7 @@ class BrowserContent(BaseModel):
     pageTitle: str | None = None
     contentLines: list[str]
     theme: Literal["light", "dark"] | None = None
+    repoInfo: RepoInfo | None = None
 
 
 # ── Segment ────────────────────────────────────────────────

@@ -24,11 +24,11 @@ import { registry } from "../../registry";
 
 /* ═══════════════ 颜色系统：暖色毛玻璃 ═══════════════ */
 const C = {
-  // 渐变色停
-  grad1: "#6c3ce0",  // 深紫
-  grad2: "#e0558e",  // 珊瑚粉
-  grad3: "#f5a623",  // 琥珀
-  grad4: "#3b82f6",  // 蓝 (辅助)
+  // 渐变色停（科技蓝冷色系）
+  grad1: "#0f172a",  // 深靛蓝
+  grad2: "#1e3a5f",  // 海军蓝
+  grad3: "#2563eb",  // 亮蓝
+  grad4: "#7c3aed",  // 紫 (辅助)
   // 卡片
   cardBg: "rgba(255, 255, 255, 0.12)",
   cardBorder: "rgba(255, 255, 255, 0.22)",
@@ -37,8 +37,8 @@ const C = {
   white: "#ffffff",
   whiteOff: "rgba(255,255,255,0.88)",
   whiteDim: "rgba(255,255,255,0.60)",
-  accent: "#fbbf24",   // 金色高亮
-  accentAlt: "#a78bfa", // 淡紫高亮
+  accent: "#38bdf8",   // 天蓝高亮
+  accentAlt: "#818cf8", // 靛蓝高亮
   // 字体
   titleFont: "'Inter', 'SF Pro Display', -apple-system, sans-serif",
   bodyFont:  "'Inter', 'SF Pro Text', -apple-system, sans-serif",
@@ -439,7 +439,7 @@ const SlideGlassMorphism: React.FC<StyleComponentProps<"slide">> = ({ data, segm
   const layoutProps = { title: data.title, bullets: sc.bullet_points, frame, fps: f };
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#1a0a2e" }}>
+    <AbsoluteFill style={{ backgroundColor: "#0a0f1e" }}>
       {/* 动态渐变背景 */}
       <div style={{
         position: "absolute", inset: 0,
@@ -491,9 +491,9 @@ registry.register(
     schema: "slide",
     name: "毛玻璃渐变风",
     description:
-      "暖色渐变背景 + 毛玻璃卡片 (backdrop-blur) + 现代排版。" +
+      "科技蓝渐变背景 + 毛玻璃卡片 (backdrop-blur) + 现代排版。" +
       "适合产品介绍、数据指标展示、功能概览等场景。" +
-      "视觉风格明亮现代，与 tech-dark 形成鲜明对比。",
+      "冷色科技感，与 tech-dark 风格统一但更有层次。",
     isDefault: false,
     tags: ["modern", "gradient", "product", "metrics"],
   },

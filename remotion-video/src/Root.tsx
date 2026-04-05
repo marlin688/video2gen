@@ -95,6 +95,108 @@ const PREVIEWS: Record<string, SingleStyleProps> = {
       ],
     },
   },
+  "slide.compare-table": {
+    styleId: "slide.compare-table",
+    data: {
+      schema: "slide",
+      title: "Claude Code vs Cursor",
+      bullet_points: [
+        "价格: $200/月 → $20/月",
+        "模型: Claude only → 多模型切换",
+        "界面: 终端 CLI → GUI 编辑器",
+        "Agent: 原生支持 → 插件集成",
+        "隐私: 遥测上传 → 本地优先",
+      ],
+    },
+  },
+  "slide.timeline": {
+    styleId: "slide.timeline",
+    data: {
+      schema: "slide",
+      title: "AI Coding 进化史",
+      bullet_points: [
+        "2021.06: GitHub Copilot 发布",
+        "2023.03: GPT-4 + ChatGPT Plugin",
+        "2024.03: Claude 3 / Devin",
+        "2024.10: Cursor 0.40 Agent Mode",
+        "2025.02: Claude Code 公开发布",
+      ],
+    },
+  },
+  "slide.quote-callout": {
+    styleId: "slide.quote-callout",
+    data: {
+      schema: "slide",
+      title: "The most important thing to get great results out of Claude Code — give Claude a way to verify its work.",
+      bullet_points: [
+        "Boris Cherny",
+        "Creator of Claude Code, @anthropic",
+      ],
+    },
+  },
+  "slide.checklist": {
+    styleId: "slide.checklist",
+    data: {
+      schema: "slide",
+      title: "私有化部署清单",
+      bullet_points: [
+        "Clone opencode 仓库",
+        "配置 .env 指向本地模型",
+        "关闭遥测 (Telemetry disabled)",
+        "安装 claude-squad 多 Agent 管理",
+        "验证 7 个 Agent 并行运行",
+      ],
+    },
+  },
+  "slide.numbered-steps": {
+    styleId: "slide.numbered-steps",
+    data: {
+      schema: "slide",
+      title: "三步搭建私有 Agent",
+      bullet_points: [
+        "Clone + 配置 API 端点",
+        "启动本地模型 (Ollama)",
+        "运行 Agent 并验证",
+      ],
+    },
+  },
+  "slide.feature-grid": {
+    styleId: "slide.feature-grid",
+    data: {
+      schema: "slide",
+      title: "Claude Code 核心能力",
+      bullet_points: [
+        "🔍 代码理解: 自动分析整个代码库上下文",
+        "✏️ 智能编辑: 跨文件重构，保持一致性",
+        "🧪 自动测试: 生成并运行测试用例",
+        "🔒 安全扫描: 检测 AI 生成代码的漏洞",
+      ],
+    },
+  },
+  "slide.hero-text": {
+    styleId: "slide.hero-text",
+    data: {
+      schema: "slide",
+      title: "同一个模型，换一种说法，<hl>结果可能差很多</hl>",
+      bullet_points: [
+        "最早大模型火起来的时候...",
+        "Prompt Engineering 让我们意识到：怎么问，比问什么更重要",
+      ],
+    },
+  },
+  "slide.chat-bubble": {
+    styleId: "slide.chat-bubble",
+    data: {
+      schema: "slide",
+      title: "同一个任务，不同的 Prompt",
+      bullet_points: [
+        "帮我总结这篇文章。",
+        "---",
+        ">请以资深技术编辑的身份，用三段结构总结这篇文章，先讲核心观点，再讲论证方式，最后讲局限性，每段不超过 150 字。",
+        "?你到底改了什么？",
+      ],
+    },
+  },
   // ── terminal ──
   "terminal.aurora": {
     styleId: "terminal.aurora",
@@ -132,6 +234,21 @@ const PREVIEWS: Record<string, SingleStyleProps> = {
       ],
     },
   },
+  "terminal.minimal": {
+    styleId: "terminal.minimal",
+    data: {
+      schema: "terminal",
+      instruction: "极简终端演示",
+      session: [
+        { type: "input" as const, text: "ollama run llama3.1:70b" },
+        { type: "status" as const, text: "Loading model..." },
+        { type: "output" as const, lines: ["Model loaded. API: localhost:11434", "OPENAI_BASE_URL=http://localhost:11434/v1 ✓"] },
+        { type: "blank" as const },
+        { type: "input" as const, text: "opencode start --telemetry=off" },
+        { type: "output" as const, lines: ["[INFO] Telemetry disabled", "[INFO] Private Agent ready"] },
+      ],
+    },
+  },
   // ── code-block ──
   "code-block.default": {
     styleId: "code-block.default",
@@ -160,6 +277,27 @@ const PREVIEWS: Record<string, SingleStyleProps> = {
       annotations: { "7": "先规划再执行", "11": "逐步调用工具" },
     },
   },
+  "code-block.diff": {
+    styleId: "code-block.diff",
+    data: {
+      schema: "code-block",
+      fileName: "src/auth.ts",
+      language: "typescript",
+      code: [
+        "@@ -12,8 +12,12 @@",
+        " function validateToken(token: string) {",
+        "-  const decoded = jwt.decode(token);",
+        "-  return decoded !== null;",
+        "+  try {",
+        "+    const decoded = jwt.verify(token, SECRET);",
+        "+    return { valid: true, payload: decoded };",
+        "+  } catch (err) {",
+        "+    return { valid: false, error: err.message };",
+        "+  }",
+        " }",
+      ],
+    },
+  },
   // ── social-card ──
   "social-card.default": {
     styleId: "social-card.default",
@@ -170,6 +308,18 @@ const PREVIEWS: Record<string, SingleStyleProps> = {
       text: "In the next version of Claude Code, we're introducing two new Skills: /simplify and /batch. I have been using both daily, and am excited to share them with everyone.",
       stats: { likes: 2847, retweets: 521, replies: 183 },
       subtitle: "Claude Code @anthropic",
+    },
+  },
+  "social-card.github-repo": {
+    styleId: "social-card.github-repo",
+    data: {
+      schema: "social-card",
+      platform: "github" as const,
+      author: "opencode-ai/opencode",
+      text: "An open-source alternative to Claude Code. Terminal-first AI coding with any model — local Ollama, Gemini, or your own API endpoint.",
+      language: "Go",
+      stats: { stars: 11810, forks: 892 },
+      subtitle: "ai,coding,terminal,open-source",
     },
   },
   // ── diagram ──
@@ -282,6 +432,29 @@ const PREVIEWS: Record<string, SingleStyleProps> = {
         },
       ],
       edges: [{ from: "agent", to: "verify" }],
+    },
+  },
+  "diagram.sequence": {
+    styleId: "diagram.sequence",
+    data: {
+      schema: "diagram",
+      title: "Agent Tool Use Flow",
+      nodes: [
+        { id: "user", label: "User" },
+        { id: "agent", label: "Agent", type: "primary" as const },
+        { id: "tool", label: "Tool API", type: "success" as const },
+        { id: "llm", label: "LLM", type: "warning" as const },
+      ],
+      edges: [
+        { from: "user", to: "agent", label: "prompt" },
+        { from: "agent", to: "llm", label: "plan()" },
+        { from: "llm", to: "agent", label: "tool_calls[]" },
+        { from: "agent", to: "tool", label: "execute()" },
+        { from: "tool", to: "agent", label: "result" },
+        { from: "agent", to: "llm", label: "observe()" },
+        { from: "llm", to: "agent", label: "response" },
+        { from: "agent", to: "user", label: "answer" },
+      ],
     },
   },
   // ── hero-stat ──

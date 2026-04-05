@@ -118,6 +118,34 @@ class TestValidScript:
         assert errors == []
         assert data.segments[0].diagram.edges[0].from_ == "a"
 
+    def test_diagram_tree_card_fields(self):
+        """diagram node 的 tree-card 扩展字段（subtitle, items, status）正常解析。"""
+        seg = _make_segment(1, "body", "A", component="diagram.tree-card",
+                            diagram={
+                                "title": "/tech-debt tailored per project",
+                                "nodes": [
+                                    {"id": "root", "label": "Root Project"},
+                                    {
+                                        "id": "app1", "label": "SaaS App", "type": "primary",
+                                        "subtitle": "React + Node",
+                                        "items": [
+                                            {"text": "3 duplicated hooks", "tag": "duplication"},
+                                            {"text": "unused components", "tag": "unused"},
+                                        ],
+                                        "status": "✓ Complete",
+                                    },
+                                ],
+                                "edges": [{"from": "root", "to": "app1"}],
+                            })
+        data, errors = validate_script(_make_script(segments=[seg]))
+        assert errors == []
+        node = data.segments[0].diagram.nodes[1]
+        assert node.subtitle == "React + Node"
+        assert len(node.items) == 2
+        assert node.items[0].text == "3 duplicated hooks"
+        assert node.items[0].tag == "duplication"
+        assert node.status == "✓ Complete"
+
 
 # ── 错误检测 ─────────────────────────────────────────────────
 

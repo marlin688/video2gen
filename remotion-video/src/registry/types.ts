@@ -99,6 +99,16 @@ export interface DiagramData {
     label: string;
     /** 节点类型影响样式 */
     type?: "default" | "primary" | "success" | "warning" | "danger";
+    /** 节点副标题（如 "React + Node"） */
+    subtitle?: string;
+    /** 卡片内条目列表（tree-card / dual-card style 使用） */
+    items?: Array<{ text: string; tag?: string }>;
+    /** 底部状态文字（如 "✓ Complete"） */
+    status?: string;
+    /** 图标 emoji 或符号（pipeline style 使用，如 "💬" "🔄" "⚙️"） */
+    icon?: string;
+    /** 关键词列表（pipeline style 节点下方显示） */
+    keywords?: string[];
   }>;
   /** 连线列表 */
   edges: Array<{
@@ -137,6 +147,29 @@ export interface BrowserData {
   contentLines: string[];
   /** 页面风格: light / dark */
   theme?: "light" | "dark";
+  /** GitHub 仓库页面专用字段（browser.github style 使用） */
+  repoInfo?: {
+    owner: string;
+    repo: string;
+    branch?: string;
+    /** 面包屑路径段 */
+    path?: string[];
+    commitAuthor?: string;
+    commitMessage?: string;
+    commitHash?: string;
+    /** 文件/文件夹列表 */
+    files?: Array<{
+      name: string;
+      type: "file" | "dir";
+      commitMessage?: string;
+      /** 高亮此行（模拟鼠标悬停/选中效果） */
+      highlight?: boolean;
+    }>;
+    /** 仓库统计 */
+    stars?: string;
+    issues?: string;
+    pullRequests?: string;
+  };
 }
 
 /** 所有 schema 数据的 discriminated union */

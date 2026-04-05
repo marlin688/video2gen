@@ -16,6 +16,16 @@ import "./styles/slide/numbered-steps";
 import "./styles/slide/feature-grid";
 import "./styles/slide/hero-text";
 import "./styles/slide/chat-bubble";
+import "./styles/slide/hook-opener";
+import "./styles/slide/transition-bridge";
+import "./styles/slide/cta-outro";
+import "./styles/slide/typing-demo";
+import "./styles/slide/before-after";
+import "./styles/slide/live-counter";
+import "./styles/slide/screen-capture-mock";
+import "./styles/slide/problem-statement";
+import "./styles/slide/solution-reveal";
+import "./styles/slide/result-showcase";
 
 // terminal (3 styles)
 import "./styles/terminal/aurora";

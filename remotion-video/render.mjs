@@ -119,6 +119,22 @@ if (fs.existsSync(imagesSrc)) {
   console.log(`   复制: images/ (${fs.readdirSync(imagesSrc).length} 文件)`);
 }
 
+// 复制 BGM 文件（可选）
+let bgmFile = null;
+const bgmCandidates = [
+  path.join(videoDir, "bgm.mp3"),
+  path.join(videoDir, "..", "bgm.mp3"),         // output/bgm.mp3（全局共用）
+  path.join(videoDir, "..", "..", "bgm.mp3"),    // 项目根目录
+];
+for (const bgmPath of bgmCandidates) {
+  if (fs.existsSync(bgmPath)) {
+    fs.copyFileSync(bgmPath, path.join(publicDir, "bgm.mp3"));
+    bgmFile = "bgm.mp3";
+    console.log(`   复制: bgm.mp3 (${(fs.statSync(bgmPath).size / 1024).toFixed(0)}KB)`);
+    break;
+  }
+}
+
 // 复制 web_videos 目录（网络视频素材）
 const webVideosSrc = path.join(videoDir, "web_videos");
 const webVideosDst = path.join(publicDir, "web_videos");
@@ -281,6 +297,8 @@ const inputProps = {
   voiceoverFile: "voiceover.mp3",
   availableRecordings,
   theme: themeId,
+  bgmFile,
+  bgmVolume: 0.15,
 };
 
 // ═══ SRT 字幕生成 ═══
@@ -480,5 +498,6 @@ async function main() {
 
 main().catch((err) => {
   console.error("❌ 渲染失败:", err.message);
+  if (err.stack) console.error(err.stack);
   process.exit(1);
 });

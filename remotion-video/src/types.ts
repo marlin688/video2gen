@@ -147,6 +147,10 @@ export interface VideoCompositionProps {
   availableRecordings: number[];
   /** 视频主题 ID（tech-blue / warm-purple / emerald-dark），默认 tech-blue */
   theme?: string;
+  /** BGM 文件名（public/ 下），可选 */
+  bgmFile?: string;
+  /** BGM 音量 0-1，默认 0.15 */
+  bgmVolume?: number;
 }
 
 /** 计算每个 segment 在时间线上的帧范围 */

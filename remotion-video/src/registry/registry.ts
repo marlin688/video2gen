@@ -68,6 +68,10 @@ class ComponentRegistry {
   ): RegistryEntry | undefined {
     // 1. 显式指定
     if (segment.component) {
+      // B 类素材有录屏时，优先播放录屏（真实页面 > 模拟组件）
+      if (hasRecording && segment.material === "B") {
+        return this.resolveDefault("recording");
+      }
       const entry = this.resolve(segment.component);
       if (entry) return entry;
       // 找不到指定 style，fallback 到该 schema 的 default

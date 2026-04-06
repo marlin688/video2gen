@@ -115,8 +115,9 @@ const BrowserDefault: React.FC<StyleComponentProps<"browser">> = ({ data, segmen
   const winP = spring({ frame, fps, config: { damping: 18, stiffness: 120 }, durationInFrames: 15 });
 
   // 内容逐行出现
+  const lineCount = Math.max(1, contentLines.length);
   const maxLines = Math.min(contentLines.length, Math.floor(interpolate(
-    frame, [12, 12 + contentLines.length * 3], [0, contentLines.length],
+    frame, [12, 12 + lineCount * 3], [0, lineCount],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
   )));
 

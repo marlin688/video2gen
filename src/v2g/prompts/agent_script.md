@@ -145,6 +145,42 @@
 
 **使用建议**：**每个脚本必须使用至少 2 种不同的高级组件**（如 1 个 code-block + 1 个 hero-stat 或 diagram）。当没有 C 素材（原视频片段）时，必须使用至少 3 种不同高级组件来保证视觉多样性。大部分段落仍然用 A/B/C 默认素材，不要全部都用高级组件。
 
+### 推文截图素材
+
+如果素材列表中包含 `tweet_context.md`，其中标注了可用的推文截图及其路径。
+
+**有截图的推文** — 用 `image-overlay.default`：
+```json
+{
+  "material": "A",
+  "component": "image-overlay.default",
+  "image_content": {
+    "image_path": "images/tweet_123456.png",
+    "overlay_text": "简洁概括（≤10字）",
+    "overlay_position": "bottom",
+    "ken_burns": "zoom-in"
+  }
+}
+```
+
+**无截图的推文** — 用 `social-card.default`：
+```json
+{
+  "material": "A",
+  "component": "social-card.default",
+  "slide_content": {
+    "platform": "twitter",
+    "author": "@username",
+    "text": "推文内容",
+    "stats": {"likes": 1500, "retweets": 200}
+  }
+}
+```
+
+- overlay_text 用自己的话概括，不要复制推文原文
+- 每个脚本最多 1-2 个推文段落，穿插在其他素材之间
+- 推文截图特别适合 hook 段或佐证观点的 body 段
+
 ## 硬性约束
 
 - segments 数量: 8-10 段（不要超过 10 段）

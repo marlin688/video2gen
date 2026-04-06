@@ -187,28 +187,101 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
         } satisfies DiagramData;
         break;
 
-      case "hero-stat":
+      case "hero-stat": {
+        let hsStats = (seg.hero_stat?.stats || []).map(s => ({
+          ...s,
+          trend: (s.trend || "neutral") as "up" | "down" | "neutral",
+        }));
+
+        // hero_stat 缺失时从 slide_content.bullet_points 提取指标
+        if (!hsStats.length && seg.slide_content?.bullet_points?.length) {
+          hsStats = seg.slide_content.bullet_points.slice(0, 3).map(bp => {
+            // 尝试解析 "标签: 值" 或 "标签 → 值" 格式
+            const colonMatch = bp.match(/^(.+?)[:：]\s*(.+)$/);
+            if (colonMatch) {
+              const arrowMatch = colonMatch[2].match(/(.+?)\s*[→>]\s*(.+)/);
+              return {
+                label: colonMatch[1].trim(),
+                value: arrowMatch ? arrowMatch[2].trim() : colonMatch[2].trim(),
+                oldValue: arrowMatch ? arrowMatch[1].trim() : undefined,
+                trend: (bp.includes("↑") || bp.includes("提升") ? "up"
+                  : bp.includes("↓") || bp.includes("降") ? "down" : "neutral") as "up" | "down" | "neutral",
+              };
+            }
+            return { label: bp.slice(0, 20), value: bp.slice(20) || "—", trend: "neutral" as const };
+          });
+        }
+
         data = {
           schema: "hero-stat",
-          stats: (seg.hero_stat?.stats || []).map(s => ({
-            ...s,
-            trend: (s.trend || "neutral") as "up" | "down" | "neutral",
-          })),
-          footnote: seg.hero_stat?.footnote,
+          stats: hsStats,
+          footnote: seg.hero_stat?.footnote || seg.slide_content?.title,
         } satisfies HeroStatData;
         break;
+      }
 
-      case "browser":
+      case "browser": {
+        // browser_content 存在时直接使用；缺失时从 recording_instruction / terminal_session 提取
+        const bc = seg.browser_content;
+        let bUrl = bc?.url || "";
+        let bTab = bc?.tabTitle || "";
+        let bTitle = bc?.pageTitle;
+        let bLines = bc?.contentLines || [];
+
+        if (!bc) {
+          const inst = seg.recording_instruction || "";
+          // 从 recording_instruction 提取第一个 URL
+          const urlMatch = inst.match(/https?:\/\/[^\s,，。)）\]]+/);
+          if (urlMatch) {
+            bUrl = urlMatch[0];
+            try {
+              const u = new URL(bUrl);
+              bTab = u.hostname;
+              // 从 URL path 生成页面标题
+              const pathTitle = decodeURIComponent(u.pathname)
+                .replace(/^\/|\/$/g, "").split("/").pop() || "";
+              if (pathTitle) bTitle = pathTitle.replace(/[-_]/g, " ");
+            } catch { bTab = bUrl.slice(0, 40); }
+          }
+
+          // 优先从 terminal_session 提取（结构化输出）
+          if (seg.terminal_session?.length) {
+            bLines = seg.terminal_session.flatMap(step => {
+              if (step.type === "output" && step.lines) return step.lines;
+              if (step.type === "status" && step.text) return [step.text];
+              if (step.type === "input" && step.text) return [`$ ${step.text}`];
+              return [];
+            });
+          }
+
+          // 无 terminal_session 时，从 recording_instruction 提取操作要点作为页面内容
+          if (!bLines.length && inst) {
+            // 去掉 URL 部分，按中文标点/逗号/句号/步骤编号拆分
+            const stripped = inst.replace(/https?:\/\/[^\s,，。)）\]]+/g, "").trim();
+            bLines = stripped
+              .split(/[，。；;]\s*|\d+\.\s*/)
+              .map(s => s.trim())
+              .filter(s => s.length > 2);
+          }
+
+          // 兜底：slide_content 的 bullet_points
+          if (!bLines.length && seg.slide_content?.bullet_points?.length) {
+            bLines = seg.slide_content.bullet_points;
+            if (!bTitle && seg.slide_content.title) bTitle = seg.slide_content.title;
+          }
+        }
+
         data = {
           schema: "browser",
-          url: seg.browser_content?.url || "",
-          tabTitle: seg.browser_content?.tabTitle || "",
-          pageTitle: seg.browser_content?.pageTitle,
-          contentLines: seg.browser_content?.contentLines || [],
-          theme: (seg.browser_content?.theme || "dark") as "light" | "dark",
-          repoInfo: seg.browser_content?.repoInfo,
+          url: bUrl,
+          tabTitle: bTab,
+          pageTitle: bTitle,
+          contentLines: bLines,
+          theme: (bc?.theme || "dark") as "light" | "dark",
+          repoInfo: bc?.repoInfo,
         } satisfies BrowserData;
         break;
+      }
 
       case "image-overlay":
         data = {
@@ -283,6 +356,13 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
         <Sequence from={0}>
           <Audio src={staticFile(voiceoverFile)} />
         </Sequence>
+
+        {/* BGM 音轨（可选） */}
+        {props.bgmFile && (
+          <Sequence from={0}>
+            <Audio src={staticFile(props.bgmFile)} volume={props.bgmVolume ?? 0.15} loop />
+          </Sequence>
+        )}
       </AbsoluteFill>
     </ThemeProvider>
   );

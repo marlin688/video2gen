@@ -694,6 +694,35 @@ def scout_produce(cfg: Config, topic_index, duration, model, skip_download):
 
     # 5. 生成 project_id
     project_id = f"{slug[:20]}-{today}".lower().replace(" ", "-")
+
+    # 5.5 推文截图注入
+    tw_json = vault / "scout" / "twitter" / f"{today}-curated.json"
+    if tw_json.exists():
+        import json as _json
+        click.echo("🐦 推文截图\n")
+        curated_tweets = _json.loads(tw_json.read_text(encoding="utf-8"))
+        curated_tweets.sort(key=lambda t: t.get("total_score", 0), reverse=True)
+
+        images_dir = cfg.output_dir / project_id / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        tweet_image_paths: dict = {}
+        try:
+            from v2g.scout.tweet_screenshot import capture_tweet_screenshots
+            tweet_image_paths = capture_tweet_screenshots(
+                curated_tweets, images_dir, max_tweets=5,
+            )
+        except Exception as e:
+            click.echo(f"   ⚠️ 推文截图失败: {e}")
+
+        from v2g.scout.tweet_context import generate_tweet_context
+        ctx_path = cfg.output_dir / project_id / "tweet_context.md"
+        generate_tweet_context(curated_tweets[:5], tweet_image_paths, ctx_path)
+        sources.append(str(ctx_path))
+        click.echo(f"   📎 tweet_context.md ({len(tweet_image_paths)} 张截图)\n")
+    else:
+        click.echo("🐦 无今日推文数据，跳过\n")
+
     click.echo(f"🤖 启动 Agent 脚本生成: {project_id}\n")
 
     # 6. 调用 agent（自动确认大纲，≥85 分通过）

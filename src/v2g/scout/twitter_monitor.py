@@ -295,6 +295,16 @@ def run_twitter_monitor(cfg, temperature: float = 0.5, max_tweets: int = 100) ->
     path = writer.write_twitter_report(today, selected, "")
     click.echo(f"   📝 已写入: {path}")
 
+    # JSON sidecar（保留完整字段供 scout produce 使用）
+    import json as _json
+    from pathlib import Path
+    json_path = Path(str(path)).with_suffix(".json")
+    json_path.write_text(
+        _json.dumps(selected, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    click.echo(f"   📦 JSON: {json_path}")
+
     # Telegram 通知
     if selected and cfg.telegram_bot_token:
         msg = format_tweet_digest(selected)

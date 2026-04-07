@@ -97,6 +97,15 @@ export interface ScriptSegment {
     filter?: "none" | "desaturate" | "tint";
     fallback_component?: string;
   };
+  // flash-meme 叠加（在段内某一时刻闪现梗图）
+  flash_meme?: {
+    image: string;           // public/ 下的图片文件名
+    frame_offset?: number;   // 从段开头偏移多少帧后闪现（默认 0 = 段首）
+    duration?: number;       // 持续帧数（默认 15 = 0.5s @ 30fps）
+    display_mode?: "cover" | "contain" | "raw";
+    contrast?: number;       // 对比度倍数，默认 2.5
+    brightness?: number;     // 亮度倍数，默认 1.2
+  };
   // browser 组件
   browser_content?: {
     url: string;

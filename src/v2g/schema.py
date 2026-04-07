@@ -156,6 +156,18 @@ class WebVideo(BaseModel):
     fallback_component: str | None = None
 
 
+class FlashMeme(BaseModel):
+    """闪现梗图叠加参数，在段内某一时刻全屏闪现一张 Meme 图。"""
+    model_config = ConfigDict(extra="ignore")
+
+    image: str                    # public/ 下的图片文件名
+    frame_offset: int | None = None  # 从段开头偏移多少帧后闪现（默认 0）
+    duration: int | None = None      # 持续帧数（默认 15 = 0.5s @ 30fps）
+    display_mode: Literal["cover", "contain", "raw"] | None = None
+    contrast: float | None = None    # 对比度倍数，默认 2.5
+    brightness: float | None = None  # 亮度倍数，默认 1.2
+
+
 class BrowserContent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -204,6 +216,9 @@ class ScriptSegment(BaseModel):
     image_content: ImageContent | None = None
     # 网络视频组件
     web_video: WebVideo | None = None
+
+    # 闪现梗图叠加
+    flash_meme: FlashMeme | None = None
 
     # 高级组件
     code_content: CodeContent | None = None

@@ -166,7 +166,7 @@ State persists in `output/{video_id}/checkpoint.json` (`PipelineState` dataclass
 
 ### Key Data Files
 
-- `script.json` — LLM-generated script with segments (id, type, material, component?, narration_zh, slide_content/recording_instruction/terminal_session/source timing/image_content/web_video). The optional `component` field specifies a style ID (e.g. `"slide.tech-dark"`, `"image-overlay.default"`, `"web-video.default"`); when absent, defaults by material type. B-material segments include `terminal_session` (structured terminal steps: input/output/status/tool/blank) for driving terminal animation when no recording exists. A-material segments may use `image_content` (image_path, overlay_text, ken_burns) for image overlay. C-material segments may use `web_video` (search_query, source_url, fallback_component) for external video. Multi-source mode adds `sources_used`, `total_duration_hint`.
+- `script.json` — LLM-generated script with segments (id, type, material, component?, narration_zh, slide_content/recording_instruction/terminal_session/source timing/image_content/web_video/flash_meme). The optional `component` field specifies a style ID (e.g. `"slide.tech-dark"`, `"image-overlay.default"`, `"web-video.default"`); when absent, defaults by material type. B-material segments include `terminal_session` (structured terminal steps: input/output/status/tool/blank) for driving terminal animation when no recording exists. A-material segments may use `image_content` (image_path, overlay_text, ken_burns) for image overlay. C-material segments may use `web_video` (search_query, source_url, fallback_component) for external video. Any segment may include `flash_meme` (image, frame_offset?, duration?, contrast?, brightness?) to flash a meme image overlay at a specific frame within the segment. Multi-source mode adds `sources_used`, `total_duration_hint`.
 - `script_meta.json` — Generation metadata: model name, prompt hash, timestamp, input/output char counts. Used for prompt version tracking.
 - `voiceover/timing.json` — `{segment_id: {file, duration, text_length}}` mapping from TTS output.
 - `voiceover/word_timing.json` — (optional) `{segment_id: [{word, start, end}, ...]}` word-level timestamps from mlx-whisper alignment.
@@ -290,8 +290,14 @@ The title generation skill supports historical performance data for data-driven 
   - `styles/browser/default.tsx` — Chrome browser frame simulation with address bar and content area
   - `styles/image-overlay/default.tsx` — full-screen image with Ken Burns effect (zoom-in/out/pan) + gradient overlay + text (default for image-overlay schema)
   - `styles/web-video/default.tsx` — external video playback with optional filter (desaturate/tint) + text overlay (default for web-video schema)
-- `components/` — legacy components (SlideSegment.tsx etc. still present for reference, but rendering goes through registry styles)
-- `types.ts` — `ScriptSegment` (includes optional `component?: string`, `image_content?`, `web_video?` fields), `TimingMap`, `VideoCompositionProps` type definitions
+- `components/` — reusable effect components and legacy wrappers:
+  - `FlashMeme.tsx` — flash meme overlay (instant appear/disappear, high contrast + scanlines + random rotation, zIndex 9999)
+  - `HumanTyping.tsx` — code/text typing display with human-like rhythm (uses `useHumanTypist` hook)
+  - `WordReveal.tsx`, `SectionTitle.tsx`, `GlitchTransition.tsx`, `LightLeak.tsx`, `ParticleBackground.tsx`, `FloatingCode.tsx`, `GlowOrb.tsx`, `GridBackground.tsx`, `ConstellationBg.tsx`, `ProgressBar.tsx`, `GradientText.tsx`, `TechIcons.tsx`, `TechLogo.tsx`
+- `hooks/`:
+  - `useHumanTypist.ts` — deterministic human typing simulation hook (alea PRNG, variable speed, punctuation pauses, typo→backspace→retype). Pre-computes frame schedule in `useMemo`, O(1) binary search per frame.
+  - `useAnimatedText.ts` — simple linear character reveal hook
+- `types.ts` — `ScriptSegment` (includes optional `component?: string`, `image_content?`, `web_video?`, `flash_meme?` fields), `TimingMap`, `VideoCompositionProps` type definitions
 
 ### External Dependencies
 

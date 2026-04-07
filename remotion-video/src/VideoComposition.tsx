@@ -30,6 +30,7 @@ import { fadeThroughBlack } from "./registry/components/FadeThroughBlack";
 import { glitch } from "./registry/components/GlitchTransition";
 import { ProgressBar } from "./registry/components/ProgressBar";
 import { LightLeak } from "./registry/components/LightLeak";
+import { FlashMeme } from "./registry/components/FlashMeme";
 
 import type {
   SlideData, TerminalData, RecordingData, SourceClipData,
@@ -433,6 +434,30 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
             return items;
           })}
         </TransitionSeries>
+
+        {/* FlashMeme 闪现梗图叠加层 */}
+        {segments.map((seg, idx) => {
+          if (!seg.flash_meme) return null;
+          const info = segmentFrameInfo[idx];
+          if (!info || !info.duration) return null;
+          const fm = seg.flash_meme;
+          const offset = fm.frame_offset ?? 0;
+          const dur = fm.duration ?? 15;
+          return (
+            <Sequence
+              key={`flash-${seg.id}`}
+              from={info.start + offset}
+              durationInFrames={dur}
+            >
+              <FlashMeme
+                imageFileName={fm.image}
+                displayMode={fm.display_mode}
+                contrast={fm.contrast}
+                brightness={fm.brightness}
+              />
+            </Sequence>
+          );
+        })}
 
         {/* LightLeak 光晕叠加层 */}
         {lightLeakSequences.map((leak) => (

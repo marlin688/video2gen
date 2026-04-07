@@ -1,6 +1,9 @@
-import { Composition } from "remotion";
+import { AbsoluteFill, Composition, Sequence } from "remotion";
+import React from "react";
 import { VideoComposition } from "./VideoComposition";
 import { SingleStylePreview, type SingleStyleProps } from "./SingleStylePreview";
+import { FlashMeme } from "./registry/components/FlashMeme";
+import { HumanTyping } from "./registry/components/HumanTyping";
 import type { VideoCompositionProps, TimingMap } from "./types";
 
 const FPS = 30;
@@ -603,6 +606,71 @@ const PREVIEWS: Record<string, SingleStyleProps> = {
   },
 };
 
+/**
+ * FlashMeme 效果演示：正常内容中突然闪现梗图
+ *
+ * 时间线: 0-60帧(正常内容) → 60-75帧(闪现!) → 75-120帧(恢复正常)
+ */
+const FlashMemeDemo: React.FC = () => {
+  return (
+    <AbsoluteFill style={{ backgroundColor: "#0f172a" }}>
+      {/* 底层：模拟正常的技术内容 */}
+      <AbsoluteFill
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          padding: 80,
+        }}
+      >
+        <div style={{
+          fontSize: 64,
+          fontWeight: 700,
+          color: "#e2e8f0",
+          fontFamily: "SF Pro Display, system-ui, sans-serif",
+          marginBottom: 40,
+        }}>
+          AI Agent 架构演进
+        </div>
+        <div style={{
+          fontSize: 36,
+          color: "#94a3b8",
+          fontFamily: "SF Mono, monospace",
+          textAlign: "center",
+          lineHeight: 1.8,
+        }}>
+          ReAct → Plan-and-Execute → Multi-Agent
+        </div>
+      </AbsoluteFill>
+
+      {/* 第 60 帧闪现梗图，持续 15 帧 (0.5s) */}
+      <Sequence from={60} durationInFrames={15}>
+        <FlashMeme imageFileName="images/tweet_2036553581625745511.png" />
+      </Sequence>
+    </AbsoluteFill>
+  );
+};
+
+/**
+ * HumanTyping 效果演示：变速打字 + 标点停顿 + typo 退格
+ */
+const HumanTypingDemo: React.FC = () => {
+  return (
+    <HumanTyping
+      text={'const agent = new Claude();\nawait agent.plan("重构 auth 模块");\n// 执行中...'}
+      startFrame={15}
+      typos={[
+        { charIndex: 14, wrongChar: "C" },   // "Cluade" → 退格 → "Claude"
+        { charIndex: 38, pauseBeforeFix: 12 }, // 长停顿后修正
+      ]}
+      seed="demo-typing"
+      label="src/agent.ts"
+      codeStyle={true}
+    />
+  );
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const AnyComposition = Composition as any;
 
@@ -634,6 +702,28 @@ export const RemotionRoot: React.FC = () => {
           defaultProps={props}
         />
       ))}
+
+      {/* FlashMeme 闪现梗图效果演示 */}
+      <AnyComposition
+        id="FlashMeme-Demo"
+        component={FlashMemeDemo}
+        durationInFrames={FPS * 4}
+        fps={FPS}
+        width={1920}
+        height={1080}
+        defaultProps={{}}
+      />
+
+      {/* HumanTyping 真人打字效果演示 */}
+      <AnyComposition
+        id="HumanTyping-Demo"
+        component={HumanTypingDemo}
+        durationInFrames={FPS * 8}
+        fps={FPS}
+        width={1920}
+        height={1080}
+        defaultProps={{}}
+      />
     </>
   );
 };

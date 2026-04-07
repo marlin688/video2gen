@@ -28,6 +28,7 @@ import "./registry/init"; // 触发所有 style 自注册
 import { ThemeProvider, getTheme } from "./registry/theme";
 import { fadeThroughBlack } from "./registry/components/FadeThroughBlack";
 import { glitch } from "./registry/components/GlitchTransition";
+import { ProgressBar } from "./registry/components/ProgressBar";
 import { LightLeak } from "./registry/components/LightLeak";
 
 import type {
@@ -385,20 +386,26 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
 
             // 段间转场（第一段之前不加）
             if (idx > 0) {
-              items.push(
-                <TransitionSeries.Transition
-                  key={`t-${seg.id}`}
-                  presentation={resolveTransition(
-                    seg.transition,
-                    prevSeg?.type,
-                    seg.type,
-                    idx,
-                  )}
-                  timing={linearTiming({
-                    durationInFrames: TRANSITION_FRAMES,
-                  })}
-                />,
-              );
+              // 转场帧数不能超过前后 segment 中较短者的时长
+              const prevT = timing[String(prevSeg?.id)];
+              const prevDur = prevT ? Math.round(prevT.duration * fps) : Infinity;
+              const transFrames = Math.min(TRANSITION_FRAMES, durationFrames - 1, prevDur - 1);
+              if (transFrames > 0) {
+                items.push(
+                  <TransitionSeries.Transition
+                    key={`t-${seg.id}`}
+                    presentation={resolveTransition(
+                      seg.transition,
+                      prevSeg?.type,
+                      seg.type,
+                      idx,
+                    )}
+                    timing={linearTiming({
+                      durationInFrames: transFrames,
+                    })}
+                  />,
+                );
+              }
             }
 
             // 段内容
@@ -440,6 +447,13 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
             />
           </Sequence>
         ))}
+
+        {/* 底部进度条 */}
+        {props.progressBar !== false && (
+          <ProgressBar
+            sectionStartFrames={segmentFrameInfo.map((info) => info.start)}
+          />
+        )}
 
         {/* 配音音轨 */}
         <Sequence from={0}>

@@ -20,6 +20,8 @@ import React, { useMemo } from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
 import { useTheme } from "../../theme";
+import { FloatingCode } from "../../components/FloatingCode";
+import { GridBackground } from "../../components/GridBackground";
 
 /* ═══════════════ 颜色系统 ═══════════════ */
 const C = {
@@ -172,6 +174,8 @@ const CodeBlockDefault: React.FC<StyleComponentProps<"code-block">> = ({ data, s
       justifyContent: "center",
       padding: "30px 60px",
     }}>
+      <GridBackground opacity={0.06} animated />
+      <FloatingCode opacity={0.1} seed="code-bg" count={14} />
       {/* 微弱漂浮光斑 */}
       <div style={{
         position: "absolute",

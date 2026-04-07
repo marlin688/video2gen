@@ -158,6 +158,8 @@ export interface VideoCompositionProps {
   bgmVolume?: number;
   /** 启用 LightLeak 光晕叠加（默认 true） */
   lightLeaks?: boolean;
+  /** 启用底部进度条（默认 true） */
+  progressBar?: boolean;
 }
 
 /** 计算每个 segment 在时间线上的帧范围 */

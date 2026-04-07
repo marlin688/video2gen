@@ -16,6 +16,8 @@ import React from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
 import { useTheme } from "../../theme";
+import { ConstellationBg } from "../../components/ConstellationBg";
+import { GlowOrb } from "../../components/GlowOrb";
 
 /* ═══════════════ 平台配色 ═══════════════ */
 const THEMES = {
@@ -333,6 +335,8 @@ const SocialCardDefault: React.FC<StyleComponentProps<"social-card">> = ({ data,
       justifyContent: "center",
       padding: "40px 120px",
     }}>
+      <ConstellationBg nodeCount={20} opacity={0.15} seed="social-card" connectionDistance={180} />
+      <GlowOrb intensity={0.12} seed="social-glow" count={3} />
       <div style={{
         width: "100%",
         display: "flex",

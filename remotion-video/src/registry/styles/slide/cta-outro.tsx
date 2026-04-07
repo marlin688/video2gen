@@ -10,6 +10,8 @@ import React from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
 import { useTheme } from "../../theme";
+import { ParticleBackground } from "../../components/ParticleBackground";
+import { GlowOrb } from "../../components/GlowOrb";
 
 const CTA_ICONS: Record<string, string> = {
   "关注": "🔔", "订阅": "🔔", "follow": "🔔", "subscribe": "🔔",
@@ -37,7 +39,9 @@ const SlideCtaOutro: React.FC<StyleComponentProps<"slide">> = ({ data }) => {
 
   return (
     <AbsoluteFill style={{ background: t.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 40, padding: "60px 120px" }}>
-      {/* 背景光斑 */}
+      {/* 背景效果 */}
+      <ParticleBackground count={16} opacity={0.25} seed="cta-particles" />
+      <GlowOrb intensity={0.15} seed="cta-glow" count={4} />
       <div style={{ position: "absolute", width: 600, height: 600, borderRadius: "50%", background: t.accentGlow, filter: "blur(100px)", opacity: 0.5 }} />
 
       {/* 主文案 */}

@@ -310,7 +310,6 @@ const BrowserGithub: React.FC<StyleComponentProps<"browser">> = ({ data }) => {
               alignItems: "center",
               opacity: interpolate(rowP, [0, 1], [0, 1]),
               background: isHighlighted ? GH.rowHover : "transparent",
-              transition: "background 0.15s",
             }}>
               <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 12 }}>
                 {file.type === "dir" ? <FolderIcon /> : <FileIcon />}

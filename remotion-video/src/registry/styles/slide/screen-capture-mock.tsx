@@ -121,7 +121,6 @@ const SlideScreenCaptureMock: React.FC<StyleComponentProps<"slide">> = ({ data }
           position: "absolute", left: cursorX, top: cursorY,
           pointerEvents: "none" as const,
           filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.5))",
-          transition: "top 0.3s ease-out",
         }}>
           <svg width="24" height="30" viewBox="0 0 24 28" fill="none">
             <path d="M5.5 0L5.5 22.5L10.5 17.5L15.5 26L19.5 24L14.5 15.5L21.5 15.5L5.5 0Z" fill="white" stroke="black" strokeWidth="1.5" strokeLinejoin="round" />

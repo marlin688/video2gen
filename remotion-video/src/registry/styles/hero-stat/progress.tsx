@@ -159,7 +159,6 @@ const HeroStatProgress: React.FC<StyleComponentProps<"hero-stat">> = ({ data }) 
                   borderRadius: 16,
                   background: `linear-gradient(90deg, ${colors.bar}88, ${colors.bar})`,
                   boxShadow: `0 0 20px ${colors.glow}`,
-                  transition: "none",
                 }} />
               </div>
 

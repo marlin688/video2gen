@@ -43,7 +43,6 @@ const SlideChecklist: React.FC<StyleComponentProps<"slide">> = ({ data }) => {
                 border: `2px solid ${interpolate(checkP, [0, 1], [0, 1]) > 0.5 ? t.success : t.surfaceBorder}`,
                 background: interpolate(checkP, [0, 1], [0, 1]) > 0.5 ? `${t.success}20` : "transparent",
                 display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "all 0.2s",
               }}>
                 <span style={{
                   fontSize: 22, color: t.success, fontWeight: 700,

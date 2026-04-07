@@ -3,19 +3,32 @@
  *
  * 通过 registry 动态分发 segment 到注册的 style 组件。
  * 向后兼容：无 component 字段时按 material A/B/C 走默认 style。
+ *
+ * Phase 1 升级:
+ * - TransitionSeries 替换 Series，支持 fade / slide / wipe 多种转场
+ * - LightLeak 光晕叠加层
+ * - 自动按 segment.type 选择转场类型
  */
 
 import {
-  AbsoluteFill, Sequence, Series, staticFile,
+  AbsoluteFill, Sequence, staticFile,
   useCurrentFrame, useVideoConfig, interpolate, Easing,
 } from "remotion";
 import React from "react";
 import { Audio } from "@remotion/media";
+import { TransitionSeries, linearTiming } from "@remotion/transitions";
+import { fade } from "@remotion/transitions/fade";
+import { slide } from "@remotion/transitions/slide";
+import { wipe } from "@remotion/transitions/wipe";
+import type { TransitionPresentation } from "@remotion/transitions";
 
-import type { VideoCompositionProps, ScriptSegment } from "./types";
+import type { VideoCompositionProps, ScriptSegment, TransitionType } from "./types";
 import { registry } from "./registry/registry";
 import "./registry/init"; // 触发所有 style 自注册
 import { ThemeProvider, getTheme } from "./registry/theme";
+import { fadeThroughBlack } from "./registry/components/FadeThroughBlack";
+import { glitch } from "./registry/components/GlitchTransition";
+import { LightLeak } from "./registry/components/LightLeak";
 
 import type {
   SlideData, TerminalData, RecordingData, SourceClipData,
@@ -24,58 +37,62 @@ import type {
   SegmentData, StyleComponentProps,
 } from "./registry/types";
 
+/* ═══════════════ 转场常量 ═══════════════ */
+
+const TRANSITION_FRAMES = 12; // 转场持续帧数（0.4s @ 30fps）
+
+type AnyPresentation = TransitionPresentation<Record<string, unknown>>;
+
 /**
- * 段间转场：每个 segment 首尾 fade through black
- * - 淡入：前 8 帧 (0.27s) 从黑色渐显
- * - 淡出：后 8 帧 (0.27s) 渐隐到黑色
- * - 第一段只淡入不淡出，最后一段只淡出不淡入（避免开头/结尾突兀）
+ * 解析转场类型 → TransitionPresentation
+ *
+ * 优先级:
+ *   1. segment.transition 显式指定
+ *   2. 按 segment.type 语义自动选择
+ *   3. 默认 fadeThroughBlack（兼容原始效果）
  */
-const FADE_FRAMES = 8;
+function resolveTransition(
+  explicit?: TransitionType,
+  prevType?: "intro" | "body" | "outro",
+  nextType?: "intro" | "body" | "outro",
+  idx?: number,
+): AnyPresentation {
+  const t = explicit
+    || autoTransition(prevType, nextType, idx);
 
-const SCALE_FRAMES = 12; // 入场微缩放持续帧数 (0.4s @30fps)
+  switch (t) {
+    case "slide":
+      return slide({ direction: "from-right" }) as AnyPresentation;
+    case "wipe":
+      return wipe() as AnyPresentation;
+    case "fade":
+      return fade() as AnyPresentation;
+    case "glitch":
+      return glitch({ intensity: 12 }) as unknown as AnyPresentation;
+    case "none":
+    default:
+      return fadeThroughBlack() as AnyPresentation;
+  }
+}
 
-const SegmentTransition: React.FC<{
-  isFirst: boolean;
-  isLast: boolean;
-  children: React.ReactNode;
-}> = ({ isFirst, isLast, children }) => {
-  const frame = useCurrentFrame();
-  const { durationInFrames } = useVideoConfig();
+/** 按段落语义自动选择转场（idx 用于 body→body 轮换） */
+function autoTransition(
+  prevType?: string,
+  nextType?: string,
+  idx?: number,
+): TransitionType | undefined {
+  if (prevType === "intro" && nextType === "body") return "slide";
+  if (prevType === "body" && nextType === "outro") return "wipe";
+  // body→body: 每 3 段用一次 glitch，其余轮换 fade / slide / fadeThroughBlack
+  if (prevType === "body" && nextType === "body" && idx !== undefined) {
+    if (idx % 4 === 3) return "glitch";
+    if (idx % 4 === 1) return "fade";
+    if (idx % 4 === 2) return "slide";
+  }
+  return undefined; // fadeThroughBlack default
+}
 
-  // 淡入：第一段从黑到亮；中间段从黑到亮
-  const fadeIn = isFirst
-    ? interpolate(frame, [0, FADE_FRAMES], [0, 1], { extrapolateRight: "clamp" })
-    : interpolate(frame, [0, FADE_FRAMES], [0, 1], { extrapolateRight: "clamp" });
-
-  // 淡出：最后一段从亮到黑；中间段从亮到黑
-  const fadeOut = isLast
-    ? interpolate(frame, [durationInFrames - FADE_FRAMES, durationInFrames], [1, 0], { extrapolateLeft: "clamp" })
-    : interpolate(frame, [durationInFrames - FADE_FRAMES, durationInFrames], [1, 0], { extrapolateLeft: "clamp" });
-
-  const opacity = Math.min(fadeIn, fadeOut);
-
-  // 入场微缩放：从 0.97 → 1.0，配合 fade 形成"推入"感
-  const scale = interpolate(
-    frame, [0, SCALE_FRAMES], [0.97, 1],
-    { extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) },
-  );
-
-  return (
-    <AbsoluteFill>
-      <AbsoluteFill style={{ transform: `scale(${scale})` }}>
-        {children}
-      </AbsoluteFill>
-      {/* 黑色遮罩层实现 fade through black */}
-      <AbsoluteFill
-        style={{
-          backgroundColor: "#000",
-          opacity: 1 - opacity,
-          pointerEvents: "none",
-        }}
-      />
-    </AbsoluteFill>
-  );
-};
+/* ═══════════════ 主组件 ═══════════════ */
 
 export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
   const {
@@ -316,41 +333,113 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
     return <Component data={data} segmentId={seg.id} fps={segFps} />;
   };
 
+  // ── 计算每段的帧范围（用于 LightLeak 定位） ──
+
+  const segmentFrameInfo = React.useMemo(() => {
+    let accum = 0;
+    return segments.map((seg) => {
+      const t = timing[String(seg.id)];
+      if (!t) return { start: accum, duration: 0, gap: 0 };
+      const dur = Math.round(t.duration * fps);
+      const gap = Math.round((t.gap_after || 0) * fps);
+      const info = { start: accum, duration: dur, gap };
+      accum += dur + gap;
+      return info;
+    });
+  }, [segments, timing, fps]);
+
+  // ── LightLeak 位置：每 3 个转场边界 ──
+
+  const lightLeakEnabled = props.lightLeaks !== false;
+
+  const lightLeakSequences = React.useMemo(() => {
+    if (!lightLeakEnabled) return [];
+    const leaks: Array<{ from: number; duration: number; seed: string }> = [];
+    for (let i = 1; i < segments.length; i++) {
+      if (i % 3 !== 0) continue; // 每 3 个转场
+      const info = segmentFrameInfo[i];
+      if (!info) continue;
+      const leakDuration = TRANSITION_FRAMES + 30;
+      leaks.push({
+        from: Math.max(0, info.start - 10),
+        duration: leakDuration,
+        seed: `leak-${i}`,
+      });
+    }
+    return leaks;
+  }, [lightLeakEnabled, segments.length, segmentFrameInfo]);
+
   return (
     <ThemeProvider value={theme}>
       <AbsoluteFill>
-        {/* 视频片段序列（带段间淡入淡出转场） */}
-        <Series>
+        {/* 视频片段序列（TransitionSeries 多种转场） */}
+        <TransitionSeries>
           {segments.flatMap((seg, idx) => {
             const t = timing[String(seg.id)];
             if (!t) return [];
             const durationFrames = Math.round(t.duration * fps);
             const gapFrames = Math.round((t.gap_after || 0) * fps);
-            const isFirst = idx === 0;
-            const isLast = idx === segments.length - 1;
+            const prevSeg = idx > 0 ? segments[idx - 1] : undefined;
 
-            const items: React.ReactNode[] = [
-              <Series.Sequence key={seg.id} durationInFrames={durationFrames}>
-                <SegmentTransition
-                  isFirst={isFirst}
-                  isLast={isLast}
-                >
-                  {renderSegment(seg)}
-                </SegmentTransition>
-              </Series.Sequence>,
-            ];
+            const items: React.ReactNode[] = [];
 
-            if (gapFrames > 0 && !isLast) {
+            // 段间转场（第一段之前不加）
+            if (idx > 0) {
               items.push(
-                <Series.Sequence key={`gap-${seg.id}`} durationInFrames={gapFrames}>
+                <TransitionSeries.Transition
+                  key={`t-${seg.id}`}
+                  presentation={resolveTransition(
+                    seg.transition,
+                    prevSeg?.type,
+                    seg.type,
+                    idx,
+                  )}
+                  timing={linearTiming({
+                    durationInFrames: TRANSITION_FRAMES,
+                  })}
+                />,
+              );
+            }
+
+            // 段内容
+            items.push(
+              <TransitionSeries.Sequence
+                key={seg.id}
+                durationInFrames={durationFrames}
+              >
+                {renderSegment(seg)}
+              </TransitionSeries.Sequence>,
+            );
+
+            // 段后静音间隔
+            if (gapFrames > 0 && idx < segments.length - 1) {
+              items.push(
+                <TransitionSeries.Sequence
+                  key={`gap-${seg.id}`}
+                  durationInFrames={gapFrames}
+                >
                   <AbsoluteFill style={{ backgroundColor: "#000" }} />
-                </Series.Sequence>,
+                </TransitionSeries.Sequence>,
               );
             }
 
             return items;
           })}
-        </Series>
+        </TransitionSeries>
+
+        {/* LightLeak 光晕叠加层 */}
+        {lightLeakSequences.map((leak) => (
+          <Sequence
+            key={leak.seed}
+            from={leak.from}
+            durationInFrames={leak.duration}
+          >
+            <LightLeak
+              seed={leak.seed}
+              intensity={0.25}
+            />
+          </Sequence>
+        ))}
 
         {/* 配音音轨 */}
         <Sequence from={0}>

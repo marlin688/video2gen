@@ -36,8 +36,9 @@ import "./styles/terminal/minimal";
 import "./styles/recording/default";
 import "./styles/source-clip/default";
 
-// code-block (2 styles)
+// code-block (3 styles)
 import "./styles/code-block/default";
+import "./styles/code-block/animated";
 import "./styles/code-block/diff";
 
 // social-card (2 styles)

@@ -20,6 +20,7 @@ import React, { useMemo } from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
 import { useTheme } from "../../theme";
+import { GlowOrb } from "../../components/GlowOrb";
 
 /* ═══════════════ 解析高亮标记 ═══════════════ */
 
@@ -100,6 +101,7 @@ const SlideHeroText: React.FC<StyleComponentProps<"slide">> = ({ data }) => {
         filter: "blur(120px)",
         transform: "translate(-50%, -50%)",
       }} />
+      <GlowOrb intensity={0.2} seed="hero-text-orb" count={4} />
 
       {/* 副标题（小字） */}
       {subtitle && (

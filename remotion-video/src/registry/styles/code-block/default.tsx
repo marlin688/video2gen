@@ -348,7 +348,7 @@ registry.register(
     description:
       "VS Code Dark+ 风格代码展示。支持语法着色、行号、高亮行、行注释气泡、逐行出现动画。" +
       "适合展示代码片段、配置文件、命令输出。",
-    isDefault: true,
+    isDefault: false,
     tags: ["代码", "code", "syntax", "highlight"],
   },
   CodeBlockDefault,

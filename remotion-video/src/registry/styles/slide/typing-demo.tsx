@@ -11,6 +11,7 @@ import React from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
 import { useTheme } from "../../theme";
+import { FloatingCode } from "../../components/FloatingCode";
 
 const SlideTypingDemo: React.FC<StyleComponentProps<"slide">> = ({ data }) => {
   const frame = useCurrentFrame();
@@ -29,6 +30,7 @@ const SlideTypingDemo: React.FC<StyleComponentProps<"slide">> = ({ data }) => {
 
   return (
     <AbsoluteFill style={{ background: t.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 120px" }}>
+      <FloatingCode opacity={0.15} seed="typing-bg" count={16} />
       {/* 标签 */}
       <div style={{
         fontSize: 20, color: t.textDim, fontWeight: 600, fontFamily: t.monoFont,

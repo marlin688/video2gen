@@ -21,6 +21,7 @@ import {
 import React from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
+import { GlowOrb } from "../../components/GlowOrb";
 
 /* ═══════════════ 颜色系统：暖色毛玻璃 ═══════════════ */
 const C = {
@@ -467,6 +468,8 @@ const SlideGlassMorphism: React.FC<StyleComponentProps<"slide">> = ({ data, segm
         filter: "blur(50px)",
         opacity: interpolate(frame, [0, 200, 400], [0.4, 0.2, 0.4], { extrapolateRight: "extend" }),
       }} />
+
+      <GlowOrb intensity={0.2} seed="gm-orb" colors={["#2563eb", "#6366f1"]} count={5} />
 
       {/* 噪声纹理 */}
       <div style={{

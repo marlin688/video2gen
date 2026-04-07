@@ -20,6 +20,10 @@ import React from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
 import { useTheme, type VideoTheme } from "../../theme";
+import { ConstellationBg } from "../../components/ConstellationBg";
+import { FloatingCode } from "../../components/FloatingCode";
+import { GradientText } from "../../components/GradientText";
+import { WordReveal } from "../../components/WordReveal";
 
 /* ═══════════════ 颜色系统：从主题 token 映射 ═══════════════ */
 
@@ -197,6 +201,8 @@ const GridBg: React.FC = () => {
         </defs>
         <rect width="100%" height="100%" fill="url(#gridMin)" />
       </svg>
+      <ConstellationBg nodeCount={30} opacity={0.25} seed="slide-constellation" connectionDistance={200} />
+      <FloatingCode opacity={0.12} seed="td-code" count={20} />
     </AbsoluteFill>
   );
 };
@@ -218,7 +224,9 @@ const Title: React.FC<{ text: string; subtitle?: string }> = ({ text, subtitle }
         fontSize: 48, fontWeight: 800, color: c.white, lineHeight: 1.3,
         letterSpacing: 1,
       }}>
-        {text}
+        <GradientText useAccent>
+          <WordReveal text={text} staggerFrames={2} style={{ display: "inline" }} />
+        </GradientText>
       </div>
       {subtitle && (
         <div style={{ fontSize: 22, color: c.gray, marginTop: 10, fontStyle: "italic" }}>

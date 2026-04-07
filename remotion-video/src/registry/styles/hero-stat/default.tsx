@@ -16,6 +16,7 @@ import React from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
 import { useTheme } from "../../theme";
+import { ConstellationBg } from "../../components/ConstellationBg";
 
 /* ═══════════════ 颜色系统（从主题读取基础色） ═══════════════ */
 function useC() {
@@ -131,6 +132,7 @@ const HeroStatDefault: React.FC<StyleComponentProps<"hero-stat">> = ({ data, seg
       padding: "40px 80px",
       overflow: "hidden",
     }}>
+      <ConstellationBg nodeCount={25} opacity={0.2} seed={`hero-stat-${count}`} connectionDistance={220} />
       {/* 背景光晕（缓慢呼吸 + 漂移动画） */}
       {stats.map((stat, i) => {
         const trend = stat.trend || "neutral";

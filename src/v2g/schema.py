@@ -188,6 +188,7 @@ class ScriptSegment(BaseModel):
     narration_zh: str
     notes: str | None = None
     component: str | None = None
+    transition: Literal["fade", "slide", "wipe", "glitch", "none"] | None = None
 
     # 素材 A
     slide_content: SlideContent | None = None

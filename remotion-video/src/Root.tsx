@@ -277,6 +277,33 @@ const PREVIEWS: Record<string, SingleStyleProps> = {
       annotations: { "7": "先规划再执行", "11": "逐步调用工具" },
     },
   },
+  "code-block.animated": {
+    styleId: "code-block.animated",
+    data: {
+      schema: "code-block",
+      fileName: "src/agent.ts",
+      language: "typescript",
+      code: [
+        "import { Claude } from '@anthropic-ai/sdk';",
+        "",
+        "async function runAgent(task: string) {",
+        "  const client = new Claude();",
+        "  const tools = [fetchUrl, readFile, searchGithub];",
+        "",
+        "  // Phase 1: Plan",
+        "  const plan = await client.plan(task, tools);",
+        "",
+        "  // Phase 2: Execute with tool use",
+        "  for (const step of plan.steps) {",
+        "    const result = await step.execute();",
+        "    if (result.error) break;",
+        "  }",
+        "}",
+      ],
+      highlightLines: [7, 8, 11, 12],
+      annotations: { "7": "先规划再执行", "11": "逐步调用工具" },
+    },
+  },
   "code-block.diff": {
     styleId: "code-block.diff",
     data: {

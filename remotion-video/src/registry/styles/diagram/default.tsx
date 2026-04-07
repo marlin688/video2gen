@@ -16,6 +16,7 @@ import React, { useMemo } from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
 import { useTheme } from "../../theme";
+import { ParticleBackground } from "../../components/ParticleBackground";
 
 /* ═══════════════ 颜色系统 ═══════════════ */
 
@@ -235,6 +236,7 @@ const DiagramDefault: React.FC<StyleComponentProps<"diagram">> = ({ data, segmen
         </defs>
         <rect width="100%" height="100%" fill={`url(#grid-${segmentId})`} />
       </svg>
+      <ParticleBackground count={20} opacity={0.4} seed={`diagram-${segmentId}`} />
 
       {/* 标题 */}
       {data.title && (

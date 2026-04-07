@@ -9,6 +9,9 @@ export interface SlideContent {
   chart_hint?: string;
 }
 
+/** 段间转场类型 */
+export type TransitionType = "fade" | "slide" | "wipe" | "glitch" | "none";
+
 export interface ScriptSegment {
   id: number;
   type: "intro" | "body" | "outro";
@@ -17,6 +20,8 @@ export interface ScriptSegment {
   notes?: string;
   /** 指定视觉组件，格式 "{schema}.{style}"，如 "slide.tech-dark"。缺失时按 material 走默认。 */
   component?: string;
+  /** 进入本段的转场类型。缺失时按 segment.type 自动选择。 */
+  transition?: TransitionType;
   // 素材 A
   slide_content?: SlideContent;
   // 素材 B
@@ -151,6 +156,8 @@ export interface VideoCompositionProps {
   bgmFile?: string;
   /** BGM 音量 0-1，默认 0.15 */
   bgmVolume?: number;
+  /** 启用 LightLeak 光晕叠加（默认 true） */
+  lightLeaks?: boolean;
 }
 
 /** 计算每个 segment 在时间线上的帧范围 */

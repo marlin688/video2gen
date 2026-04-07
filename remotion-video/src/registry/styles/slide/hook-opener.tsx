@@ -11,6 +11,8 @@ import React from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
 import { useTheme } from "../../theme";
+import { GlowOrb } from "../../components/GlowOrb";
+import { WordReveal } from "../../components/WordReveal";
 
 const SlideHookOpener: React.FC<StyleComponentProps<"slide">> = ({ data }) => {
   const frame = useCurrentFrame();
@@ -30,6 +32,7 @@ const SlideHookOpener: React.FC<StyleComponentProps<"slide">> = ({ data }) => {
 
   return (
     <AbsoluteFill style={{ background: t.bg, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+      <GlowOrb intensity={0.2} seed="hook-orb" count={4} />
       {/* 中心光晕 */}
       <div style={{
         position: "absolute", width: 800, height: 800, borderRadius: "50%",
@@ -54,7 +57,7 @@ const SlideHookOpener: React.FC<StyleComponentProps<"slide">> = ({ data }) => {
           fontFamily: t.titleFont, lineHeight: 1.2, letterSpacing: "-0.02em",
           textShadow: `0 0 60px ${t.accentGlow}`,
         }}>
-          {data.title}
+          <WordReveal text={data.title} startFrame={3} staggerFrames={2} />
         </div>
 
         {sub && (

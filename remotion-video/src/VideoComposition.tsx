@@ -31,6 +31,8 @@ import { glitch } from "./registry/components/GlitchTransition";
 import { ProgressBar } from "./registry/components/ProgressBar";
 import { LightLeak } from "./registry/components/LightLeak";
 import { FlashMeme } from "./registry/components/FlashMeme";
+import { CameraRig } from "./registry/components/CameraRig";
+import { FilmGrain } from "./registry/components/FilmGrain";
 
 import type {
   SlideData, TerminalData, RecordingData, SourceClipData,
@@ -373,112 +375,121 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
 
   return (
     <ThemeProvider value={theme}>
-      <AbsoluteFill>
-        {/* 视频片段序列（TransitionSeries 多种转场） */}
-        <TransitionSeries>
-          {segments.flatMap((seg, idx) => {
-            const t = timing[String(seg.id)];
-            if (!t) return [];
-            const durationFrames = Math.round(t.duration * fps);
-            const gapFrames = Math.round((t.gap_after || 0) * fps);
-            const prevSeg = idx > 0 ? segments[idx - 1] : undefined;
+      <AbsoluteFill style={{ overflow: "hidden" }}>
+        {/* CameraRig 全局运镜（包裹所有可视内容） */}
+        <CameraRig
+          segmentFrameInfo={segmentFrameInfo}
+          enabled={props.cameraRig !== false}
+        >
+          {/* 视频片段序列（TransitionSeries 多种转场） */}
+          <TransitionSeries>
+            {segments.flatMap((seg, idx) => {
+              const t = timing[String(seg.id)];
+              if (!t) return [];
+              const durationFrames = Math.round(t.duration * fps);
+              const gapFrames = Math.round((t.gap_after || 0) * fps);
+              const prevSeg = idx > 0 ? segments[idx - 1] : undefined;
 
-            const items: React.ReactNode[] = [];
+              const items: React.ReactNode[] = [];
 
-            // 段间转场（第一段之前不加）
-            if (idx > 0) {
-              // 转场帧数不能超过前后 segment 中较短者的时长
-              const prevT = timing[String(prevSeg?.id)];
-              const prevDur = prevT ? Math.round(prevT.duration * fps) : Infinity;
-              const transFrames = Math.min(TRANSITION_FRAMES, durationFrames - 1, prevDur - 1);
-              if (transFrames > 0) {
-                items.push(
-                  <TransitionSeries.Transition
-                    key={`t-${seg.id}`}
-                    presentation={resolveTransition(
-                      seg.transition,
-                      prevSeg?.type,
-                      seg.type,
-                      idx,
-                    )}
-                    timing={linearTiming({
-                      durationInFrames: transFrames,
-                    })}
-                  />,
-                );
+              // 段间转场（第一段之前不加，"none" = 硬切跳过）
+              if (idx > 0 && seg.transition !== "none") {
+                // 转场帧数不能超过前后 segment 中较短者的时长
+                const prevT = timing[String(prevSeg?.id)];
+                const prevDur = prevT ? Math.round(prevT.duration * fps) : Infinity;
+                const transFrames = Math.min(TRANSITION_FRAMES, durationFrames - 1, prevDur - 1);
+                if (transFrames > 0) {
+                  items.push(
+                    <TransitionSeries.Transition
+                      key={`t-${seg.id}`}
+                      presentation={resolveTransition(
+                        seg.transition,
+                        prevSeg?.type,
+                        seg.type,
+                        idx,
+                      )}
+                      timing={linearTiming({
+                        durationInFrames: transFrames,
+                      })}
+                    />,
+                  );
+                }
               }
-            }
 
-            // 段内容
-            items.push(
-              <TransitionSeries.Sequence
-                key={seg.id}
-                durationInFrames={durationFrames}
-              >
-                {renderSegment(seg)}
-              </TransitionSeries.Sequence>,
-            );
-
-            // 段后静音间隔
-            if (gapFrames > 0 && idx < segments.length - 1) {
+              // 段内容
               items.push(
                 <TransitionSeries.Sequence
-                  key={`gap-${seg.id}`}
-                  durationInFrames={gapFrames}
+                  key={seg.id}
+                  durationInFrames={durationFrames}
                 >
-                  <AbsoluteFill style={{ backgroundColor: "#000" }} />
+                  {renderSegment(seg)}
                 </TransitionSeries.Sequence>,
               );
-            }
 
-            return items;
+              // 段后静音间隔
+              if (gapFrames > 0 && idx < segments.length - 1) {
+                items.push(
+                  <TransitionSeries.Sequence
+                    key={`gap-${seg.id}`}
+                    durationInFrames={gapFrames}
+                  >
+                    <AbsoluteFill style={{ backgroundColor: "#000" }} />
+                  </TransitionSeries.Sequence>,
+                );
+              }
+
+              return items;
+            })}
+          </TransitionSeries>
+
+          {/* FlashMeme 闪现梗图叠加层 */}
+          {segments.map((seg, idx) => {
+            if (!seg.flash_meme) return null;
+            const info = segmentFrameInfo[idx];
+            if (!info || !info.duration) return null;
+            const fm = seg.flash_meme;
+            const offset = fm.frame_offset ?? 0;
+            const dur = fm.duration ?? 15;
+            return (
+              <Sequence
+                key={`flash-${seg.id}`}
+                from={info.start + offset}
+                durationInFrames={dur}
+              >
+                <FlashMeme
+                  imageFileName={fm.image}
+                  displayMode={fm.display_mode}
+                  contrast={fm.contrast}
+                  brightness={fm.brightness}
+                />
+              </Sequence>
+            );
           })}
-        </TransitionSeries>
 
-        {/* FlashMeme 闪现梗图叠加层 */}
-        {segments.map((seg, idx) => {
-          if (!seg.flash_meme) return null;
-          const info = segmentFrameInfo[idx];
-          if (!info || !info.duration) return null;
-          const fm = seg.flash_meme;
-          const offset = fm.frame_offset ?? 0;
-          const dur = fm.duration ?? 15;
-          return (
+          {/* LightLeak 光晕叠加层 */}
+          {lightLeakSequences.map((leak) => (
             <Sequence
-              key={`flash-${seg.id}`}
-              from={info.start + offset}
-              durationInFrames={dur}
+              key={leak.seed}
+              from={leak.from}
+              durationInFrames={leak.duration}
             >
-              <FlashMeme
-                imageFileName={fm.image}
-                displayMode={fm.display_mode}
-                contrast={fm.contrast}
-                brightness={fm.brightness}
+              <LightLeak
+                seed={leak.seed}
+                intensity={0.25}
               />
             </Sequence>
-          );
-        })}
+          ))}
 
-        {/* LightLeak 光晕叠加层 */}
-        {lightLeakSequences.map((leak) => (
-          <Sequence
-            key={leak.seed}
-            from={leak.from}
-            durationInFrames={leak.duration}
-          >
-            <LightLeak
-              seed={leak.seed}
-              intensity={0.25}
+          {/* 底部进度条 */}
+          {props.progressBar !== false && (
+            <ProgressBar
+              sectionStartFrames={segmentFrameInfo.map((info) => info.start)}
             />
-          </Sequence>
-        ))}
+          )}
+        </CameraRig>
 
-        {/* 底部进度条 */}
-        {props.progressBar !== false && (
-          <ProgressBar
-            sectionStartFrames={segmentFrameInfo.map((info) => info.start)}
-          />
-        )}
+        {/* FilmGrain 后期质感层（固定在屏幕上，不受运镜影响） */}
+        <FilmGrain enabled={props.filmGrain !== false} />
 
         {/* 配音音轨 */}
         <Sequence from={0}>

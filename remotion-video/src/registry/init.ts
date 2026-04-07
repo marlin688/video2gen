@@ -26,6 +26,8 @@ import "./styles/slide/screen-capture-mock";
 import "./styles/slide/problem-statement";
 import "./styles/slide/solution-reveal";
 import "./styles/slide/result-showcase";
+import "./styles/slide/fireship-title";
+import "./styles/slide/fireship-meme";
 
 // terminal (3 styles)
 import "./styles/terminal/aurora";

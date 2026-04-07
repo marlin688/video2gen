@@ -169,6 +169,10 @@ export interface VideoCompositionProps {
   lightLeaks?: boolean;
   /** 启用底部进度条（默认 true） */
   progressBar?: boolean;
+  /** 启用全局运镜（默认 true） */
+  cameraRig?: boolean;
+  /** 启用后期质感层：噪点 + 暗角 + 色差（默认 true） */
+  filmGrain?: boolean;
 }
 
 /** 计算每个 segment 在时间线上的帧范围 */

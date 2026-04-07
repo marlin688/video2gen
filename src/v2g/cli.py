@@ -1100,5 +1100,28 @@ def assets_context(cfg: Config, limit):
             click.echo("素材库为空")
 
 
+@assets.command("prefetch")
+@click.option("--twitter", default=None, help="逗号分隔的 Twitter 用户名")
+@click.option("--person", default=None, help="逗号分隔的人物名（英文）")
+@click.option("--refresh", is_flag=True, help="强制重新下载（忽略缓存）")
+@click.pass_obj
+def assets_prefetch(cfg: Config, twitter, person, refresh):
+    """预取素材：Twitter 头像 / 人物照片 / Meme 模板"""
+    from v2g.asset_prefetch import prefetch_all
+
+    out_dir = cfg.output_dir / "prefetch"
+    twitter_users = [u.strip() for u in twitter.split(",")] if twitter else None
+    persons = [p.strip() for p in person.split(",")] if person else None
+
+    results = prefetch_all(
+        out_dir,
+        twitter_users=twitter_users,
+        persons=persons,
+        refresh=refresh,
+    )
+    click.echo(f"\n📦 素材目录: {out_dir}")
+    click.echo(f"   总计: {len(results)} 个文件")
+
+
 if __name__ == "__main__":
     main()

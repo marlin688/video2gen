@@ -173,6 +173,8 @@ export interface VideoCompositionProps {
   cameraRig?: boolean;
   /** 启用后期质感层：噪点 + 暗角 + 色差（默认 true） */
   filmGrain?: boolean;
+  /** 启用烧入字幕（默认 true） */
+  subtitles?: boolean;
 }
 
 /** 计算每个 segment 在时间线上的帧范围 */

@@ -65,6 +65,64 @@ v2g config    # 无报错即可
 
 ---
 
+## 1.5、声音克隆（GPT-SoVITS，推荐）
+
+用自己的声音替代 TTS 机器音，录一次永久使用。
+
+### 安装 GPT-SoVITS
+
+```bash
+# 克隆项目
+git clone https://github.com/RVC-Boss/GPT-SoVITS.git
+cd GPT-SoVITS
+pip install -r requirements.txt
+
+# 下载预训练模型（按官方 README 指引）
+```
+
+### 准备参考音频
+
+录一段 **5-10 分钟**的自己说话音频（普通话，自然语速）：
+- 格式：WAV 或 MP3，采样率 ≥ 16kHz
+- 内容：任意，技术讲解类最佳（与最终输出风格一致）
+- 环境：安静，无回声
+
+训练模型（按 GPT-SoVITS WebUI 操作）：
+1. 打开 WebUI → 上传音频 → 自动切分 + 标注
+2. 训练 SoVITS 模型 + GPT 模型（各 ~30 分钟）
+3. 训练完成后，启动 API 服务器
+
+### 启动 API 服务器
+
+```bash
+cd GPT-SoVITS
+python api_v2.py
+# 默认监听 http://127.0.0.1:9880
+```
+
+### 配置 v2g
+
+```bash
+# .env 中设置
+TTS_ENGINE=sovits
+TTS_SOVITS_URL=http://127.0.0.1:9880
+TTS_SOVITS_REF_AUDIO=/path/to/reference_clip.wav    # 3-10秒的参考音频片段
+TTS_SOVITS_REF_TEXT=参考音频对应的文字内容            # 必须与音频匹配
+```
+
+之后正常运行 `v2g tts` 即可，管线自动使用你的克隆声音。
+
+### 快速验证
+
+```bash
+# 确保 API 服务器已启动，然后
+source .env
+v2g tts {project_id}
+# 听 voiceover/segments/seg_1.mp3 确认效果
+```
+
+---
+
 ## 二、工作流 A：Scout 自动化（原创内容，推荐）
 
 完整链路：**发现选题 → 规划 → 生产 → 渲染 → 入库**

@@ -1,4 +1,4 @@
-"""Stage 4: TTS 中文语音合成 (支持 edge-tts / MiniMax Speech)。"""
+"""Stage 4: TTS 中文语音合成 (支持 edge-tts / MiniMax Speech / GPT-SoVITS)。"""
 
 import asyncio
 import json
@@ -109,6 +109,68 @@ def _generate_segment_minimax(text: str, output_path: Path, voice_id: str, speed
     output_path.write_bytes(audio_bytes)
 
 
+# ─── GPT-SoVITS 引擎 ───
+
+SOVITS_DEFAULT_URL = "http://127.0.0.1:9880"
+
+
+def _generate_segment_sovits(
+    text: str,
+    output_path: Path,
+    server_url: str = "",
+    ref_audio: str = "",
+    ref_text: str = "",
+    text_lang: str = "zh",
+    speed: float = 1.0,
+):
+    """GPT-SoVITS: 开源声音克隆 TTS，本地推理。
+
+    需要先启动 GPT-SoVITS API 服务器:
+        python api_v2.py
+    """
+    url = (server_url or os.environ.get("TTS_SOVITS_URL", SOVITS_DEFAULT_URL)).rstrip("/")
+    ref_audio = ref_audio or os.environ.get("TTS_SOVITS_REF_AUDIO", "")
+    ref_text = ref_text or os.environ.get("TTS_SOVITS_REF_TEXT", "")
+
+    if not ref_audio:
+        raise RuntimeError(
+            "GPT-SoVITS 需要参考音频，请设置 TTS_SOVITS_REF_AUDIO=/path/to/ref.wav"
+        )
+
+    payload = {
+        "text": text,
+        "text_lang": text_lang,
+        "ref_audio_path": ref_audio,
+        "prompt_text": ref_text,
+        "prompt_lang": text_lang,
+        "text_split_method": "cut5",
+        "speed_factor": speed,
+        "streaming_mode": False,
+        "media_type": "wav",
+    }
+
+    resp = requests.post(f"{url}/tts", json=payload, timeout=120)
+
+    # API 返回错误时是 JSON，正常时是音频二进制
+    content_type = resp.headers.get("Content-Type", "")
+    if resp.status_code != 200 or "json" in content_type:
+        try:
+            err = resp.json()
+            raise RuntimeError(f"GPT-SoVITS 错误: {err.get('message', err)}")
+        except ValueError:
+            raise RuntimeError(f"GPT-SoVITS HTTP {resp.status_code}: {resp.text[:200]}")
+
+    # GPT-SoVITS 输出 WAV，转为 MP3（与管线其他部分一致）
+    wav_tmp = output_path.with_suffix(".wav")
+    wav_tmp.write_bytes(resp.content)
+    subprocess.run(
+        [_get_ffmpeg_exe(), "-y", "-i", str(wav_tmp),
+         "-c:a", "libmp3lame", "-q:a", "2", str(output_path)],
+        capture_output=True, text=True, timeout=30,
+    )
+    wav_tmp.unlink(missing_ok=True)
+
+
 def _generate_silence(output_path: Path, duration_sec: float):
     """生成指定时长的静音 MP3 文件。"""
     subprocess.run(
@@ -147,12 +209,12 @@ def _concat_segments(segment_files: list[Path], output_path: Path, gap_sec: floa
 
 
 def _detect_tts_engine() -> str:
-    """检测使用哪个 TTS 引擎: minimax 或 edge。
+    """检测使用哪个 TTS 引擎: edge / minimax / sovits。
 
-    默认 edge（免费），设置 TTS_ENGINE=minimax 切换到 MiniMax（付费高质量）。
+    默认 edge（免费），设置 TTS_ENGINE=minimax 或 sovits 切换。
     """
     engine = os.environ.get("TTS_ENGINE", "").lower()
-    if engine in ("minimax", "edge"):
+    if engine in ("minimax", "edge", "sovits"):
         return engine
     return "edge"
 
@@ -196,7 +258,14 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
 
     engine = _detect_tts_engine()
 
-    if engine == "minimax":
+    if engine == "sovits":
+        sovits_url = os.environ.get("TTS_SOVITS_URL", SOVITS_DEFAULT_URL)
+        sovits_ref = os.environ.get("TTS_SOVITS_REF_AUDIO", "")
+        sovits_ref_text = os.environ.get("TTS_SOVITS_REF_TEXT", "")
+        sovits_speed = _parse_rate_to_speed(rate)
+        ref_name = Path(sovits_ref).name if sovits_ref else "未设置"
+        click.echo(f"🎙️ TTS 配音 [GPT-SoVITS] (参考: {ref_name}, 语速: {sovits_speed})")
+    elif engine == "minimax":
         minimax_voice = os.environ.get("TTS_MINIMAX_VOICE_ID", MINIMAX_DEFAULT_VOICE)
         minimax_speed = _parse_rate_to_speed(rate)
         click.echo(f"🎙️ TTS 配音 [MiniMax Speech] (音色: {minimax_voice}, 语速: {minimax_speed})")
@@ -213,7 +282,15 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
         click.echo(f"   Segment {seg_id}: {narration[:30]}...")
 
         try:
-            if engine == "minimax":
+            if engine == "sovits":
+                _generate_segment_sovits(
+                    narration, seg_file,
+                    server_url=sovits_url,
+                    ref_audio=sovits_ref,
+                    ref_text=sovits_ref_text,
+                    speed=sovits_speed,
+                )
+            elif engine == "minimax":
                 _generate_segment_minimax(narration, seg_file, minimax_voice, minimax_speed)
             else:
                 asyncio.run(_generate_segment_edge(narration, seg_file, voice, rate))

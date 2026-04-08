@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "remotion-studio",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-c", "export PATH=/Users/marlin/.nvm/versions/node/v22.11.0/bin:$PATH && cd remotion-video && npx remotion studio src/index.ts --port $PORT"],
+      "port": 3100,
+      "autoPort": true
+    }
+  ]
+}

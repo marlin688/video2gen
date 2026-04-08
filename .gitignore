@@ -37,3 +37,6 @@ materials/
 
 # Remotion build output
 remotion-video/out/
+
+# Local Remotion browser cache
+.remotion/

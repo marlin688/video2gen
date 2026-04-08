@@ -33,6 +33,7 @@ import { LightLeak } from "./registry/components/LightLeak";
 import { FlashMeme } from "./registry/components/FlashMeme";
 import { CameraRig } from "./registry/components/CameraRig";
 import { FilmGrain } from "./registry/components/FilmGrain";
+import { SubtitleOverlay } from "./components/SubtitleOverlay";
 
 import type {
   SlideData, TerminalData, RecordingData, SourceClipData,
@@ -490,6 +491,11 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
 
         {/* FilmGrain 后期质感层（固定在屏幕上，不受运镜影响） */}
         <FilmGrain enabled={props.filmGrain !== false} />
+
+        {/* 字幕叠加层（固定在屏幕上，不受运镜影响） */}
+        {props.subtitles !== false && (
+          <SubtitleOverlay segments={segments} timing={timing} />
+        )}
 
         {/* 配音音轨 */}
         <Sequence from={0}>

@@ -149,9 +149,63 @@ def _generate_script_md(script_data: dict, output_path: Path):
         seg_type = type_labels.get(seg.get("type", "body"), "主体")
         material = seg.get("material", "?")
         mat_label = material_labels.get(material, material)
+        component = seg.get("component", "")
 
         lines.append(f"## [{seg_id}] {seg_type} | {mat_label}\n\n")
         lines.append(f"{seg.get('narration_zh', '')}\n\n")
+        if component:
+            lines.append(f"*组件: `{component}`*\n")
+
+        if component.startswith("social-card") and seg.get("social_card"):
+            card = seg["social_card"]
+            lines.append("*社交卡片:*\n")
+            lines.append(f"- 平台: {card.get('platform', '')}\n")
+            lines.append(f"- 作者: {card.get('author', '')}\n")
+            text = (card.get("text", "") or "").strip().replace("\n", " ")
+            if text:
+                lines.append(f"- 文案: {text[:140]}{'...' if len(text) > 140 else ''}\n")
+            stats = card.get("stats") or {}
+            if stats:
+                stat_parts = [f"{k}={v}" for k, v in stats.items()]
+                lines.append(f"- 互动: {', '.join(stat_parts)}\n")
+            lines.append("\n")
+
+        elif component.startswith("browser") and seg.get("browser_content"):
+            bc = seg["browser_content"]
+            lines.append("*浏览器内容:*\n")
+            if bc.get("url"):
+                lines.append(f"- URL: {bc['url']}\n")
+            if bc.get("pageTitle"):
+                lines.append(f"- 页面标题: {bc['pageTitle']}\n")
+            for ln in (bc.get("contentLines") or [])[:5]:
+                lines.append(f"- {ln}\n")
+            lines.append("\n")
+
+        elif component.startswith("diagram") and seg.get("diagram"):
+            dg = seg["diagram"]
+            nodes = dg.get("nodes") or []
+            edges = dg.get("edges") or []
+            lines.append("*流程图:*\n")
+            lines.append(f"- 节点数: {len(nodes)}\n")
+            lines.append(f"- 连线数: {len(edges)}\n")
+            for node in nodes[:4]:
+                label = node.get("label", "")
+                if label:
+                    lines.append(f"- 节点: {label}\n")
+            lines.append("\n")
+
+        elif component.startswith("hero-stat") and seg.get("hero_stat"):
+            hs = seg["hero_stat"]
+            lines.append("*关键指标:*\n")
+            for item in hs.get("stats", []):
+                value = item.get("value", "")
+                label = item.get("label", "")
+                trend = item.get("trend", "")
+                t = f" ({trend})" if trend else ""
+                lines.append(f"- {label}: {value}{t}\n")
+            if hs.get("footnote"):
+                lines.append(f"- 说明: {hs['footnote']}\n")
+            lines.append("\n")
 
         if material == "A" and "slide_content" in seg:
             sc = seg["slide_content"]

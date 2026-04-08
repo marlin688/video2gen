@@ -736,7 +736,27 @@ def _generate_script_phased(
 
         except Exception as e:
             click.echo(f"      ⚠️ 批次 {batch_ids} 填充失败: {e}")
-            # 部分失败不致命，保留骨架中的占位内容
+            click.echo("      🔄 回退到单次完整调用，避免占位脚本进入下游阶段")
+            from v2g.cost import get_tracker
+            get_tracker().record_degradation(
+                "agent_script", "phased-batch", "oneshot", f"batch {batch_ids} failed: {e}"
+            )
+            return _generate_script_oneshot(outline_str, system_prompt, model, output_dir)
+
+    # 占位文本未被替换说明分批填充不完整，直接回退确保脚本可用性
+    placeholder_segments = [
+        s.get("id") for s in segments
+        if isinstance(s.get("narration_zh"), str) and s.get("narration_zh", "").strip().endswith("...")
+    ]
+    if placeholder_segments:
+        click.echo(f"      ⚠️ 检测到占位段落: {placeholder_segments}")
+        click.echo("      🔄 回退到单次完整调用，避免不完整脚本进入下游阶段")
+        from v2g.cost import get_tracker
+        get_tracker().record_degradation(
+            "agent_script", "phased-placeholder", "oneshot",
+            f"placeholder segments: {placeholder_segments}",
+        )
+        return _generate_script_oneshot(outline_str, system_prompt, model, output_dir)
 
     skeleton["segments"] = segments
 
@@ -926,6 +946,17 @@ def run_agent(
     # ── Phase 2.5: 质量门控（agent 模式不自动重试，仅报告）─────
     from v2g.pipeline import _run_quality_gate
     _run_quality_gate(cfg, project_id, model, max_retries=0, threshold=85)
+
+    # agent 模式质量门控后强制阻断 critical 问题，避免坏脚本继续进入 TTS/渲染
+    from v2g.eval import eval_script
+    report = eval_script(json.loads(script_path.read_text(encoding="utf-8")), project_id)
+    if report.get("has_critical"):
+        failed = [c["name"] for c in report.get("critical_failed", [])]
+        raise click.ClickException(
+            "脚本质量门控未通过（critical）: "
+            + ", ".join(failed)
+            + "。请修复 outline/script 后重试。"
+        )
 
     # ── Phase 3: B 类素材自动采集 ─────────────────────────
     script_data = json.loads(script_path.read_text(encoding="utf-8"))
@@ -1124,7 +1155,7 @@ def _score_outline(outline: dict, target_duration: int = 240) -> int:
     """对大纲进行结构质量评分（0-100）。
 
     评分维度（各 20 分，共 100）：
-    1. 段落数量：6-10 段满分，<4 或 >15 不及格
+    1. 段落数量：8-20 段满分，<4 或 >25 不及格
     2. 结构完整性：有 intro + body + outro
     3. 素材多样性：A/B/C 三种都有
     4. 时长匹配：总预估时长与目标时长偏差 <30%
@@ -1135,9 +1166,9 @@ def _score_outline(outline: dict, target_duration: int = 240) -> int:
 
     # 1. 段落数量 (20 分)
     n = len(items)
-    if 6 <= n <= 10:
+    if 8 <= n <= 20:
         score += 20
-    elif 4 <= n <= 12:
+    elif 6 <= n <= 24:
         score += 12
     elif n >= 3:
         score += 5

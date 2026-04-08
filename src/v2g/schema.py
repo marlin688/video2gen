@@ -262,6 +262,26 @@ class ScriptSegment(BaseModel):
             if not self.web_video:
                 errors.append("使用 web-video 组件时必须有 web_video")
 
+        if self.component and self.component.startswith("social-card"):
+            if not self.social_card:
+                errors.append("使用 social-card 组件时必须有 social_card")
+
+        if self.component and self.component.startswith("code-block"):
+            if not self.code_content:
+                errors.append("使用 code-block 组件时必须有 code_content")
+
+        if self.component and self.component.startswith("diagram"):
+            if not self.diagram:
+                errors.append("使用 diagram 组件时必须有 diagram")
+
+        if self.component and self.component.startswith("hero-stat"):
+            if not self.hero_stat:
+                errors.append("使用 hero-stat 组件时必须有 hero_stat")
+
+        if self.component and self.component.startswith("browser"):
+            if not self.browser_content:
+                errors.append("使用 browser 组件时必须有 browser_content")
+
         if self.material == "B" and not self.component:
             if not self.terminal_session and not self.recording_instruction:
                 errors.append(

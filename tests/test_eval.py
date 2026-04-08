@@ -141,7 +141,7 @@ class TestEdgeCases:
         script = {"title": "t", "description": "d", "tags": ["a", "b", "c"], "segments": segments}
         report = eval_script(script, "test")
         failed_names = [c["name"] for c in report["checks"] if not c["passed"]]
-        assert "段落数 8-12" in failed_names
+        assert "段落数 6-25" in failed_names
 
     def test_c_segment_over_10s(self):
         script = _golden_script()

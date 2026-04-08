@@ -27,7 +27,8 @@ def search_trending_repos(
 
     all_repos = []
     for topic in topics:
-        query = f"{topic} stars:>{min_stars} created:>{cutoff}"
+        # 热点近似策略：近期有活跃更新 + 基础 star 门槛
+        query = f"{topic} stars:>{min_stars} pushed:>{cutoff}"
         try:
             resp = httpx.get(
                 "https://api.github.com/search/repositories",
@@ -113,7 +114,7 @@ def analyze_repos_with_llm(repos: list[dict], model: str) -> str:
         return ""
 
 
-def run_github_trending(cfg) -> Path | None:
+def run_github_trending(cfg, since_days: int = 7, min_stars: int = 50) -> Path | None:
     """GitHub 趋势监控主流程。"""
     from datetime import date
     from v2g.scout.store import ScoutStore
@@ -125,7 +126,7 @@ def run_github_trending(cfg) -> Path | None:
     topics = [t.strip() for t in cfg.github_topics.split(",") if t.strip()]
 
     # 搜索
-    repos = search_trending_repos(topics, since_days=7, min_stars=50)
+    repos = search_trending_repos(topics, since_days=since_days, min_stars=min_stars)
     if not repos:
         click.echo("   ℹ️ 未找到新仓库")
         return None

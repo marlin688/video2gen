@@ -192,6 +192,28 @@ class TestInvalidScript:
         _, errors = validate_script(_make_script(segments=[seg]))
         assert len(errors) > 0
 
+    def test_social_card_component_requires_social_card_data(self):
+        seg = _make_segment(1, "body", "A", component="social-card.default")
+        _, errors = validate_script(_make_script(segments=[seg]))
+        assert len(errors) > 0
+        assert any("social-card" in e or "social_card" in e for e in errors)
+
+    def test_social_card_component_with_social_card_data(self):
+        seg = _make_segment(
+            1,
+            "body",
+            "A",
+            component="social-card.default",
+            social_card={
+                "platform": "twitter",
+                "author": "@test",
+                "text": "hello",
+            },
+        )
+        data, errors = validate_script(_make_script(segments=[seg]))
+        assert errors == []
+        assert data.segments[0].social_card.platform == "twitter"
+
     def test_material_b_missing_session_and_instruction(self):
         seg = _make_segment(1, "body", "B")
         del seg["terminal_session"]

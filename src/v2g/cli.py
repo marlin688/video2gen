@@ -348,7 +348,7 @@ def scout(cfg: Config, quiet):
 def scout_github(cfg: Config, since, min_stars):
     """GitHub AI 趋势监控"""
     from v2g.scout.github_trending import run_github_trending
-    run_github_trending(cfg)
+    run_github_trending(cfg, since_days=since, min_stars=min_stars)
 
 
 @scout.command("hn")

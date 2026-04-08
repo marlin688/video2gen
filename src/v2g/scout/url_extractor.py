@@ -87,9 +87,33 @@ _SOURCE_PRIORITY = {"youtube": 0, "article": 1, "github": 2, "hn": 3, "twitter":
 
 
 def _tokenize(text: str) -> list[str]:
-    """分词：按空格/标点拆分，去停用词，去短词。"""
-    tokens = re.split(r"[\s\-_/,.;:!?()（）【】「」""''·、。！？，；：]+", text.lower())
-    return [t for t in tokens if t and len(t) >= 2 and t not in _STOP_WORDS]
+    """中英混合分词：英文词 + 中文词组（含 2-gram），去停用词。"""
+    text = text.lower()
+    tokens: list[str] = []
+
+    # 英文/数字词（支持 ai、rag、gpt-4 这类模式）
+    for t in re.findall(r"[a-z0-9][a-z0-9+_.-]*", text):
+        if len(t) >= 2 and t not in _STOP_WORDS:
+            tokens.append(t)
+
+    # 中文连续片段：保留整词 + 2-gram，提升中文命中率
+    for chunk in re.findall(r"[\u4e00-\u9fff]{2,}", text):
+        if chunk not in _STOP_WORDS:
+            tokens.append(chunk)
+        if len(chunk) > 2:
+            for i in range(len(chunk) - 1):
+                bg = chunk[i:i + 2]
+                if bg not in _STOP_WORDS:
+                    tokens.append(bg)
+
+    # 去重保序
+    dedup: list[str] = []
+    seen = set()
+    for t in tokens:
+        if t not in seen:
+            seen.add(t)
+            dedup.append(t)
+    return dedup
 
 
 def match_urls_to_topic(
@@ -117,7 +141,18 @@ def match_urls_to_topic(
             scored.append({**item, "match_score": score})
 
     if not scored:
-        return []
+        # 关键词没命中时降级：按来源优先级给出候选，避免 NotebookLM 无素材
+        fallback: list[dict] = []
+        seen_urls: set[str] = set()
+        for item in sorted(all_urls, key=lambda x: _SOURCE_PRIORITY.get(x.get("source_type", ""), 9)):
+            url = item.get("url", "")
+            if not url or url in seen_urls:
+                continue
+            fallback.append({**item, "match_score": 0})
+            seen_urls.add(url)
+            if len(fallback) >= min(max_results, 4):
+                break
+        return fallback
 
     # 按 score 降序排序
     scored.sort(key=lambda x: (-x["match_score"], _SOURCE_PRIORITY.get(x["source_type"], 9)))

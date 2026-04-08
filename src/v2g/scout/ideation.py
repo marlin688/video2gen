@@ -1,7 +1,7 @@
 """创意构思 + 竞品分析：YouTube 竞品搜索 + LLM 竞争格局分析 + 创意生成。"""
 
 import re
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import click
@@ -12,6 +12,7 @@ def search_youtube_videos(
     query: str,
     max_results: int = 50,
     region: str = "US",
+    since_days: int = 30,
 ) -> list[dict]:
     """YouTube Data API v3 搜索 + 统计数据。
 
@@ -25,7 +26,13 @@ def search_youtube_videos(
 
     click.echo(f"   🔍 YouTube 搜索: {query[:50]}")
 
-    # Step 1: search
+    # Step 1: search（优先拉最近内容，再按热度重排）
+    published_after = (
+        (datetime.now(timezone.utc) - timedelta(days=since_days))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     try:
         resp = httpx.get(
             "https://www.googleapis.com/youtube/v3/search",
@@ -35,7 +42,8 @@ def search_youtube_videos(
                 "q": query,
                 "maxResults": min(max_results, 50),
                 "regionCode": region,
-                "order": "relevance",
+                "order": "date",
+                "publishedAfter": published_after,
                 "key": api_key,
             },
             timeout=30.0,
@@ -86,7 +94,22 @@ def search_youtube_videos(
         stats = stats_item.get("statistics", {})
         videos.append(_normalize_video(vid, snippet, stats))
 
-    click.echo(f"   ✅ 找到 {len(videos)} 个视频")
+    # 二次排序：近期热度优先（播放量 + 互动）并兼顾新鲜度
+    now = datetime.now(timezone.utc).date()
+
+    def _score(v: dict) -> float:
+        try:
+            pub = date.fromisoformat(v.get("published_at", ""))
+        except Exception:
+            pub = now
+        age_days = max((now - pub).days, 0)
+        freshness = 1.0 / (1.0 + age_days / 7.0)
+        engagement = v.get("views", 0) + 2 * v.get("likes", 0) + 3 * v.get("comments", 0)
+        return engagement * freshness
+
+    videos.sort(key=_score, reverse=True)
+
+    click.echo(f"   ✅ 找到 {len(videos)} 个视频 (最近 {since_days} 天)")
     return videos
 
 

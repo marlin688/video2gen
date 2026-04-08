@@ -2,7 +2,7 @@
 
 import pytest
 
-from v2g.eval import eval_script, eval_score_pct
+from v2g.eval import eval_script, eval_score_pct, get_blocking_warnings
 
 
 # ── 辅助工厂 ─────────────────────────────────────────────────
@@ -155,3 +155,34 @@ class TestEdgeCases:
         pct = eval_score_pct(report)
         assert 0 <= pct <= 100
         assert pct == report["score"] / report["max_score"] * 100
+
+
+class TestTutorialDepthChecks:
+    def test_tutorial_missing_depth_rules_raise_warnings(self):
+        """教程类脚本缺失深度信息应触发新增 warning。"""
+        script = {
+            "title": "Claude Code + Obsidian 教程",
+            "description": "从零搭建工作流",
+            "tags": ["Claude Code", "Obsidian", "教程"],
+            "segments": [
+                _seg(1, "intro", "A", "今天我们快速搭一个工作流。"),
+                _seg(2, "body", "B", "先执行命令搭建目录结构。",
+                     recording_instruction="1. 创建目录 2. 写配置",
+                     terminal_session=[{"type": "input", "text": "mkdir vault"}]),
+                _seg(3, "body", "A", "接着把配置拆成模板。"),
+                _seg(4, "body", "B", "再跑一次自动化流程。",
+                     recording_instruction="1. 运行命令",
+                     terminal_session=[{"type": "input", "text": "claude run"}]),
+                _seg(5, "body", "A", "最后优化一下流程。"),
+                _seg(6, "outro", "A", "这套流程你照着做就行。"),
+            ],
+        }
+
+        report = eval_script(script, "tutorial")
+        warning_names = [c["name"] for c in report["warning_failed"]]
+        assert "教程含踩坑修复" in warning_names
+        assert "教程含前置条件/版本" in warning_names
+        assert "outro有可执行交付" in warning_names
+
+        blocking_names = [c["name"] for c in get_blocking_warnings(report)]
+        assert "教程含踩坑修复" in blocking_names

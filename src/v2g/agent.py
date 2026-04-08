@@ -911,6 +911,10 @@ def run_agent(
 
         outline = json.loads(outline_path.read_text(encoding="utf-8"))
         system_prompt = _read_prompt("agent_system.md") + "\n\n" + _read_prompt("agent_script.md")
+        topic_template = _topic_script_template(topic, sources)
+        if topic_template:
+            click.echo("   🧩 应用专题骨架: Claude Code + Obsidian")
+            system_prompt += "\n\n" + topic_template
 
         from v2g.llm import call_llm
         from v2g.scriptwriter import _extract_json, _generate_script_md, _generate_recording_guide
@@ -947,13 +951,16 @@ def run_agent(
     from v2g.pipeline import _run_quality_gate
     _run_quality_gate(cfg, project_id, model, max_retries=0, threshold=85)
 
-    # agent 模式质量门控后强制阻断 critical 问题，避免坏脚本继续进入 TTS/渲染
-    from v2g.eval import eval_script
+    # agent 模式质量门控后强制阻断 critical 与关键 warning，避免平庸脚本进入下游
+    from v2g.eval import eval_script, get_blocking_warnings
     report = eval_script(json.loads(script_path.read_text(encoding="utf-8")), project_id)
-    if report.get("has_critical"):
-        failed = [c["name"] for c in report.get("critical_failed", [])]
+    blocking_warnings = get_blocking_warnings(report)
+    if report.get("has_critical") or blocking_warnings:
+        failed = [c["name"] for c in report.get("critical_failed", [])] + [
+            w["name"] for w in blocking_warnings
+        ]
         raise click.ClickException(
-            "脚本质量门控未通过（critical）: "
+            "脚本质量门控未通过（critical / blocking warning）: "
             + ", ".join(failed)
             + "。请修复 outline/script 后重试。"
         )
@@ -1010,6 +1017,19 @@ def run_agent(
 
 def _read_prompt(name: str) -> str:
     return (PROMPTS_DIR / name).read_text(encoding="utf-8")
+
+
+def _topic_script_template(topic: str, sources: tuple[str, ...]) -> str:
+    """按主题自动注入专项脚本骨架模板。"""
+    t = (topic or "").lower()
+    source_text = " ".join(sources).lower()
+
+    has_claude = "claude" in t or "claude" in source_text
+    has_obsidian = "obsidian" in t or "obsidian" in source_text
+
+    if has_claude and has_obsidian:
+        return _read_prompt("tutorial_cc_obsidian_skeleton.md")
+    return ""
 
 
 def _parse_srt_to_text(srt_content: str) -> str:

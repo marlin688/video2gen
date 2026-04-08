@@ -105,7 +105,12 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
                   多源流程传入 run_multi_script，agent 流程不重试。
     """
     import json
-    from v2g.eval import eval_script, eval_score_pct, print_eval_report
+    from v2g.eval import (
+        eval_script,
+        eval_score_pct,
+        print_eval_report,
+        get_blocking_warnings,
+    )
 
     script_path = cfg.output_dir / video_id / "script.json"
     if not script_path.exists():
@@ -114,14 +119,15 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
     script = json.loads(script_path.read_text(encoding="utf-8"))
     report = eval_script(script, video_id)
     pct = eval_score_pct(report)
+    blocking_warnings = get_blocking_warnings(report)
 
     click.echo(f"\n📋 质量门控: {pct:.0f}%")
 
-    # 按 critical 级别判断是否通过（而非百分比阈值）
-    if not report.get("has_critical"):
+    # 按 critical + 阻断 warning 判断是否通过（而非百分比阈值）
+    if not report.get("has_critical") and not blocking_warnings:
         warning_failed = report.get("warning_failed", [])
         if warning_failed:
-            click.echo(f"   ⚠️ 通过 (有 {len(warning_failed)} 个警告)")
+            click.echo(f"   ⚠️ 通过 (有 {len(warning_failed)} 个非阻断警告)")
             for w in warning_failed:
                 detail = f": {w.get('detail', '')}" if w.get("detail") else ""
                 click.echo(f"      - {w['name']}{detail}")
@@ -136,15 +142,20 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
         from v2g.scriptwriter import run_script
         regen_fn = lambda c, v, m: run_script(c, v, m)
 
+    fail_names = [c["name"] for c in report.get("critical_failed", [])] + [
+        w["name"] for w in blocking_warnings
+    ]
+
     if regen_fn is None:
-        click.echo(f"⚠️ 存在 critical 问题 ({pct:.0f}%)，无重试函数，继续使用当前脚本")
+        click.echo(
+            f"⚠️ 存在需修复问题 ({pct:.0f}%)，无重试函数，继续使用当前脚本: "
+            + ", ".join(fail_names)
+        )
         return
 
-    critical_names = [c["name"] for c in report.get("critical_failed", [])]
-
     for attempt in range(1, max_retries + 1):
-        click.echo(f"\n🔄 存在 critical 问题，重试 {attempt}/{max_retries}...")
-        click.echo(f"   Critical 项: {', '.join(critical_names)}")
+        click.echo(f"\n🔄 存在需修复问题，重试 {attempt}/{max_retries}...")
+        click.echo(f"   问题项: {', '.join(fail_names)}")
 
         # 清除 scripted 状态并重新生成
         state = PipelineState.load(cfg.output_dir, video_id)
@@ -156,20 +167,25 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
         script = json.loads(script_path.read_text(encoding="utf-8"))
         report = eval_script(script, video_id)
         pct = eval_score_pct(report)
+        blocking_warnings = get_blocking_warnings(report)
 
         click.echo(f"   📋 重试结果: {pct:.0f}%")
-        if not report.get("has_critical"):
+        if not report.get("has_critical") and not blocking_warnings:
             warning_failed = report.get("warning_failed", [])
             if warning_failed:
-                click.echo(f"   ⚠️ 通过 (有 {len(warning_failed)} 个警告)")
+                click.echo(f"   ⚠️ 通过 (有 {len(warning_failed)} 个非阻断警告)")
             else:
                 click.echo(f"   ✅ 通过")
             return
 
-        critical_names = [c["name"] for c in report.get("critical_failed", [])]
+        fail_names = [c["name"] for c in report.get("critical_failed", [])] + [
+            w["name"] for w in blocking_warnings
+        ]
 
     # 所有重试用完，打印报告但继续流程（不阻断）
-    click.echo(f"\n⚠️ {max_retries} 次重试后仍有 critical 问题 ({pct:.0f}%)，继续使用当前脚本")
+    click.echo(
+        f"\n⚠️ {max_retries} 次重试后仍有需修复问题 ({pct:.0f}%)，继续使用当前脚本"
+    )
     print_eval_report(report)
 
 

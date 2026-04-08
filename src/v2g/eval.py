@@ -1,11 +1,94 @@
 """脚本质量评估：规则化检查 script.json，不依赖 LLM。"""
 
 import json
+import math
+import re
 from pathlib import Path
 
 import click
 
 from v2g.config import Config
+
+
+BLOCKING_WARNING_NAMES = frozenset({
+    "A素材 40-60%",
+    "B素材 ≥20%",
+    "总字数 400-5000",
+    "开头不套话",
+    "B段有 terminal_session",
+    "素材类型交替",
+    "视觉 schema 多样性",
+    "无连续相同 schema",
+    "无重复段落",
+    "body段 A/B 交替",
+    "教程可复现闭环",
+    "教程含踩坑修复",
+    "教程含前置条件/版本",
+    "教程有适用边界对比",
+    "教程高级组件≥2",
+    "outro有可执行交付",
+})
+
+
+def get_blocking_warnings(report: dict) -> list[dict]:
+    """返回会阻断质量门控的 warning 项。"""
+    return [
+        c for c in report.get("warning_failed", [])
+        if c.get("name") in BLOCKING_WARNING_NAMES
+    ]
+
+
+def _segment_text(seg: dict) -> str:
+    parts: list[str] = []
+    for k in ("narration_zh", "recording_instruction", "notes", "component"):
+        v = seg.get(k)
+        if isinstance(v, str):
+            parts.append(v)
+    sc = seg.get("slide_content")
+    if isinstance(sc, dict):
+        title = sc.get("title")
+        if isinstance(title, str):
+            parts.append(title)
+        chart_hint = sc.get("chart_hint")
+        if isinstance(chart_hint, str):
+            parts.append(chart_hint)
+        bullets = sc.get("bullet_points")
+        if isinstance(bullets, list):
+            parts.extend(str(x) for x in bullets if isinstance(x, str))
+    session = seg.get("terminal_session")
+    if isinstance(session, list):
+        for step in session:
+            if not isinstance(step, dict):
+                continue
+            for k in ("text", "name", "target", "result"):
+                v = step.get(k)
+                if isinstance(v, str):
+                    parts.append(v)
+            lines = step.get("lines")
+            if isinstance(lines, list):
+                parts.extend(str(x) for x in lines if isinstance(x, str))
+    return "\n".join(parts)
+
+
+def _is_tutorial_script(script: dict, segments: list[dict]) -> bool:
+    """粗判教程型脚本（规则只在教程类场景启用）。"""
+    b_count = sum(1 for s in segments if s.get("material") == "B")
+    if b_count < 2:
+        return False
+
+    text_parts: list[str] = []
+    for k in ("title", "description"):
+        v = script.get(k)
+        if isinstance(v, str):
+            text_parts.append(v.lower())
+    text_parts.extend(str(t).lower() for t in script.get("tags", []) if isinstance(t, str))
+    joined = "\n".join(text_parts)
+
+    tutorial_signals = (
+        "教程", "技巧", "实战", "上手", "工作流", "避坑", "配置",
+        "claude code", "claude", "obsidian", "coding agent", "自动化",
+    )
+    return any(sig in joined for sig in tutorial_signals)
 
 
 def eval_script(script: dict, video_id: str = "") -> dict:
@@ -51,7 +134,7 @@ def eval_script(script: dict, video_id: str = "") -> dict:
 
     # --- 段落数量 ---
     seg_count = len(segments)
-    check("段落数 8-12", 8 <= seg_count <= 12, weight=2, detail=f"{seg_count} 段")
+    check("段落数 6-25", 6 <= seg_count <= 25, weight=2, detail=f"{seg_count} 段")
 
     # --- 素材分配 ---
     a_count = sum(1 for s in segments if s.get("material") == "A")
@@ -77,12 +160,12 @@ def eval_script(script: dict, video_id: str = "") -> dict:
         total_chars += chars
         if chars < 20:
             short_segs += 1
-        if chars > 120:
+        if chars > 250:
             long_segs += 1
 
-    check("总字数 400-1000", 400 <= total_chars <= 1000, weight=2, detail=f"{total_chars} 字")
+    check("总字数 400-5000", 400 <= total_chars <= 5000, weight=2, detail=f"{total_chars} 字")
     check("无过短段落 (<20字)", short_segs == 0, detail=f"{short_segs} 段过短")
-    check("无过长段落 (>120字)", long_segs == 0, detail=f"{long_segs} 段过长")
+    check("无过长段落 (>250字)", long_segs == 0, detail=f"{long_segs} 段过长")
 
     # --- 开头质量 ---
     if segments:
@@ -134,7 +217,7 @@ def eval_script(script: dict, video_id: str = "") -> dict:
     for i in range(1, len(segments)):
         if segments[i].get("material") == segments[i - 1].get("material"):
             consecutive += 1
-    check("素材类型交替", consecutive <= 2, detail=f"{consecutive} 处连续相同素材")
+    check("素材类型交替", consecutive <= 2, weight=2, detail=f"{consecutive} 处连续相同素材")
 
     # --- 视觉 schema 多样性 ---
     def _seg_schema(seg: dict) -> str:
@@ -145,7 +228,7 @@ def eval_script(script: dict, video_id: str = "") -> dict:
         return {"A": "slide", "B": "terminal", "C": "source-clip"}.get(mat, mat)
 
     schemas_used = {_seg_schema(s) for s in segments}
-    check("视觉 schema 多样性", len(schemas_used) >= 3, weight=1,
+    check("视觉 schema 多样性", len(schemas_used) >= 3, weight=2,
           detail=f"使用了 {len(schemas_used)} 种 schema: {sorted(schemas_used)}")
 
     consecutive_schema = 0
@@ -155,8 +238,22 @@ def eval_script(script: dict, video_id: str = "") -> dict:
         if cur == prev_schema:
             consecutive_schema += 1
         prev_schema = cur
-    check("无连续相同 schema", consecutive_schema <= 1, weight=1,
+    check("无连续相同 schema", consecutive_schema <= 1, weight=2,
           detail=f"{consecutive_schema} 处连续相同 schema")
+
+    # --- 内容去重检查 ---
+    from difflib import SequenceMatcher
+    duplicate_pairs = 0
+    for i in range(len(segments)):
+        for j in range(i + 1, len(segments)):
+            narr_i = segments[i].get("narration_zh", "")
+            narr_j = segments[j].get("narration_zh", "")
+            if len(narr_i) > 20 and len(narr_j) > 20:
+                ratio = SequenceMatcher(None, narr_i, narr_j).ratio()
+                if ratio > 0.4:
+                    duplicate_pairs += 1
+    check("无重复段落", duplicate_pairs == 0, weight=2,
+          detail=f"{duplicate_pairs} 对段落内容高度相似")
 
     # --- 脚本结构 (intro/body/outro) ---
     types = [s.get("type", "") for s in segments]
@@ -194,8 +291,106 @@ def eval_script(script: dict, video_id: str = "") -> dict:
 
     # --- 高级组件使用 ---
     component_count = sum(1 for s in segments if s.get("component"))
-    check("使用高级组件 (0-3)", component_count <= 3,
+    check("使用高级组件 (0-4)", component_count <= 4,
           detail=f"{component_count} 个高级组件")
+
+    # --- 教程型脚本深度检查 ---
+    if _is_tutorial_script(script, segments):
+        seg_texts = [_segment_text(s) for s in segments]
+
+        # 1) 可复现闭环：B 段应具备「指令 + 可见输出」
+        b_total = 0
+        b_closed_loop = 0
+        for seg in segments:
+            if seg.get("material") != "B":
+                continue
+            b_total += 1
+            rec = seg.get("recording_instruction")
+            has_instruction = isinstance(rec, str) and bool(rec.strip())
+            session = seg.get("terminal_session")
+            has_input = False
+            has_observable = False
+            if isinstance(session, list):
+                for step in session:
+                    if not isinstance(step, dict):
+                        continue
+                    step_type = step.get("type")
+                    if step_type == "input":
+                        has_input = True
+                    if step_type in {"output", "status", "tool"}:
+                        if step.get("text") or step.get("result"):
+                            has_observable = True
+                        lines = step.get("lines")
+                        if isinstance(lines, list) and len(lines) > 0:
+                            has_observable = True
+            if has_instruction and has_input and has_observable:
+                b_closed_loop += 1
+
+        need_closed_loop = max(1, math.ceil(b_total * 0.7)) if b_total else 0
+        check(
+            "教程可复现闭环",
+            b_total == 0 or b_closed_loop >= need_closed_loop,
+            weight=2,
+            detail=f"{b_closed_loop}/{b_total} 段含输入→输出闭环",
+        )
+
+        # 2) 踩坑覆盖：至少 2 段提到问题与修复
+        pitfall_kw = ("踩坑", "报错", "失败", "问题", "陷阱", "排查", "修复", "避坑", "卡住")
+        pitfall_segments = sum(
+            1 for text in seg_texts
+            if any(kw in text for kw in pitfall_kw)
+        )
+        check("教程含踩坑修复", pitfall_segments >= 2, weight=2,
+              detail=f"{pitfall_segments} 段提到问题/修复")
+
+        # 3) 前置条件与版本：至少 1 段含版本号或环境前置
+        env_kw = (
+            "版本", "前置", "依赖", "环境", "mac", "windows", "linux",
+            "python", "node", "npm", "pip", "conda", "ollama", "api key",
+        )
+        ver_re = re.compile(r"\bv?\d+\.\d+(?:\.\d+)?\b", re.IGNORECASE)
+        precondition_segments = sum(
+            1 for text in seg_texts
+            if ver_re.search(text) or any(kw in text.lower() for kw in env_kw)
+        )
+        check("教程含前置条件/版本", precondition_segments >= 1, weight=2,
+              detail=f"{precondition_segments} 段含版本/环境信息")
+
+        # 4) 适用边界与对比：至少 1 段明确场景边界
+        boundary_kw = ("vs", "对比", "适用", "不适用", "边界", "取舍", "场景", "不建议")
+        boundary_segments = sum(
+            1 for text in seg_texts
+            if any(kw in text.lower() for kw in boundary_kw)
+        )
+        check("教程有适用边界对比", boundary_segments >= 1, weight=2,
+              detail=f"{boundary_segments} 段含适用边界/对比")
+
+        # 5) 高级组件：教程类至少 2 个高级组件
+        check("教程高级组件≥2", component_count >= 2, weight=2,
+              detail=f"{component_count} 个高级组件")
+
+        # 6) 结尾交付：outro 至少有文件、命令、验证检查点
+        outro_text = "\n".join(
+            _segment_text(seg) for seg in segments if seg.get("type") == "outro"
+        )
+        file_re = re.compile(
+            r"\b[\w./-]+\.(?:md|json|ya?ml|toml|env|txt|py|ts|tsx|js|sh)\b",
+            re.IGNORECASE,
+        )
+        command_re = re.compile(
+            r"(?:^|[\s`])(git|npm|pnpm|yarn|python|pip|uv|node|npx|claude|code)\b",
+            re.IGNORECASE,
+        )
+        checkpoint_kw = ("看到", "确认", "检查", "验证", "输出", "出现", "通过")
+        has_file = bool(file_re.search(outro_text))
+        has_command = bool(command_re.search(outro_text))
+        has_checkpoint = any(kw in outro_text for kw in checkpoint_kw)
+        check(
+            "outro有可执行交付",
+            has_file and has_command and has_checkpoint,
+            weight=2,
+            detail=f"文件={has_file}, 命令={has_command}, 检查点={has_checkpoint}",
+        )
 
     # --- 按 weight 分级汇总 ---
     critical_failed = [c for c in report["checks"] if not c["passed"] and c["weight"] >= 3]

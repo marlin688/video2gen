@@ -234,8 +234,19 @@ def to_markdown_table(styles: list[StyleEntry], max_desc: int = 140) -> str:
     return "\n".join(lines).lstrip("\n")
 
 
-def inject_catalog(prompt_text: str, placeholder: str = "{{STYLE_CATALOG}}") -> str:
+def inject_catalog(
+    prompt_text: str,
+    placeholder: str = "{{STYLE_CATALOG}}",
+    id_prefix: str | None = None,
+) -> str:
     """Replace ``placeholder`` in ``prompt_text`` with the generated catalog.
+
+    Args:
+        prompt_text: prompt 文本，需要包含 placeholder 才会替换
+        placeholder: 占位符，默认 ``{{STYLE_CATALOG}}``
+        id_prefix: 可选白名单前缀，只注入 id 以此开头的 style。用于 quality
+            profile 限制 LLM 可选组件范围（例如 ``"slide.anthropic-"`` 让
+            LLM 只能选品牌片专用场景）。
 
     No-op when the placeholder is absent or when the registry cannot be
     parsed — the prompt still works, just without the dynamic table.
@@ -244,6 +255,8 @@ def inject_catalog(prompt_text: str, placeholder: str = "{{STYLE_CATALOG}}") -> 
         return prompt_text
     try:
         styles = load_styles()
+        if id_prefix:
+            styles = [s for s in styles if s["id"].startswith(id_prefix)]
         if not styles:
             return prompt_text.replace(placeholder, "_（组件注册表为空）_")
         table = to_markdown_table(styles)

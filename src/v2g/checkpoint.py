@@ -70,6 +70,11 @@ class PipelineState:
 
     last_error: str = ""
 
+    # 视觉主题 ID（remotion-video/src/registry/theme.ts 里注册的 key，
+    # 如 "tech-blue" / "anthropic-cream"）。render.mjs / preview.mjs 会读这个字段。
+    # 由 quality profile 自动设置，也可以手动编辑。
+    theme: str = ""
+
     # 成本追踪
     cost_summary: dict = field(default_factory=dict)
 

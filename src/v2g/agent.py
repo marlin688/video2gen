@@ -844,6 +844,13 @@ def run_agent(
         state.project_id = project_id
     state.topic = topic
 
+    # 档位自动设置视觉主题（如 anthropic_brand → anthropic-cream）
+    profile_theme = profile.get("theme") or ""
+    if profile_theme and state.theme != profile_theme:
+        click.echo(f"   🎨 档位覆盖主题: {state.theme or '(未设)'} → {profile_theme}")
+        state.theme = profile_theme
+        state.save(cfg.output_dir)
+
     # Initialize context
     _ctx.clear()
     _ctx["output_dir"] = output_dir
@@ -920,10 +927,16 @@ def run_agent(
 
         outline = json.loads(outline_path.read_text(encoding="utf-8"))
         from v2g.style_catalog import inject_catalog
+        style_id_prefix = profile.get("style_id_prefix") or None
+        if style_id_prefix:
+            click.echo(f"   🎯 档位限定组件前缀: {style_id_prefix}")
         system_prompt = (
             _read_prompt("agent_system.md")
             + "\n\n"
-            + inject_catalog(_read_prompt("agent_script.md"))
+            + inject_catalog(
+                _read_prompt("agent_script.md"),
+                id_prefix=style_id_prefix,
+            )
         )
         topic_template = _topic_script_template(topic, sources)
         if topic_template:

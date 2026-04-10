@@ -23,6 +23,18 @@ QUALITY_PROFILES = {
             "subjective": 0.7,
         },
     },
+    "anthropic_brand": {
+        "label": "Anthropic 品牌片",
+        "description": "米白衬线品牌短片，专用 slide.anthropic-* 场景组件",
+        "weights": {
+            "objective": 0.4,
+            "subjective": 0.6,
+        },
+        # 自动设置 checkpoint.theme 为这个值
+        "theme": "anthropic-cream",
+        # LLM 的 style catalog 只会看到 id 以此开头的组件
+        "style_id_prefix": "slide.anthropic-",
+    },
 }
 
 
@@ -45,6 +57,10 @@ def resolve_quality_profile(name: str | None) -> dict:
             "objective": float(profile["weights"]["objective"]),
             "subjective": float(profile["weights"]["subjective"]),
         },
+        # 可选：视觉主题覆盖（会写进 checkpoint.theme）
+        "theme": profile.get("theme", ""),
+        # 可选：style catalog 注入的白名单前缀
+        "style_id_prefix": profile.get("style_id_prefix", ""),
     }
 
 

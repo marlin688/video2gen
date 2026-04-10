@@ -21,6 +21,7 @@
 |---|---|---|
 | `slide.anthropic-stickies-intro` | 便利贴 + 右侧 macOS 终端特写 | 第 1 段（hook）|
 | `slide.anthropic-at-scale-question` | 多浮窗 + 中央衬线大字发问 | 第 1 或 2 段（切题）|
+| `slide.anthropic-talking-head` | 从源视频裁剪真人出镜片段 + 米白画框 + lower-third 名片 | 第 1 段（hook）和倒数第 3 段（outro 前总结）|
 | `slide.anthropic-template-picker` | Claude 产品 UI 模板选择器 | 第 3 段（产品入口）|
 | `slide.anthropic-prompt-write` | 同 UI + 底部输入框逐字打字 | 第 4 段（用户交互）|
 | `slide.anthropic-agent-config` | curl API + YAML + 漂浮终端 | 第 5 段（配置生成）|
@@ -29,6 +30,13 @@
 | `slide.anthropic-session-detail` | 同 dashboard + hover popover | 第 8 段（配置细节）|
 | `slide.anthropic-brand-title` | 居中衬线大字 | 倒数第 2 段（品牌锤）|
 | `slide.anthropic-brand-outro` | Claude logo + wordmark | 最后 1 段（收尾）|
+
+**关于 talking-head 的使用时机**：当项目的 `sources/{video_id}/` 下存在源视频文件（通常是 user 自己录的讲解片），可以在脚本里穿插 1-2 段 talking-head 增强真实感。典型模式：
+- **第 1 段 talking-head hook**：真人开场介绍"今天要聊的东西"，clipStart/clipEnd 通常选原视频开头 0-8s
+- **倒数第 3 段 talking-head 总结**：真人说"所以我的看法是..."，clipStart/clipEnd 选原视频末尾最后 6-10s
+- 中间段仍然用其他 anthropic-* 组件展示 UI / 概念 / 数据
+
+若项目**没有源视频**（纯 motion graphics 品牌片），不要用 talking-head，否则渲染会显示"（缺少源视频）"fallback。
 
 ## narration_zh 写作规范
 
@@ -98,6 +106,33 @@
 ```
 
 `\n` 强制换行。画面文字建议 8-15 个英文单词。
+
+### slide.anthropic-talking-head
+
+```json
+{
+  "slide_content": {
+    "title": "Lewis Menelaws",
+    "bullet_points": ["Education · YouTube"],
+    "scene_data": {
+      "clipStart": 2,
+      "clipEnd": 9,
+      "caption": "Lewis Menelaws",
+      "subtitle": "Education · YouTube",
+      "cornerNote": "INTRO"
+    }
+  }
+}
+```
+
+数据来源约定：
+- `clipStart` / `clipEnd`（秒数，源视频里的绝对时间）是必填，指定要裁剪的片段范围
+- 源视频文件名不用写 —— 系统会自动从 `sources/{project_id}/` 找（先查 mp4/webm/mkv），dispatcher 会把它注入 `scene_data.__source`
+- `caption` / `subtitle` = 底部 lower-third 名片的主文字和副文字，通常是"人名 + 角色"
+- `cornerNote` = 右上角小徽标，如 "INTRO" / "OUTRO" / "GUEST" / "02:15"
+- 视频默认 **静音**（防止和 TTS 中文旁白打架）。若要保留原音，加 `"muted": false`
+
+**重要**：talking-head 段的 `narration_zh` 仍然要写中文旁白（会通过 TTS 播在原视频之上，类似"配音"效果），不要留空。观众看到真人嘴动，但听到中文解说 —— 这是本档位的预期效果。
 
 ### slide.anthropic-stickies-intro
 
@@ -304,7 +339,10 @@
 
 ## 完整骨架参考
 
-照抄这个骨架，**只改 narration_zh + scene_data 里的英文文案**，保持 component / transition / 段数不变：
+下面给出**两个骨架**：A 是纯 motion graphics 无真人，B 是混合真人出镜（需要项目有源视频）。
+照抄其中一个，**只改 narration_zh + scene_data 里的英文文案**，保持 component / transition / 段数不变。
+
+### 骨架 A — 纯 motion graphics（无源视频项目使用）
 
 ```json
 {
@@ -327,17 +365,53 @@
 }
 ```
 
+### 骨架 B — 混合真人出镜（项目有源视频时使用）
+
+用这个骨架的前提：`sources/{project_id}/` 下已经放了源视频文件（mp4/webm/mkv）。
+dispatcher 会自动把文件信息注入 `scene_data.__source`，talking-head 组件读取后播放。
+
+```json
+{
+  "title": "...",
+  "description": "...",
+  "tags": ["..."],
+  "source_channel": "",
+  "total_duration_hint": 60,
+  "segments": [
+    { "id": 1, "type": "intro", "material": "A", "component": "slide.anthropic-talking-head",    "transition": "fade",      "narration_zh": "<中文 hook ≤40字>",       "slide_content": { "title": "<作者名>", "bullet_points": ["<副标题>"], "scene_data": { "clipStart": 2, "clipEnd": 9, "caption": "<作者名>", "subtitle": "<角色>", "cornerNote": "INTRO" } } },
+    { "id": 2, "type": "intro", "material": "A", "component": "slide.anthropic-at-scale-question", "transition": "zoom-in", "narration_zh": "<中文 ≤40字>",            "slide_content": { "title": "<英文大字发问>", "bullet_points": [] } },
+    { "id": 3, "type": "body",  "material": "A", "component": "slide.anthropic-template-picker", "transition": "fade",      "narration_zh": "<中文 ≤40字>",            "slide_content": { "title": "What do you\nwant to build?", "bullet_points": [], "scene_data": { /* templates */ } } },
+    { "id": 4, "type": "body",  "material": "A", "component": "slide.anthropic-feature-checklist", "transition": "slide-left", "narration_zh": "<中文 ≤40字>",          "slide_content": { "title": "", "bullet_points": ["✓ Feature A", "✓ Feature B", "3. Feature C", "4. Feature D"] } },
+    { "id": 5, "type": "body",  "material": "A", "component": "slide.anthropic-session-timeline", "transition": "zoom-in",    "narration_zh": "<中文 ≤40字>",            "slide_content": { "title": "<session title>", "bullet_points": [], "scene_data": { /* dashboard */ } } },
+    { "id": 6, "type": "body",  "material": "A", "component": "slide.anthropic-session-detail",  "transition": "fade",       "narration_zh": "<中文 ≤40字>",            "slide_content": { "title": "<session title>", "bullet_points": [], "scene_data": { /* popover */ } } },
+    { "id": 7, "type": "body",  "material": "A", "component": "slide.anthropic-talking-head",    "transition": "fade",       "narration_zh": "<中文 ≤40字>",            "slide_content": { "title": "<作者名>", "bullet_points": ["<副标题>"], "scene_data": { "clipStart": 217, "clipEnd": 225, "caption": "<作者名>", "subtitle": "Closing thoughts", "cornerNote": "OUTRO" } } },
+    { "id": 8, "type": "outro", "material": "A", "component": "slide.anthropic-brand-title",     "transition": "fade",       "narration_zh": "<观点锤 ≤40字>",          "slide_content": { "title": "<英文观点锤>", "bullet_points": [] } },
+    { "id": 9, "type": "outro", "material": "A", "component": "slide.anthropic-brand-outro",     "transition": "fade",       "narration_zh": "",                         "slide_content": { "title": "Claude", "bullet_points": [] } }
+  ]
+}
+```
+
+**关于 clipStart / clipEnd 怎么选**：
+- **intro talking-head（段 1）**：通常选源视频开头 2-9 秒（跳过片头 LOGO 的 2 秒），7 秒长度刚好让观众建立作者印象
+- **outro talking-head（段 7）**：选源视频末尾最后 8 秒（比如 `clipEnd = 源视频总时长`，`clipStart = 总时长 - 8`），让作者说完最后一句话
+- 中间的 talking-head 不推荐（破坏品牌片节奏）
+- 每段 talking-head 建议 6-8 秒，短了信息不够，长了观众注意力流失
+
 ## 提交前自检清单
 
 每一条都必须满足：
 
 - [ ] 所有 `component` 字段都以 `slide.anthropic-` 开头
 - [ ] 所有 `material` 都是 `"A"`
-- [ ] 所有 `narration_zh` ≤40 中文字符
+- [ ] 所有 `narration_zh` ≤40 中文字符（talking-head 段也要写，会叠在真人画面上播）
 - [ ] `slide_content.title` 和 `scene_data` 里面向观众的文字都是**英文**
-- [ ] 第 1 段的 `component` 是 `stickies-intro` 或 `at-scale-question`
+- [ ] 第 1 段的 `component` 是 `stickies-intro` / `at-scale-question` / `talking-head` 之一
 - [ ] 倒数 2 段分别是 `brand-title` + `brand-outro`
 - [ ] `total_duration_hint` 在 45-75 之间
 - [ ] `segments` 数量 8-12
 - [ ] `transition` 在相邻段落之间有变化
 - [ ] 每段的 `scene_data`（如有）结构与本档位示例完全对齐（字段名、嵌套层级）
+- [ ] 若用了 `talking-head` 组件：
+  - [ ] 确认 `sources/{project_id}/` 下有源视频文件（.mp4 / .webm / .mkv）
+  - [ ] `clipStart` / `clipEnd` 都是源视频里的绝对秒数，区间 ≤10 秒
+  - [ ] 一条片里 talking-head 段数不超过 2（一个 intro + 一个 outro 前总结）

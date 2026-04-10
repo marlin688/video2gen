@@ -151,14 +151,30 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
     let data: SegmentData;
 
     switch (schema) {
-      case "slide":
+      case "slide": {
+        // slide 组件可以通过 scene_data.__source 拿到源视频信息（talking-head 场景用）。
+        // 这样不用扩展 StyleComponentProps 就能让 slide 组件访问 sourceVideoFiles 数组。
+        const baseSceneData = seg.slide_content?.scene_data || {};
+        const sourceIdx = seg.source_video_index ?? 0;
+        const mergedSceneData = {
+          ...baseSceneData,
+          __source: {
+            videoFile: sourceVideoFiles[sourceIdx] || "",
+            videoFiles: sourceVideoFiles,
+            start: seg.source_start,
+            end: seg.source_end,
+            channel: sourceChannels[sourceIdx] || "",
+          },
+        };
         data = {
           schema: "slide",
           title: seg.slide_content?.title || "Info",
           bullet_points: seg.slide_content?.bullet_points || [],
           chart_hint: seg.slide_content?.chart_hint,
+          scene_data: mergedSceneData,
         } satisfies SlideData;
         break;
+      }
 
       case "terminal":
         data = {

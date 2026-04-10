@@ -40,6 +40,7 @@ import "./styles/slide/anthropic-session-timeline";
 import "./styles/slide/anthropic-session-detail";
 import "./styles/slide/anthropic-brand-title";
 import "./styles/slide/anthropic-brand-outro";
+import "./styles/slide/anthropic-talking-head";
 
 // terminal (3 styles)
 import "./styles/terminal/aurora";

@@ -28,6 +28,7 @@ import "./registry/init"; // 触发所有 style 自注册
 import { ThemeProvider, getTheme } from "./registry/theme";
 import { fadeThroughBlack } from "./registry/components/FadeThroughBlack";
 import { glitch } from "./registry/components/GlitchTransition";
+import { zoomIn } from "./registry/components/ZoomIn";
 import { ProgressBar } from "./registry/components/ProgressBar";
 import { LightLeak } from "./registry/components/LightLeak";
 import { FlashMeme } from "./registry/components/FlashMeme";
@@ -53,8 +54,9 @@ type AnyPresentation = TransitionPresentation<Record<string, unknown>>;
  *
  * 优先级:
  *   1. segment.transition 显式指定
- *   2. 按 segment.type 语义自动选择
- *   3. 默认 fadeThroughBlack（兼容原始效果）
+ *   2. 按 segment index 在 4 种入场中严格轮换 (fade / slide-left / zoom-in / glitch)
+ *      — 保证相邻段入场动画必不相同
+ *   3. 关键叙事节拍用 fadeThroughBlack 作为"喘息"
  */
 function resolveTransition(
   explicit?: TransitionType,
@@ -68,6 +70,10 @@ function resolveTransition(
   switch (t) {
     case "slide":
       return slide({ direction: "from-right" }) as AnyPresentation;
+    case "slide-left":
+      return slide({ direction: "from-left" }) as AnyPresentation;
+    case "zoom-in":
+      return zoomIn() as AnyPresentation;
     case "wipe":
       return wipe() as AnyPresentation;
     case "fade":
@@ -80,21 +86,34 @@ function resolveTransition(
   }
 }
 
-/** 按段落语义自动选择转场（idx 用于 body→body 轮换） */
+/**
+ * 按段落语义 + index 严格轮换入场动画。
+ *
+ * 设计原则：
+ * - 叙事边界 (intro→body, body→outro) 用专属动画，强化"章节切换"感
+ * - intro/body 内部按 idx 严格轮换 4 种：fade / slide-left / zoom-in / glitch
+ * - 每 5 段用一次 fadeThroughBlack 作为"视觉喘息"，避免连续动感过载
+ * - 相邻段保证使用不同入场（通过 4-周期轮换自然实现）
+ */
 function autoTransition(
   prevType?: string,
   nextType?: string,
   idx?: number,
 ): TransitionType | undefined {
-  if (prevType === "intro" && nextType === "body") return "slide";
+  // 叙事章节边界
+  if (prevType === "intro" && nextType === "body") return "zoom-in";
   if (prevType === "body" && nextType === "outro") return "wipe";
-  // body→body: 每 3 段用一次 glitch，其余轮换 fade / slide / fadeThroughBlack
-  if (prevType === "body" && nextType === "body" && idx !== undefined) {
-    if (idx % 4 === 3) return "glitch";
-    if (idx % 4 === 1) return "fade";
-    if (idx % 4 === 2) return "slide";
-  }
-  return undefined; // fadeThroughBlack default
+  if (prevType === "outro" && nextType === "outro") return "fade";
+
+  // 主体段落：idx 严格轮换
+  if (idx === undefined) return undefined;
+
+  // 每 5 段插一次 fadeThroughBlack 作为呼吸点
+  if (idx > 0 && idx % 5 === 0) return "none";
+
+  // 4 周期轮换，覆盖所有剩余段落
+  const rotation: TransitionType[] = ["fade", "slide-left", "zoom-in", "glitch"];
+  return rotation[idx % rotation.length];
 }
 
 /* ═══════════════ 主组件 ═══════════════ */

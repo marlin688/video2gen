@@ -14,6 +14,7 @@ import click
 
 from v2g.config import Config
 from v2g.checkpoint import PipelineState
+from v2g.quality_profile import resolve_quality_profile, load_profile_prompt
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -820,6 +821,7 @@ def run_agent(
     duration: int,
     auto_confirm: bool = False,
     auto_confirm_threshold: int = 85,
+    quality_profile: str = "default",
 ):
     """Agent 驱动的脚本编排：素材 → 大纲 → script.json。
 
@@ -827,6 +829,12 @@ def run_agent(
     auto_confirm_threshold: 自动确认的最低分数（0-100）。
     """
     model = model or cfg.script_model
+    try:
+        profile = resolve_quality_profile(quality_profile)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    profile_prompt = load_profile_prompt(profile["name"])
+
     output_dir = cfg.output_dir / project_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -851,6 +859,7 @@ def run_agent(
         click.echo(f"\n🤖 Agent 启动 (模型: {model})")
         click.echo(f"   主题: {topic}")
         click.echo(f"   目标时长: {duration}s")
+        click.echo(f"   质量档位: {profile['name']}")
         click.echo(f"   素材: {len(sources)} 个\n")
 
         # Classify sources and build description
@@ -910,11 +919,19 @@ def run_agent(
         click.echo("\n🔄 展开脚本中...")
 
         outline = json.loads(outline_path.read_text(encoding="utf-8"))
-        system_prompt = _read_prompt("agent_system.md") + "\n\n" + _read_prompt("agent_script.md")
+        from v2g.style_catalog import inject_catalog
+        system_prompt = (
+            _read_prompt("agent_system.md")
+            + "\n\n"
+            + inject_catalog(_read_prompt("agent_script.md"))
+        )
         topic_template = _topic_script_template(topic, sources)
         if topic_template:
             click.echo("   🧩 应用专题骨架: Claude Code + Obsidian")
             system_prompt += "\n\n" + topic_template
+        if profile_prompt:
+            click.echo(f"   🧪 应用质量档位: {profile['name']}")
+            system_prompt += "\n\n## 质量档位约束\n" + profile_prompt
 
         from v2g.llm import call_llm
         from v2g.scriptwriter import _extract_json, _generate_script_md, _generate_recording_guide
@@ -949,11 +966,22 @@ def run_agent(
 
     # ── Phase 2.5: 质量门控（agent 模式不自动重试，仅报告）─────
     from v2g.pipeline import _run_quality_gate
-    _run_quality_gate(cfg, project_id, model, max_retries=0, threshold=85)
+    _run_quality_gate(
+        cfg,
+        project_id,
+        model,
+        max_retries=0,
+        threshold=85,
+        quality_profile=profile["name"],
+    )
 
     # agent 模式质量门控后强制阻断 critical 与关键 warning，避免平庸脚本进入下游
     from v2g.eval import eval_script, get_blocking_warnings
-    report = eval_script(json.loads(script_path.read_text(encoding="utf-8")), project_id)
+    report = eval_script(
+        json.loads(script_path.read_text(encoding="utf-8")),
+        project_id,
+        quality_profile=profile["name"],
+    )
     blocking_warnings = get_blocking_warnings(report)
     if report.get("has_critical") or blocking_warnings:
         failed = [c["name"] for c in report.get("critical_failed", [])] + [

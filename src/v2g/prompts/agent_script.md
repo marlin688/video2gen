@@ -149,59 +149,74 @@
   ]
 }
 
-## 可用视觉组件
+## 可用视觉组件（完整清单）
 
-每个 segment 可通过 `component` 字段指定视觉组件（格式 `"{schema}.{style}"`）。不指定时按 material 走默认。
+以下是系统当前注册的所有视觉组件，按 schema 分组。**每个 segment 都应该通过 `component` 字段显式指定一个 style id**（格式 `"{schema}.{style}"`），除非该段是素材 B 且有现成录屏文件。
 
-| 组件 ID | 适用场景 | 标签 |
-|---------|---------|------|
-| `slide.tech-dark` (默认) | 深色背景 PPT 卡片，适合数据展示、架构总览、多组对比。支持 6 种自动检测布局。 | 数据密集, 架构, 对比, 指标 |
-| `terminal.aurora` (默认) | 模拟 Claude Code TUI 界面，自动从 instruction 提取命令生成交互动画。适合展示 CLI 命令、斜杠命令操作。 | 终端, CLI, 命令行 |
-| `recording.default` (默认) | 直接播放录屏视频文件。用于有现成录屏素材的 B 类段落。 | 录屏, 视频播放 |
-| `source-clip.default` (默认) | 裁剪并播放原视频的指定时间段。用于引用原视频精华片段。 | 原视频, 片段裁剪 |
-| `code-block.default` | 代码高亮展示（含文件名、行号、高亮行、注释） | 代码, 语法高亮 |
-| `social-card.default` | 社交媒体卡片（Twitter/GitHub/HN） | 社交媒体, 卡片 |
-| `diagram.default` | 流程/架构图（节点+边） | 流程图, 架构 |
-| `hero-stat.default` | 大数字指标展示（含趋势箭头） | 数据, 指标, 统计 |
-| `browser.default` | Chrome 浏览器模拟框架 | 网页, 浏览器 |
+{{STYLE_CATALOG}}
 
-**使用建议**：**每个脚本必须使用至少 2 种不同的高级组件**（如 1 个 code-block + 1 个 hero-stat 或 diagram）。当没有 C 素材（原视频片段）时，必须使用至少 3 种不同高级组件来保证视觉多样性。大部分段落仍然用 A/B/C 默认素材，不要全部都用高级组件。
+### 组件选择硬性规则（违反将被质量门控打回）
 
-### 推文截图素材
+1. **显式 component 字段**：每个 A 素材段必须设置 `component` 字段。每个无录屏的 B 素材段也必须设置 `component`（否则会全部 fallback 到同一个 terminal 动画）。不要省略让默认 slide 兜底。
+2. **至少覆盖 4 种不同 schema**：一个脚本中使用的 `component` 字段必须跨越至少 4 种 schema（例如 `slide` + `code-block` + `diagram` + `hero-stat`）。**禁止全片只有 slide + terminal 两种 schema。**
+3. **禁止相邻同 schema**：相邻两段 segment 不允许使用相同的 schema（如 `slide.tech-dark` 之后不能再接 `slide.feature-grid`）。视觉节奏必须在 schema 层面切换，不是在同 schema 的不同 style 之间。
+4. **hook 段强制冲击组件**：intro 的第 1 段 **必须**使用 `slide.hook-opener` 或 `slide.fireship-title` 之一，3 秒内抓住观众。不允许开场直接上 tech-dark 卡片或 terminal 动画。
+5. **outro 收尾强制 CTA**：outro 的最后 1 段 **必须**使用 `slide.cta-outro`，带行动号召按钮。
+6. **代码段必须用 code-block**：涉及代码、配置文件、脚本展示的段落**必须**用 `code-block.default` / `code-block.animated` / `code-block.diff`，不要用 terminal 组件凑数或塞进 slide 的 bullet_points。
+7. **GitHub / 推特 / HN 必须用原生组件**：
+   - 真实 GitHub 仓库页面 → `browser.github` 或 `social-card.github-repo`
+   - Twitter/X 推文 → `social-card.default`（有文本）或 `image-overlay.default`（有截图）
+   - HN 讨论 → `social-card.default`
+   - **不要**把这些内容重新写成 slide 卡片的 bullet 文字复述
+8. **大数字 / 指标对比必须用 hero-stat**：涉及"从 X 降到 Y"、"提升 N 倍"、"省下 $M"的段落**必须**用 `hero-stat.default` 或 `hero-stat.progress`，不要塞进普通 slide 的 bullet。
+9. **架构 / 流程 / 多方关系必须用 diagram**：涉及架构图、调用流程、多方协作关系的段落**必须**用 `diagram.*` 系列（default / pipeline / dual-card / sequence / tree-card 中选一个与结构最匹配的）。
+10. **叙事节拍**：如果脚本涉及"问题 → 方案 → 结果"叙事，配对使用 `slide.problem-statement` → `slide.solution-reveal` → `slide.result-showcase`。
 
-如果素材列表中包含 `tweet_context.md`，其中标注了可用的推文截图及其路径。
+### 视觉记忆点：flash_meme 与 image-overlay
 
-**有截图的推文** — 用 `image-overlay.default`：
+纯文字卡片 + 终端动画的视频容易"一眼过、记不住"。必须主动引入**真实素材**和**情绪梗图**作为记忆点。
+
+**flash_meme（Meme 闪图）** — 爽点/吐槽/震惊时刻的 0.3-0.5 秒闪现。任意 segment 都可以叠加这个字段（不替代 component，是额外叠加的特效）：
+
 ```json
 {
+  "id": 3,
+  "component": "slide.problem-statement",
+  "narration_zh": "官方订阅 200 美金一个月还会封号，这不叫付费，这叫被 PUA。",
+  "flash_meme": {
+    "image": "images/meme_surprised.png",
+    "frame_offset": 30,
+    "duration": 10,
+    "contrast": 1.4
+  }
+}
+```
+
+- **数量**：一个脚本建议 3-5 个 flash_meme，穿插在情绪爆发点
+- **时机**：在叙述到"离谱/震惊/爽点/反转"的关键帧触发（frame_offset 对准那一句的重音）
+- **图片**：使用 `images/` 目录下的 meme 图，常见的如 surprised / thinking / rage / mindblown / facepalm
+
+**image-overlay（真实截图全屏）** — 用真实画面替代"文字描述真实画面"：
+
+```json
+{
+  "id": 5,
   "material": "A",
   "component": "image-overlay.default",
+  "narration_zh": "OpenCode 在 GitHub 上已经 11800 star，核心贡献者来自前 Anthropic 团队。",
   "image_content": {
-    "image_path": "images/tweet_123456.png",
-    "overlay_text": "简洁概括（≤10字）",
+    "image_path": "images/opencode_readme.png",
+    "overlay_text": "11800 ⭐ · Telemetry disabled",
     "overlay_position": "bottom",
     "ken_burns": "zoom-in"
   }
 }
 ```
 
-**无截图的推文** — 用 `social-card.default`：
-```json
-{
-  "material": "A",
-  "component": "social-card.default",
-  "social_card": {
-    "platform": "twitter",
-    "author": "@username",
-    "text": "推文内容",
-    "stats": {"likes": 1500, "retweets": 200}
-  }
-}
-```
-
-- overlay_text 用自己的话概括，不要复制推文原文
-- 每个脚本最多 1-2 个推文段落，穿插在其他素材之间
-- 推文截图特别适合 hook 段或佐证观点的 body 段
+- **数量**：一个脚本建议 1-3 个 image-overlay 段落
+- **用途**：产品 README 截图、真实 UI 截图、推文截图、新闻配图、架构图照片
+- **规则**：`overlay_text` 用自己的话概括（≤12 字），不要复制原文长句
+- **与 social-card 的分工**：有截图 → `image-overlay.default`；只有推文文本、没有截图 → `social-card.default`
 
 ## 硬性约束
 
@@ -209,8 +224,8 @@
 - 总字数不设硬限制，优先保证把每个知识点讲清楚讲透彻
 - 素材比例: A 40-60%, B ≥20%, C 可选（原创视频无需源视频片段）
 - 避免连续两段使用相同素材类型（视觉节奏：A→B→A→B 交替）
-- 视觉节奏控制：连续两个 segment 不得使用同一 schema 的组件（如 slide 后应接 terminal/diagram/code-block 等），每个脚本至少使用 3 种不同的视觉 schema
+- **视觉多样性（硬约束）**：每段 segment 必须显式指定 `component` 字段（无录屏的 B 段也要指定）；一个脚本的 `component` 字段必须跨越**至少 4 种不同 schema**；相邻两段不得使用相同 schema；hook 段必须用 `slide.hook-opener` 或 `slide.fireship-title`；outro 最后一段必须用 `slide.cta-outro`。违反任一条规则的脚本都会被质量门控打回重试，详见「组件选择硬性规则」章节。
+- **视觉记忆点（硬约束）**：脚本中必须包含至少 3 个 `flash_meme`（穿插在情绪爆发点）和至少 1 个 `image-overlay` 段落（真实截图）。详见「视觉记忆点」章节。
 - B 类素材的 recording_instruction 中尽可能包含 URL
 - bullet_points 禁止 emoji
 - 不要编造素材中没有的事实，但可以加入你自己的分析判断
-- 视觉多样性：不允许连续 2 个 A 素材段使用相同的视觉样式。如果有 3 个以上 A 素材段，至少要包含 2 种不同的卡片布局格式（如网格+代码、步骤+对比等）。视觉多样性通过 slide_content 中不同的 bullet_points 结构自动触发不同布局（代码、对比、指标、网格、步骤、标准），不需要手动指定 component。

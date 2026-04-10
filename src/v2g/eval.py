@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 
 from v2g.config import Config
+from v2g.quality_profile import resolve_quality_profile
 
 
 BLOCKING_WARNING_NAMES = frozenset({
@@ -91,7 +92,11 @@ def _is_tutorial_script(script: dict, segments: list[dict]) -> bool:
     return any(sig in joined for sig in tutorial_signals)
 
 
-def eval_script(script: dict, video_id: str = "") -> dict:
+def eval_script(
+    script: dict,
+    video_id: str = "",
+    quality_profile: str = "default",
+) -> dict:
     """评估脚本质量（纯函数版，接受 dict），返回评分报告。
 
     可在脚本生成后立即调用，无需写入文件。
@@ -99,11 +104,20 @@ def eval_script(script: dict, video_id: str = "") -> dict:
     """
     segments = script.get("segments", [])
 
+    profile = resolve_quality_profile(quality_profile)
+
     report = {
         "video_id": video_id,
+        "quality_profile": profile["name"],
+        "quality_profile_label": profile["label"],
+        "quality_profile_weights": profile["weights"],
         "checks": [],
         "score": 0,
         "max_score": 0,
+        "objective_score": 0,
+        "objective_max_score": 0,
+        "subjective_score": 0,
+        "subjective_max_score": 0,
         "schema_errors": [],  # Pydantic 结构验证错误
     }
 
@@ -112,16 +126,33 @@ def eval_script(script: dict, video_id: str = "") -> dict:
     _parsed, schema_errors = validate_script(script)
     report["schema_errors"] = schema_errors
 
-    def check(name: str, passed: bool, weight: int = 1, detail: str = ""):
+    def check(
+        name: str,
+        passed: bool,
+        weight: int = 1,
+        detail: str = "",
+        category: str = "objective",
+    ):
+        if category not in {"objective", "subjective"}:
+            category = "objective"
         report["checks"].append({
             "name": name,
             "passed": passed,
             "weight": weight,
             "detail": detail,
+            "category": category,
         })
         report["max_score"] += weight
+        if category == "subjective":
+            report["subjective_max_score"] += weight
+        else:
+            report["objective_max_score"] += weight
         if passed:
             report["score"] += weight
+            if category == "subjective":
+                report["subjective_score"] += weight
+            else:
+                report["objective_score"] += weight
 
     # --- Schema 结构验证 ---
     check("JSON 结构合法", len(schema_errors) == 0, weight=3,
@@ -173,8 +204,15 @@ def eval_script(script: dict, video_id: str = "") -> dict:
         first_narration = first.get("narration_zh", "")
         boring_starts = ["大家好", "今天我们", "欢迎来到", "hello", "hi大家"]
         has_boring_start = any(first_narration.startswith(b) for b in boring_starts)
-        check("开头不套话", not has_boring_start, weight=2,
-              detail=f"开头: {first_narration[:30]}...")
+        check(
+            "开头不套话",
+            not has_boring_start,
+            weight=2,
+            detail=f"开头: {first_narration[:30]}...",
+            category="subjective",
+        )
+    else:
+        check("开头不套话", True, weight=2, detail="无段落", category="subjective")
 
     # --- B 段 terminal_session ---
     # 使用高级组件（如 code-block）的 B 段不需要 terminal_session
@@ -217,7 +255,13 @@ def eval_script(script: dict, video_id: str = "") -> dict:
     for i in range(1, len(segments)):
         if segments[i].get("material") == segments[i - 1].get("material"):
             consecutive += 1
-    check("素材类型交替", consecutive <= 2, weight=2, detail=f"{consecutive} 处连续相同素材")
+    check(
+        "素材类型交替",
+        consecutive <= 2,
+        weight=2,
+        detail=f"{consecutive} 处连续相同素材",
+        category="subjective",
+    )
 
     # --- 视觉 schema 多样性 ---
     def _seg_schema(seg: dict) -> str:
@@ -228,8 +272,13 @@ def eval_script(script: dict, video_id: str = "") -> dict:
         return {"A": "slide", "B": "terminal", "C": "source-clip"}.get(mat, mat)
 
     schemas_used = {_seg_schema(s) for s in segments}
-    check("视觉 schema 多样性", len(schemas_used) >= 3, weight=2,
-          detail=f"使用了 {len(schemas_used)} 种 schema: {sorted(schemas_used)}")
+    check(
+        "视觉 schema 多样性",
+        len(schemas_used) >= 3,
+        weight=2,
+        detail=f"使用了 {len(schemas_used)} 种 schema: {sorted(schemas_used)}",
+        category="subjective",
+    )
 
     consecutive_schema = 0
     prev_schema = None
@@ -238,8 +287,13 @@ def eval_script(script: dict, video_id: str = "") -> dict:
         if cur == prev_schema:
             consecutive_schema += 1
         prev_schema = cur
-    check("无连续相同 schema", consecutive_schema <= 1, weight=2,
-          detail=f"{consecutive_schema} 处连续相同 schema")
+    check(
+        "无连续相同 schema",
+        consecutive_schema <= 1,
+        weight=2,
+        detail=f"{consecutive_schema} 处连续相同 schema",
+        category="subjective",
+    )
 
     # --- 内容去重检查 ---
     from difflib import SequenceMatcher
@@ -252,8 +306,13 @@ def eval_script(script: dict, video_id: str = "") -> dict:
                 ratio = SequenceMatcher(None, narr_i, narr_j).ratio()
                 if ratio > 0.4:
                     duplicate_pairs += 1
-    check("无重复段落", duplicate_pairs == 0, weight=2,
-          detail=f"{duplicate_pairs} 对段落内容高度相似")
+    check(
+        "无重复段落",
+        duplicate_pairs == 0,
+        weight=2,
+        detail=f"{duplicate_pairs} 对段落内容高度相似",
+        category="subjective",
+    )
 
     # --- 脚本结构 (intro/body/outro) ---
     types = [s.get("type", "") for s in segments]
@@ -276,8 +335,13 @@ def eval_script(script: dict, video_id: str = "") -> dict:
             if body_materials[i] != body_materials[i - 1]
         )
         alt_ratio = alternations / max(len(body_materials) - 1, 1)
-        check("body段 A/B 交替", alt_ratio >= 0.5, weight=2,
-              detail=f"{alternations}/{len(body_materials)-1} 次交替 ({alt_ratio:.0%})")
+        check(
+            "body段 A/B 交替",
+            alt_ratio >= 0.5,
+            weight=2,
+            detail=f"{alternations}/{len(body_materials)-1} 次交替 ({alt_ratio:.0%})",
+            category="subjective",
+        )
 
     # --- 段间钩子检查 ---
     flat_endings = 0
@@ -287,7 +351,12 @@ def eval_script(script: dict, video_id: str = "") -> dict:
         narration = seg.get("narration_zh", "").rstrip()
         if narration and not any(narration.endswith(c) for c in ("？", "。", "！", "…", "——")):
             flat_endings += 1
-    check("段落有结尾标点", flat_endings <= 1, detail=f"{flat_endings} 段缺结尾标点")
+    check(
+        "段落有结尾标点",
+        flat_endings <= 1,
+        detail=f"{flat_endings} 段缺结尾标点",
+        category="subjective",
+    )
 
     # --- 高级组件使用 ---
     component_count = sum(1 for s in segments if s.get("component"))
@@ -332,6 +401,7 @@ def eval_script(script: dict, video_id: str = "") -> dict:
             b_total == 0 or b_closed_loop >= need_closed_loop,
             weight=2,
             detail=f"{b_closed_loop}/{b_total} 段含输入→输出闭环",
+            category="subjective",
         )
 
         # 2) 踩坑覆盖：至少 2 段提到问题与修复
@@ -340,8 +410,13 @@ def eval_script(script: dict, video_id: str = "") -> dict:
             1 for text in seg_texts
             if any(kw in text for kw in pitfall_kw)
         )
-        check("教程含踩坑修复", pitfall_segments >= 2, weight=2,
-              detail=f"{pitfall_segments} 段提到问题/修复")
+        check(
+            "教程含踩坑修复",
+            pitfall_segments >= 2,
+            weight=2,
+            detail=f"{pitfall_segments} 段提到问题/修复",
+            category="subjective",
+        )
 
         # 3) 前置条件与版本：至少 1 段含版本号或环境前置
         env_kw = (
@@ -353,8 +428,13 @@ def eval_script(script: dict, video_id: str = "") -> dict:
             1 for text in seg_texts
             if ver_re.search(text) or any(kw in text.lower() for kw in env_kw)
         )
-        check("教程含前置条件/版本", precondition_segments >= 1, weight=2,
-              detail=f"{precondition_segments} 段含版本/环境信息")
+        check(
+            "教程含前置条件/版本",
+            precondition_segments >= 1,
+            weight=2,
+            detail=f"{precondition_segments} 段含版本/环境信息",
+            category="subjective",
+        )
 
         # 4) 适用边界与对比：至少 1 段明确场景边界
         boundary_kw = ("vs", "对比", "适用", "不适用", "边界", "取舍", "场景", "不建议")
@@ -362,12 +442,22 @@ def eval_script(script: dict, video_id: str = "") -> dict:
             1 for text in seg_texts
             if any(kw in text.lower() for kw in boundary_kw)
         )
-        check("教程有适用边界对比", boundary_segments >= 1, weight=2,
-              detail=f"{boundary_segments} 段含适用边界/对比")
+        check(
+            "教程有适用边界对比",
+            boundary_segments >= 1,
+            weight=2,
+            detail=f"{boundary_segments} 段含适用边界/对比",
+            category="subjective",
+        )
 
         # 5) 高级组件：教程类至少 2 个高级组件
-        check("教程高级组件≥2", component_count >= 2, weight=2,
-              detail=f"{component_count} 个高级组件")
+        check(
+            "教程高级组件≥2",
+            component_count >= 2,
+            weight=2,
+            detail=f"{component_count} 个高级组件",
+            category="subjective",
+        )
 
         # 6) 结尾交付：outro 至少有文件、命令、验证检查点
         outro_text = "\n".join(
@@ -390,6 +480,7 @@ def eval_script(script: dict, video_id: str = "") -> dict:
             has_file and has_command and has_checkpoint,
             weight=2,
             detail=f"文件={has_file}, 命令={has_command}, 检查点={has_checkpoint}",
+            category="subjective",
         )
 
     # --- 按 weight 分级汇总 ---
@@ -402,15 +493,26 @@ def eval_script(script: dict, video_id: str = "") -> dict:
     report["info_failed"] = info_failed
     report["has_critical"] = len(critical_failed) > 0
 
+    objective_pct = report["objective_score"] / max(report["objective_max_score"], 1) * 100
+    subjective_pct = report["subjective_score"] / max(report["subjective_max_score"], 1) * 100
+    w_obj = profile["weights"]["objective"]
+    w_sub = profile["weights"]["subjective"]
+    weighted_pct = objective_pct * w_obj + subjective_pct * w_sub
+    report["objective_pct"] = objective_pct
+    report["subjective_pct"] = subjective_pct
+    report["weighted_pct"] = weighted_pct
+
     return report
 
 
 def eval_score_pct(report: dict) -> float:
     """从 report 中计算百分比得分 (0-100)。"""
+    if "weighted_pct" in report:
+        return float(report["weighted_pct"])
     return report["score"] / max(report["max_score"], 1) * 100
 
 
-def run_eval(cfg: Config, video_id: str) -> dict:
+def run_eval(cfg: Config, video_id: str, quality_profile: str = "default") -> dict:
     """从文件评估 script.json 质量，返回评分报告。"""
     output_dir = cfg.output_dir / video_id
     script_path = output_dir / "script.json"
@@ -418,7 +520,7 @@ def run_eval(cfg: Config, video_id: str) -> dict:
         raise click.ClickException(f"脚本不存在: {script_path}")
 
     script = json.loads(script_path.read_text(encoding="utf-8"))
-    report = eval_script(script, video_id)
+    report = eval_script(script, video_id, quality_profile=quality_profile)
 
     # 附加元数据
     meta_path = output_dir / "script_meta.json"
@@ -434,9 +536,22 @@ def print_eval_report(report: dict):
     score = report["score"]
     max_score = report["max_score"]
     pct = score / max(max_score, 1) * 100
+    weighted_pct = report.get("weighted_pct", pct)
 
     click.echo(f"\n📋 脚本质量评估: {report['video_id']}")
-    click.echo(f"   总分: {score}/{max_score} ({pct:.0f}%)")
+    click.echo(f"   规则分: {score}/{max_score} ({pct:.0f}%)")
+    if "quality_profile" in report:
+        click.echo(
+            f"   档位: {report['quality_profile']} "
+            f"(objective {report['quality_profile_weights']['objective']:.0%} / "
+            f"subjective {report['quality_profile_weights']['subjective']:.0%})"
+        )
+    if "objective_pct" in report and "subjective_pct" in report:
+        click.echo(
+            f"   分层: objective {report['objective_pct']:.0f}% | "
+            f"subjective {report['subjective_pct']:.0f}%"
+        )
+    click.echo(f"   综合分: {weighted_pct:.0f}%")
 
     # 按分级输出失败项
     critical_failed = report.get("critical_failed", [])

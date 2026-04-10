@@ -234,12 +234,23 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
     if not state.script_reviewed:
         raise click.ClickException("脚本尚未审核，请先运行 v2g review")
 
-    if state.tts_done:
-        click.echo("⏭️  TTS 已完成，跳过")
-        return state
-
     output_dir = cfg.output_dir / video_id
     voiceover_dir = output_dir / "voiceover"
+
+    if state.tts_done:
+        click.echo("⏭️  TTS 已完成，跳过")
+        # 自愈：即使 TTS 已完成，若缺少 word_timing.json 仍尝试补齐词级对齐
+        if not (voiceover_dir / "word_timing.json").exists():
+            click.echo("   🔁 缺少 word_timing.json，自动补齐词级对齐")
+            try:
+                from v2g.subtitle import align_voiceover
+                align_voiceover(voiceover_dir)
+            except Exception as e:
+                click.echo(f"   ⚠️ 词级对齐失败 (非致命): {e}")
+                from v2g.cost import get_tracker
+                get_tracker().record_degradation("subtitle", "mlx-whisper", "char-split", str(e))
+        return state
+
     segments_dir = voiceover_dir / "segments"
     segments_dir.mkdir(parents=True, exist_ok=True)
 

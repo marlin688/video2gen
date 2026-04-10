@@ -96,7 +96,8 @@ def _print_preflight(status: str, warnings: list[str]):
 
 def _run_quality_gate(cfg: Config, video_id: str, model: str,
                       max_retries: int = 2, threshold: float = 85,
-                      regen_fn=None):
+                      regen_fn=None,
+                      quality_profile: str = "default"):
     """脚本质量门控：评估 script.json，低于阈值自动重新生成。
 
     Args:
@@ -117,7 +118,7 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
         return
 
     script = json.loads(script_path.read_text(encoding="utf-8"))
-    report = eval_script(script, video_id)
+    report = eval_script(script, video_id, quality_profile=quality_profile)
     pct = eval_score_pct(report)
     blocking_warnings = get_blocking_warnings(report)
 
@@ -140,7 +141,7 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
 
     if regen_fn is None and max_retries > 0:
         from v2g.scriptwriter import run_script
-        regen_fn = lambda c, v, m: run_script(c, v, m)
+        regen_fn = lambda c, v, m: run_script(c, v, m, quality_profile=quality_profile)
 
     fail_names = [c["name"] for c in report.get("critical_failed", [])] + [
         w["name"] for w in blocking_warnings
@@ -165,7 +166,7 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
         state = regen_fn(cfg, video_id, model)
 
         script = json.loads(script_path.read_text(encoding="utf-8"))
-        report = eval_script(script, video_id)
+        report = eval_script(script, video_id, quality_profile=quality_profile)
         pct = eval_score_pct(report)
         blocking_warnings = get_blocking_warnings(report)
 
@@ -190,7 +191,8 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
 
 
 def run_pipeline(cfg: Config, video_id_or_url: str, model: str,
-                 whisper_model: str = "medium", auto: bool = False):
+                 whisper_model: str = "medium", auto: bool = False,
+                 quality_profile: str = "default"):
     """执行完整流水线，在人工审核点暂停（auto=True 时跳过审核）。"""
     from v2g.cost import reset_tracker, get_tracker
     reset_tracker()
@@ -219,10 +221,17 @@ def run_pipeline(cfg: Config, video_id_or_url: str, model: str,
         click.echo("🤖 Stage 3: AI 解说脚本")
         click.echo("=" * 50)
         from v2g.scriptwriter import run_script
-        state = run_script(cfg, video_id, model)
+        state = run_script(cfg, video_id, model, quality_profile=quality_profile)
 
     # Stage 3.5: 质量门控 — eval 评分，低于阈值自动重试
-    _run_quality_gate(cfg, video_id, model, max_retries=2, threshold=85)
+    _run_quality_gate(
+        cfg,
+        video_id,
+        model,
+        max_retries=2,
+        threshold=85,
+        quality_profile=quality_profile,
+    )
 
     # 人工审核点 1: 脚本审核
     if not state.script_reviewed:

@@ -11,6 +11,7 @@ import click
 from v2g.config import Config
 from v2g.checkpoint import PipelineState
 from v2g.llm import call_llm
+from v2g.quality_profile import resolve_quality_profile, load_profile_prompt
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -85,12 +86,19 @@ def _extract_json(text: str) -> dict:
     return json.loads(fixed)
 
 
-def _save_script_meta(output_dir: Path, model: str, system_prompt: str,
-                      user_message: str, response: str):
+def _save_script_meta(
+    output_dir: Path,
+    model: str,
+    system_prompt: str,
+    user_message: str,
+    response: str,
+    quality_profile: str = "default",
+):
     """保存脚本生成元数据，用于 prompt 版本追踪和质量回溯。"""
     prompt_hash = hashlib.md5(system_prompt.encode()).hexdigest()[:8]
     meta = {
         "model": model,
+        "quality_profile": quality_profile,
         "prompt_hash": prompt_hash,
         "timestamp": datetime.now().isoformat(),
         "input_chars": len(user_message),
@@ -230,7 +238,12 @@ def _generate_script_md(script_data: dict, output_path: Path):
     output_path.write_text("".join(lines), encoding="utf-8")
 
 
-def run_script(cfg: Config, video_id: str, model: str) -> PipelineState:
+def run_script(
+    cfg: Config,
+    video_id: str,
+    model: str,
+    quality_profile: str = "default",
+) -> PipelineState:
     """执行 Stage 3: AI 脚本生成。"""
     state = PipelineState.load(cfg.output_dir, video_id)
     if not state.subtitled:
@@ -274,9 +287,21 @@ def run_script(cfg: Config, video_id: str, model: str) -> PipelineState:
         user_parts.append(summary_path.read_text(encoding="utf-8"))
 
     user_message = "\n".join(user_parts)
-    system_prompt = _read_prompt("script_system.md")
+    try:
+        profile = resolve_quality_profile(quality_profile)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    profile_prompt = load_profile_prompt(profile["name"])
 
-    click.echo(f"🤖 生成二创脚本 (模型: {model})...")
+    system_prompt = _read_prompt("script_system.md")
+    if profile_prompt:
+        system_prompt = (
+            system_prompt
+            + "\n\n## 质量档位约束\n"
+            + profile_prompt
+        )
+
+    click.echo(f"🤖 生成二创脚本 (模型: {model}, 档位: {profile['name']})...")
     try:
         response = call_llm(system_prompt, user_message, model, max_tokens=16000)
 
@@ -322,7 +347,14 @@ def run_script(cfg: Config, video_id: str, model: str) -> PipelineState:
     state.recording_guide = str(recording_guide_path)
 
     # 保存生成元数据（用于 prompt 版本追踪）
-    _save_script_meta(output_dir, model, system_prompt, user_message, response)
+    _save_script_meta(
+        output_dir,
+        model,
+        system_prompt,
+        user_message,
+        response,
+        quality_profile=profile["name"],
+    )
 
     # 创建素材目录（按需创建，不预创建空目录）
     (output_dir / "slides").mkdir(exist_ok=True)
@@ -345,7 +377,12 @@ def run_script(cfg: Config, video_id: str, model: str) -> PipelineState:
     return state
 
 
-def run_multi_script(cfg, project_id: str, model: str) -> "PipelineState":
+def run_multi_script(
+    cfg,
+    project_id: str,
+    model: str,
+    quality_profile: str = "default",
+) -> "PipelineState":
     """多源综合脚本生成: 跨 N 个视频提炼精华。"""
     from v2g.checkpoint import PipelineState
 
@@ -390,7 +427,19 @@ def run_multi_script(cfg, project_id: str, model: str) -> "PipelineState":
             user_parts.append("中文字幕: 不可用")
 
     user_message = "\n".join(user_parts)
+    try:
+        profile = resolve_quality_profile(quality_profile)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+    profile_prompt = load_profile_prompt(profile["name"])
+
     system_prompt = _read_prompt("script_multi_system.md")
+    if profile_prompt:
+        system_prompt = (
+            system_prompt
+            + "\n\n## 质量档位约束\n"
+            + profile_prompt
+        )
 
     click.echo(f"   总输入长度: {len(user_message)} 字符")
 
@@ -442,7 +491,14 @@ def run_multi_script(cfg, project_id: str, model: str) -> "PipelineState":
     state.recording_guide = str(recording_guide_path)
 
     # 保存生成元数据
-    _save_script_meta(output_dir, model, system_prompt, user_message, response)
+    _save_script_meta(
+        output_dir,
+        model,
+        system_prompt,
+        user_message,
+        response,
+        quality_profile=profile["name"],
+    )
 
     (output_dir / "slides").mkdir(exist_ok=True)
     (output_dir / "recordings").mkdir(exist_ok=True)

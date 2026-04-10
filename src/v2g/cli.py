@@ -57,12 +57,13 @@ def prepare(cfg: Config, video_id_or_url, model, whisper_model, no_whisper):
 @main.command()
 @click.argument("video_id")
 @click.option("--model", default=None, help="脚本生成模型")
+@click.option("--profile", default="default", help="质量档位 (default/tutorial_general)")
 @click.pass_obj
-def script(cfg: Config, video_id, model):
+def script(cfg: Config, video_id, model, profile):
     """Stage 3: AI 生成二创解说脚本"""
     from v2g.scriptwriter import run_script
     model = model or cfg.script_model
-    state = run_script(cfg, video_id, model)
+    state = run_script(cfg, video_id, model, quality_profile=profile)
     click.echo(f"\n✅ 脚本已生成:")
     click.echo(f"   脚本: output/{video_id}/script.json (可读版: script.md)")
     click.echo(f"   录屏指南: output/{video_id}/recording_guide.md")
@@ -125,6 +126,41 @@ def tts(cfg: Config, video_id, voice, rate):
 
 @main.command()
 @click.argument("video_id")
+@click.option("--model", "whisper_model", default="base",
+              type=click.Choice(["tiny", "base", "small", "medium", "large"]),
+              help="mlx-whisper 模型 (默认 base；small 对中文更准)")
+@click.option("--force", is_flag=True,
+              help="即使 word_timing.json 已存在也重新生成")
+@click.pass_obj
+def align(cfg: Config, video_id, whisper_model, force):
+    """对已有 voiceover 运行词级对齐 (生成 voiceover/word_timing.json)。
+
+    用于为旧项目补齐对齐文件，或用更大的 whisper 模型重跑以提升精度。
+    需要已安装 mlx-whisper: pip install -e ".[subtitle]"
+    """
+    from v2g.subtitle import align_voiceover
+    voiceover_dir = cfg.output_dir / video_id / "voiceover"
+    if not voiceover_dir.exists():
+        raise click.ClickException(f"voiceover 目录不存在: {voiceover_dir}")
+
+    existing = voiceover_dir / "word_timing.json"
+    if existing.exists() and not force:
+        click.echo(f"⏭️  word_timing.json 已存在，使用 --force 强制重跑")
+        return
+
+    if existing.exists() and force:
+        existing.unlink()
+        click.echo("   🗑️  已删除旧 word_timing.json")
+
+    result = align_voiceover(voiceover_dir, model_name=whisper_model)
+    if result:
+        click.echo(f"\n✅ 词级对齐完成: {result}")
+    else:
+        raise click.ClickException("词级对齐失败（详见上方日志）")
+
+
+@main.command()
+@click.argument("video_id")
 @click.option("--model", default=None, help="图片生成模型")
 @click.pass_obj
 def slides(cfg: Config, video_id, model):
@@ -164,9 +200,10 @@ def assemble(cfg: Config, video_id):
 @click.option("--topic", required=True, help="主题名称 (如 'Claude Code技巧')")
 @click.option("--project-id", default=None, help="项目 ID (默认自动生成)")
 @click.option("--model", default=None, help="LLM 模型")
+@click.option("--profile", default="default", help="质量档位 (default/tutorial_general)")
 @click.option("--whisper-model", default="medium", help="Whisper 模型大小")
 @click.pass_obj
-def multi(cfg: Config, urls, topic, project_id, model, whisper_model):
+def multi(cfg: Config, urls, topic, project_id, model, profile, whisper_model):
     """多源综合剪辑: 输入多个视频 URL (分号分隔)，AI 跨视频提炼生成一个综合视频
 
     示例: v2g multi "url1;url2;url3" --topic "Claude Code技巧"
@@ -206,13 +243,20 @@ def multi(cfg: Config, urls, topic, project_id, model, whisper_model):
         click.echo("🤖 Stage 2: 多源综合脚本")
         click.echo("=" * 50)
         from v2g.scriptwriter import run_multi_script
-        state = run_multi_script(cfg, project_id, model)
+        state = run_multi_script(cfg, project_id, model, quality_profile=profile)
 
     # 质量门控 (多源脚本用 run_multi_script 重试)
     from v2g.pipeline import _run_quality_gate
     from v2g.scriptwriter import run_multi_script as _regen_multi
-    _run_quality_gate(cfg, project_id, model, max_retries=2, threshold=85,
-                      regen_fn=_regen_multi)
+    _run_quality_gate(
+        cfg,
+        project_id,
+        model,
+        max_retries=2,
+        threshold=85,
+        regen_fn=lambda c, v, m: _regen_multi(c, v, m, quality_profile=profile),
+        quality_profile=profile,
+    )
 
     # 人工审核
     if not state.script_reviewed:
@@ -244,8 +288,9 @@ def multi(cfg: Config, urls, topic, project_id, model, whisper_model):
 @click.option("--topic", "-t", required=True, help="视频主题/标题方向")
 @click.option("--model", default=None, help="LLM 模型")
 @click.option("--duration", default=240, type=int, help="目标视频时长(秒)")
+@click.option("--profile", default="default", help="质量档位 (default/tutorial_general)")
 @click.pass_obj
-def agent_cmd(cfg: Config, project_id, sources, topic, model, duration):
+def agent_cmd(cfg: Config, project_id, sources, topic, model, duration, profile):
     """AI Agent 智能编排视频脚本 (支持 markdown/文章URL/字幕等多源输入)
 
     示例: v2g agent my-video -s article.md -s "https://mp.weixin.qq.com/s/xxx" -t "AI工具横评"
@@ -256,7 +301,7 @@ def agent_cmd(cfg: Config, project_id, sources, topic, model, duration):
     _print_preflight(status, warnings)
 
     from v2g.agent import run_agent
-    run_agent(cfg, project_id, sources, topic, model, duration)
+    run_agent(cfg, project_id, sources, topic, model, duration, quality_profile=profile)
 
 
 @main.command()
@@ -599,9 +644,10 @@ def scout_plan(cfg: Config, skip_notebooklm, duration, topic_index):
 @click.option("--topic-index", "-i", default=None, type=int, help="直接选择第 N 个话题")
 @click.option("--duration", "-d", default=240, type=int, help="目标视频时长秒数 (默认 240)")
 @click.option("--model", default=None, help="LLM 模型")
+@click.option("--profile", default="tutorial_general", help="质量档位 (default/tutorial_general)")
 @click.option("--skip-download", is_flag=True, help="跳过视频下载（仅用已有 sources/）")
 @click.pass_obj
-def scout_produce(cfg: Config, topic_index, duration, model, skip_download):
+def scout_produce(cfg: Config, topic_index, duration, model, profile, skip_download):
     """一键生产: 选话题 → 选视频下载 → agent 生成 script.json
 
     从 ideation 竞品视频中选择素材，结合 scout scripts 上下文，
@@ -736,6 +782,7 @@ def scout_produce(cfg: Config, topic_index, duration, model, skip_download):
         duration=duration,
         auto_confirm=True,
         auto_confirm_threshold=85,
+        quality_profile=profile,
     )
 
 
@@ -855,13 +902,14 @@ def scout_all(cfg: Config):
 @click.argument("video_id_or_url")
 @click.option("--model", default=None, help="LLM 模型")
 @click.option("--whisper-model", default="medium", help="Whisper 模型大小")
+@click.option("--profile", default="default", help="质量档位 (default/tutorial_general)")
 @click.option("--auto", is_flag=True, default=False, help="全自动模式: 跳过人工审核，B类素材使用终端动画")
 @click.pass_obj
-def run(cfg: Config, video_id_or_url, model, whisper_model, auto):
+def run(cfg: Config, video_id_or_url, model, whisper_model, profile, auto):
     """单视频全流程运行 (带人工审核暂停点，--auto 跳过审核)"""
     from v2g.pipeline import run_pipeline
     model = model or cfg.script_model
-    run_pipeline(cfg, video_id_or_url, model, whisper_model, auto=auto)
+    run_pipeline(cfg, video_id_or_url, model, whisper_model, auto=auto, quality_profile=profile)
 
 
 @main.command()
@@ -942,11 +990,12 @@ def config_list(cfg: Config):
 
 @main.command("eval")
 @click.argument("video_id")
+@click.option("--profile", default="default", help="质量档位 (default/tutorial_general)")
 @click.pass_obj
-def eval_script(cfg: Config, video_id):
+def eval_script(cfg: Config, video_id, profile):
     """评估脚本质量（规则化检查，不消耗 LLM 额度）"""
     from v2g.eval import run_eval, print_eval_report
-    report = run_eval(cfg, video_id)
+    report = run_eval(cfg, video_id, quality_profile=profile)
     print_eval_report(report)
 
 

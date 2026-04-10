@@ -198,9 +198,12 @@ class ScriptSegment(BaseModel):
     type: Literal["intro", "body", "outro"]
     material: Literal["A", "B", "C"]
     narration_zh: str
+    rhythm: Literal["fast", "normal", "slow"] | None = None
     notes: str | None = None
     component: str | None = None
-    transition: Literal["fade", "slide", "wipe", "glitch", "none"] | None = None
+    transition: Literal[
+        "fade", "slide", "slide-left", "zoom-in", "wipe", "glitch", "none",
+    ] | None = None
 
     # 素材 A
     slide_content: SlideContent | None = None

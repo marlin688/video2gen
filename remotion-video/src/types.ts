@@ -10,7 +10,14 @@ export interface SlideContent {
 }
 
 /** 段间转场类型 */
-export type TransitionType = "fade" | "slide" | "wipe" | "glitch" | "none";
+export type TransitionType =
+  | "fade"
+  | "slide"
+  | "slide-left"
+  | "zoom-in"
+  | "wipe"
+  | "glitch"
+  | "none";
 
 export interface ScriptSegment {
   id: number;
@@ -18,6 +25,8 @@ export interface ScriptSegment {
   material: "A" | "B" | "C";
   narration_zh: string;
   notes?: string;
+  /** 节奏标注：fast=快节奏段(hook/转折/数据冲击)，normal=标准讲解，slow=慢节奏段(总结/观点锤) */
+  rhythm?: "fast" | "normal" | "slow";
   /** 指定视觉组件，格式 "{schema}.{style}"，如 "slide.tech-dark"。缺失时按 material 走默认。 */
   component?: string;
   /** 进入本段的转场类型。缺失时按 segment.type 自动选择。 */

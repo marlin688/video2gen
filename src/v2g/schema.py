@@ -21,6 +21,8 @@ class SlideContent(BaseModel):
     title: str
     bullet_points: list[str]
     chart_hint: str | None = None
+    # 场景专属结构化数据：各 anthropic-* style 自己定义 shape（Dict 透传）
+    scene_data: dict | None = None
 
 
 class TerminalStep(BaseModel):

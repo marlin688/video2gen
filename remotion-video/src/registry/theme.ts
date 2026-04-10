@@ -72,6 +72,10 @@ const FONTS = {
   mono: "'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace",
 };
 
+// Anthropic 品牌字体栈：衬线（Fraunces / Playfair Display / EB Garamond / Georgia）
+const ANTHROPIC_SERIF =
+  "'Fraunces', 'Playfair Display', 'EB Garamond', 'Tiempos Text', Georgia, serif";
+
 /** 科技蓝 — 冷色极简，适合编程/AI/技术类内容（默认） */
 export const techBlue: VideoTheme = {
   id: "tech-blue",
@@ -141,6 +145,29 @@ export const emeraldDark: VideoTheme = {
   monoFont: FONTS.mono,
 };
 
+/** Anthropic 奶油米白 — 衬线 + 珊瑚红 + 手绘波纹。官方品牌片风格（Claude Managed Agents 发布片同款）。 */
+export const anthropicCream: VideoTheme = {
+  id: "anthropic-cream",
+  bg: "#f3f0e6",                              // 米白纸张色
+  surface: "rgba(255, 255, 255, 0.96)",       // 浮窗用的纯白
+  surfaceBorder: "rgba(0, 0, 0, 0.08)",
+  gridLine: "rgba(80, 70, 50, 0.05)",         // 波纹色
+  text: "#1a1a1a",
+  textDim: "#555555",
+  textMuted: "#9a958d",
+  accent: "#d97757",                          // Claude 珊瑚红
+  accentDim: "#b85e3f",
+  accentGlow: "rgba(217, 119, 87, 0.12)",
+  success: "#3b82f6",                         // 蓝色勾（checklist 用）
+  warning: "#f59e0b",
+  danger: "#ef4444",
+  orbColor1: "rgba(217, 119, 87, 0.04)",
+  orbColor2: "rgba(80, 70, 50, 0.03)",
+  titleFont: ANTHROPIC_SERIF,
+  bodyFont: ANTHROPIC_SERIF,
+  monoFont: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
+};
+
 // ---------------------------------------------------------------------------
 // 主题注册表
 // ---------------------------------------------------------------------------
@@ -149,6 +176,7 @@ export const themes: Record<string, VideoTheme> = {
   "tech-blue": techBlue,
   "warm-purple": warmPurple,
   "emerald-dark": emeraldDark,
+  "anthropic-cream": anthropicCream,
 };
 
 export const DEFAULT_THEME_ID = "tech-blue";

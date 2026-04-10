@@ -7,6 +7,8 @@ export interface SlideContent {
   title: string;
   bullet_points: string[];
   chart_hint?: string;
+  /** 场景专属结构化数据，各 anthropic-* slide style 自己定义 shape */
+  scene_data?: Record<string, unknown>;
 }
 
 /** 段间转场类型 */

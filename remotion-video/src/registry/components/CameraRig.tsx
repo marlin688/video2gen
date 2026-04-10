@@ -5,7 +5,12 @@
  * 赋予画面纪录片般的微动感。人眼几乎察觉不到，但下意识感受到"活"的画面。
  *
  * 段落级运镜：每个 segment 切换运镜方向，避免单调。
- * 运镜模式循环：push-in → drift-right → pull-out → drift-left
+ *
+ * 关键设计：每段运镜走"0 → 峰值 → 0"的钟形曲线（sin-bell），
+ * 确保每个段边界都回到 identity (scale=1, translate=0)，
+ * 段切换零断层，不会出现运镜"瞬移"跳跃。
+ *
+ * 运镜模式循环：push-in → drift-right → subtle-zoom → drift-left
  */
 
 import React from "react";
@@ -18,12 +23,12 @@ import {
 import { GLOBAL_EASE } from "../utils/easing";
 
 /** 运镜模式 */
-type CameraMove = "push-in" | "drift-right" | "pull-out" | "drift-left";
+type CameraMove = "push-in" | "drift-right" | "subtle-zoom" | "drift-left";
 
 const CAMERA_SEQUENCE: CameraMove[] = [
   "push-in",
   "drift-right",
-  "pull-out",
+  "subtle-zoom",
   "drift-left",
 ];
 
@@ -90,6 +95,10 @@ export const CameraRig: React.FC<CameraRigProps> = ({
 
     const move = CAMERA_SEQUENCE[currentSegIdx % CAMERA_SEQUENCE.length];
 
+    // 钟形曲线 (sin bell)：progress 0 → 0, 0.5 → 1, 1 → 0
+    // 保证每段起止都回到 identity，段边界零断层
+    const bell = Math.sin(progress * Math.PI);
+
     let sx = 1;
     let sy = 1;
     let tx = 0;
@@ -97,20 +106,20 @@ export const CameraRig: React.FC<CameraRigProps> = ({
 
     switch (move) {
       case "push-in":
-        // 从 1.0 缓慢放大到 maxScale
-        sx = sy = interpolate(progress, [0, 1], [1, scale]);
+        // scale 在段中间峰值到 maxScale，两端均为 1.0
+        sx = sy = 1 + (scale - 1) * bell;
         break;
-      case "pull-out":
-        // 从 maxScale 缓慢缩回 1.0
-        sx = sy = interpolate(progress, [0, 1], [scale, 1]);
+      case "subtle-zoom":
+        // 更温和的推进（40% 力度），与 push-in 形成强弱对比
+        sx = sy = 1 + (scale - 1) * bell * 0.6;
         break;
       case "drift-right":
-        // 从左向右平移
-        tx = interpolate(progress, [0, 1], [-translate, translate]);
+        // tx 在段中间峰值到 +translate，两端均为 0
+        tx = translate * bell;
         break;
       case "drift-left":
-        // 从右向左平移
-        tx = interpolate(progress, [0, 1], [translate, -translate]);
+        // tx 在段中间峰值到 -translate，两端均为 0
+        tx = -translate * bell;
         break;
     }
 

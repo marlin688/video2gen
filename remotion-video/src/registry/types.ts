@@ -16,6 +16,8 @@ export interface SlideData {
   title: string;
   bullet_points: string[];
   chart_hint?: string;
+  /** 场景专属结构化数据（各 anthropic-* style 自己定义 shape，未提供时 fallback 到组件内置 demo 内容） */
+  scene_data?: Record<string, unknown>;
 }
 
 /** 结构化终端会话步骤（LLM 在 script.json 中生成） */

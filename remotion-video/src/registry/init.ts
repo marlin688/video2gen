@@ -29,6 +29,18 @@ import "./styles/slide/result-showcase";
 import "./styles/slide/fireship-title";
 import "./styles/slide/fireship-meme";
 
+// anthropic-cream 品牌片专属场景 styles (10 个)
+import "./styles/slide/anthropic-stickies-intro";
+import "./styles/slide/anthropic-at-scale-question";
+import "./styles/slide/anthropic-template-picker";
+import "./styles/slide/anthropic-prompt-write";
+import "./styles/slide/anthropic-agent-config";
+import "./styles/slide/anthropic-feature-checklist";
+import "./styles/slide/anthropic-session-timeline";
+import "./styles/slide/anthropic-session-detail";
+import "./styles/slide/anthropic-brand-title";
+import "./styles/slide/anthropic-brand-outro";
+
 // terminal (3 styles)
 import "./styles/terminal/aurora";
 import "./styles/terminal/vscode";

@@ -851,6 +851,20 @@ def run_agent(
         state.theme = profile_theme
         state.save(cfg.output_dir)
 
+    # 档位自动设置 camera_rig 开关（tech_explainer → False 硬切风格）
+    profile_camera_rig = profile.get("camera_rig")
+    if profile_camera_rig is not None and state.camera_rig != profile_camera_rig:
+        click.echo(f"   🎥 档位覆盖运镜: camera_rig → {profile_camera_rig}")
+        state.camera_rig = profile_camera_rig
+        state.save(cfg.output_dir)
+
+    # 档位自动设置默认段间转场（tech_explainer → "none" 硬切）
+    profile_default_transition = profile.get("default_transition") or ""
+    if profile_default_transition and state.default_transition != profile_default_transition:
+        click.echo(f"   ✂️  档位覆盖默认转场: → {profile_default_transition}")
+        state.default_transition = profile_default_transition
+        state.save(cfg.output_dir)
+
     # Initialize context
     _ctx.clear()
     _ctx["output_dir"] = output_dir
@@ -972,6 +986,18 @@ def run_agent(
         state.recordings_dir = str(output_dir / "recordings")
         (output_dir / "slides").mkdir(exist_ok=True)
         (output_dir / "recordings").mkdir(exist_ok=True)
+
+        # ── Phase 2.1: scene_data 字段名校验 + 自动修复 ─────
+        from v2g.scene_data_validator import validate_and_fix_scene_data
+        script_data, sd_warnings = validate_and_fix_scene_data(script_data, auto_fix=True)
+        if sd_warnings:
+            click.echo(f"\n🔧 scene_data 字段名修复: {len(sd_warnings)} 处")
+            for w in sd_warnings:
+                click.echo(f"   {w}")
+            # 重新保存修复后的 script
+            script_path.write_text(
+                json.dumps(script_data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
 
         state.scripted = True
         state.last_error = ""

@@ -256,6 +256,94 @@ if (sourceVideoFiles.length === 0) {
   console.log("   ⚠️ 未找到任何源视频");
 }
 
+// ═══ 递归扫描 sources/{videoId}/ 下的所有视频，保持相对路径拷到 public/ ═══
+// 这支持 tech_explainer 档位的 talking/ + recordings/ 子目录结构：
+//   sources/my-video/talking/lecture.mp4        → public/talking/lecture.mp4
+//   sources/my-video/recordings/demo-1.mov      → public/recordings/demo-1.mp4 (AV1 转码后)
+// script.json 用 scene_data.videoFile = "recordings/demo-1.mov" 引用，组件通过
+// sourceVideoMap 查到实际落地路径 "recordings/demo-1.mp4"。
+const sourceVideoMap = {};
+const videoExts = [".mp4", ".mov", ".webm", ".mkv", ".avi"];
+
+function walkVideoFiles(dir, baseDir) {
+  const entries = [];
+  if (!fs.existsSync(dir)) return entries;
+  for (const name of fs.readdirSync(dir)) {
+    const full = path.join(dir, name);
+    const stat = fs.statSync(full);
+    if (stat.isDirectory()) {
+      entries.push(...walkVideoFiles(full, baseDir));
+    } else if (videoExts.some(ext => name.toLowerCase().endsWith(ext))) {
+      const rel = path.relative(baseDir, full);
+      entries.push({ full, rel });
+    }
+  }
+  return entries;
+}
+
+function prepareVideoWithRelPath(srcPath, relPath) {
+  // 始终输出 .mp4 扩展名（H.264 兼容）
+  const relMp4 = relPath.replace(/\.(mov|webm|mkv|avi)$/i, ".mp4");
+  const dst = path.join(publicDir, relMp4);
+  const dstDir = path.dirname(dst);
+  if (!fs.existsSync(dstDir)) fs.mkdirSync(dstDir, { recursive: true });
+  if (fs.existsSync(dst)) return relMp4;
+
+  let needsTranscode = false;
+  try {
+    const probe = execSync(
+      `${FFPROBE} -v quiet -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "${srcPath}"`,
+      { timeout: 10000 }
+    ).toString().trim();
+    needsTranscode = probe.includes("av1") || probe.includes("vp9") ||
+                     /\.(mov|webm|mkv|avi)$/i.test(srcPath);
+    if (needsTranscode) console.log(`   ⚠️ ${relPath}: ${probe} → 转码为 H.264...`);
+  } catch { needsTranscode = true; }
+
+  if (needsTranscode) {
+    try {
+      execSync(
+        `"${FFMPEG}" -y -i "${srcPath}" -c:v libx264 -preset fast -crf 22 -pix_fmt yuv420p -c:a aac "${dst}"`,
+        { timeout: 600000, stdio: "pipe" }
+      );
+      console.log(`   ✅ ${relMp4}`);
+    } catch (e) {
+      console.log(`   ❌ 转码失败: ${e.message?.slice(0, 80)}`);
+      fs.copyFileSync(srcPath, dst);
+    }
+  } else {
+    fs.copyFileSync(srcPath, dst);
+    console.log(`   复制: ${relMp4}`);
+  }
+  return relMp4;
+}
+
+const projectSourceDir = path.join(sourcesDir, videoId);
+if (fs.existsSync(projectSourceDir)) {
+  const allVideos = walkVideoFiles(projectSourceDir, projectSourceDir);
+  // 过滤掉顶层的 video.mp4 (已在上面的 findSourceVideo 逻辑里处理为 source_0.mp4)
+  for (const { full, rel } of allVideos) {
+    // skip 顶层的、已经作为 source_0 处理过的视频
+    if (!rel.includes(path.sep)) {
+      // 顶层文件，只有当它还没有被记录时才加
+      if (sourceVideoFiles.includes("source_0.mp4") && rel === path.basename(full)) {
+        // 已经被 findSourceVideo 处理为 source_0，做个映射
+        sourceVideoMap[rel] = "source_0.mp4";
+        continue;
+      }
+    }
+    const landedRel = prepareVideoWithRelPath(full, rel);
+    // 同时记两个 key：原始路径和最终落地路径（后者方便组件直接引用）
+    sourceVideoMap[rel] = landedRel;
+    if (rel !== landedRel) {
+      sourceVideoMap[landedRel] = landedRel;
+    }
+  }
+  if (allVideos.length > 0) {
+    console.log(`   📂 扫描到 ${allVideos.length} 个源视频 (含子目录)`);
+  }
+}
+
 // Chrome 浏览器路径
 const chromePath = process.env.REMOTION_CHROME_EXECUTABLE
   || path.join(
@@ -274,16 +362,24 @@ if (fs.existsSync(recDir)) {
 }
 console.log(`   录屏素材: ${availableRecordings.length > 0 ? availableRecordings.map(id => `seg_${id}`).join(", ") : "无"}`);
 
-// 主题: 从 checkpoint 或环境变量读取（默认 tech-blue）
-const themeId = (() => {
-  if (process.env.V2G_THEME) return process.env.V2G_THEME;
+// 主题 / cameraRig / defaultTransition: 从 checkpoint 或环境变量读取
+const cpData = (() => {
   if (fs.existsSync(checkpointPath)) {
-    const cp = JSON.parse(fs.readFileSync(checkpointPath, "utf-8"));
-    if (cp.theme) return cp.theme;
+    try { return JSON.parse(fs.readFileSync(checkpointPath, "utf-8")); }
+    catch { return {}; }
   }
-  return "tech-blue";
+  return {};
 })();
+
+const themeId = process.env.V2G_THEME || cpData.theme || "tech-blue";
 console.log(`   主题: ${themeId}`);
+
+// camera_rig: null (未设) → true (默认启用)；false → 关闭；true → 启用
+const cameraRigEnabled = cpData.camera_rig === false ? false : true;
+if (!cameraRigEnabled) console.log(`   运镜: 关闭 (硬切风格)`);
+
+const defaultTransition = cpData.default_transition || "";
+if (defaultTransition) console.log(`   默认段间转场: ${defaultTransition}`);
 
 // 构建 props
 const inputProps = {
@@ -294,9 +390,12 @@ const inputProps = {
   recordingsDir: "recordings",
   sourceVideoFiles,
   sourceChannels,
+  sourceVideoMap,
   voiceoverFile: "voiceover.mp3",
   availableRecordings,
   theme: themeId,
+  cameraRig: cameraRigEnabled,
+  defaultTransition,
   bgmFile,
   bgmVolume: 0.15,
 };

@@ -41,9 +41,134 @@ class StyleEntry(TypedDict):
     is_default: bool
     tags: list[str]
     file: str
+    scene_data_fields: dict[str, str] | None
 
 
 _REGISTER_RE = re.compile(r"registry\.register\s*\(")
+
+
+def _extract_scene_data_shape(tsx_text: str) -> dict[str, str] | None:
+    """从 .tsx 源码中提取 scene_data 的字段定义。
+
+    支持两种写法：
+    1) 内联类型:  ``(data.scene_data || {}) as { field?: type; ... }``
+    2) 命名类型:  ``(data.scene_data || {}) as SomeName``
+       → 回溯找同文件中 ``interface SomeName { ... }``
+
+    Returns: {"fieldName": "type"} 或 None（没有 scene_data）。
+    """
+    # Pattern 1: inline cast — ``as {``
+    inline_re = re.compile(
+        r"""(?:data\.)?scene_data\s*(?:\|\|\s*\{\})\s*\)\s*as\s*\{""",
+        re.DOTALL,
+    )
+    m = inline_re.search(tsx_text)
+    if m:
+        brace_start = m.end() - 1  # position of '{'
+        return _parse_ts_fields_from_brace(tsx_text, brace_start)
+
+    # Pattern 2: named type — ``as TypeName``
+    named_re = re.compile(
+        r"""(?:data\.)?scene_data\s*(?:\|\|\s*\{\})\s*\)\s*as\s+([A-Z]\w+)""",
+    )
+    m = named_re.search(tsx_text)
+    if m:
+        type_name = m.group(1)
+        iface_re = re.compile(
+            rf"(?:interface|type)\s+{re.escape(type_name)}\s*\{{",
+        )
+        im = iface_re.search(tsx_text)
+        if im:
+            brace_start = im.end() - 1
+            return _parse_ts_fields_from_brace(tsx_text, brace_start)
+
+    return None
+
+
+def _parse_ts_fields_from_brace(text: str, brace_start: int) -> dict[str, str]:
+    """从 ``{`` 位置开始解析 TypeScript 字段定义到匹配的 ``}``。
+
+    只解析顶层字段（depth=0），跳过嵌套 ``{...}`` 内部的分号。
+    """
+    end = _skip_string_aware(
+        text, brace_start + 1, {"}"},
+        track_brace=True, track_bracket=False, track_paren=False,
+    )
+    body = text[brace_start + 1 : end]
+
+    fields: dict[str, str] = {}
+    # 逐字符扫描顶层字段：``name?: type;``
+    i = 0
+    n = len(body)
+    while i < n:
+        # 跳过空白和注释
+        while i < n and body[i] in " \t\n\r":
+            i += 1
+        if i >= n:
+            break
+        # 跳过行注释
+        if body[i:i+2] == "//":
+            nl = body.find("\n", i)
+            i = nl + 1 if nl >= 0 else n
+            continue
+
+        # 尝试匹配字段名
+        m = re.match(r"(\w+)\??\s*:\s*", body[i:])
+        if not m:
+            i += 1
+            continue
+
+        fname = m.group(1)
+        type_start = i + m.end()
+
+        # 从 type_start 开始，找到顶层 ';' 或 '\n' (depth=0 且不在字符串内)
+        j = type_start
+        depth_b = depth_k = depth_p = 0
+        in_str: str | None = None
+        escape = False
+        while j < n:
+            c = body[j]
+            if escape:
+                escape = False
+            elif in_str:
+                if c == "\\":
+                    escape = True
+                elif c == in_str:
+                    in_str = None
+            elif c in ("'", '"', "`"):
+                in_str = c
+            elif c == "{":
+                depth_b += 1
+            elif c == "}":
+                if depth_b == 0:
+                    break
+                depth_b -= 1
+            elif c == "[":
+                depth_k += 1
+            elif c == "]":
+                if depth_k == 0:
+                    break
+                depth_k -= 1
+            elif c == "(":
+                depth_p += 1
+            elif c == ")":
+                if depth_p == 0:
+                    break
+                depth_p -= 1
+            elif c == ";" and depth_b == 0 and depth_k == 0 and depth_p == 0:
+                break
+            j += 1
+
+        ftype = body[type_start:j].strip().rstrip(",;")
+        i = j + 1
+
+        # 跳过双下划线开头的内部属性
+        if fname.startswith("__"):
+            continue
+        if ftype:
+            fields[fname] = ftype
+
+    return fields if fields else None
 
 
 def _skip_string_aware(text: str, i: int, stop_chars: set[str],
@@ -188,6 +313,8 @@ def load_styles(styles_dir: Path = STYLES_DIR) -> list[StyleEntry]:
             desc_val = _parse_string_concat(_parse_key_value(meta, "description"))
             is_default = (_parse_key_value(meta, "isDefault") or "false").strip() == "true"
             tags_val = _parse_tags(_parse_key_value(meta, "tags"))
+            sd_fields = _extract_scene_data_shape(text)
+
             results.append({
                 "id": id_val,
                 "schema": schema_val,
@@ -196,6 +323,7 @@ def load_styles(styles_dir: Path = STYLES_DIR) -> list[StyleEntry]:
                 "is_default": is_default,
                 "tags": tags_val,
                 "file": str(tsx.relative_to(_REPO_ROOT)) if tsx.is_relative_to(_REPO_ROOT) else str(tsx),
+                "scene_data_fields": sd_fields,
             })
     return results
 
@@ -228,6 +356,11 @@ def to_markdown_table(styles: list[StyleEntry], max_desc: int = 140) -> str:
             if len(desc) > max_desc:
                 desc = desc[:max_desc - 1] + "…"
             tags = ", ".join(e["tags"])
+            # 在描述末尾追加 scene_data 字段概要
+            sd = e.get("scene_data_fields")
+            if sd:
+                compact = ", ".join(f"{k}: {v}" for k, v in sd.items())
+                desc += f" 【scene_data: {{{compact}}}】"
             lines.append(
                 f"| `{e['id']}`{default_mark} | {e['name']} | {desc} | {tags} |"
             )

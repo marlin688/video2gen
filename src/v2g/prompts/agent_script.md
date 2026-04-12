@@ -229,3 +229,18 @@
 - B 类素材的 recording_instruction 中尽可能包含 URL
 - bullet_points 禁止 emoji
 - 不要编造素材中没有的事实，但可以加入你自己的分析判断
+
+### scene_data 字段名规范（硬约束）
+
+使用含 scene_data 的组件时，必须使用组件定义中的**精确字段名**。以下是已知的常见错误映射（生成时必须避免）：
+
+| 组件 | 正确字段名 | 常见错误写法 |
+|------|-------------|---------------|
+| anthropic-feature-checklist | done, todo | completed/pending, finished/remaining |
+| anthropic-agent-config | userPrompt, apiCall, yamlLines, terminalLines | prompt/curl/config_yaml/lines |
+| anthropic-prompt-write | prompt, quickActions, templates | userInput/actions/options |
+| anthropic-session-timeline | agentLog, panelTitle, panelFiles | log/entries, title, files |
+| anthropic-session-detail | agentLog, popover, systemPrompt, mcpTools | log, hover, system, tools |
+| anthropic-template-picker | templates, tags, appName | options, categories, name |
+
+当 {{STYLE_CATALOG}} 的组件描述中标注了 `【scene_data: {...}】` 时，其中的字段名即为唯一正确的写法。

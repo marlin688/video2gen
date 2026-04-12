@@ -75,6 +75,14 @@ class PipelineState:
     # 由 quality profile 自动设置，也可以手动编辑。
     theme: str = ""
 
+    # 是否启用全局 CameraRig 运镜。技术解说片档位默认关闭（硬切不要额外运镜）。
+    # 品牌片档位默认 true。None = 走 VideoComposition 的默认值。
+    camera_rig: bool | None = None
+
+    # 默认段间转场：空字符串 = VideoComposition 自动轮换；"none" = 硬切
+    # (不加 fade/zoom/slide，适合技术解说片 talking-head ↔ screen-clip)。
+    default_transition: str = ""
+
     # 成本追踪
     cost_summary: dict = field(default_factory=dict)
 

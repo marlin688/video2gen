@@ -56,10 +56,23 @@ interface TalkingHeadSceneData {
   __source?: {
     videoFile?: string;
     videoFiles?: string[];
+    videoFileMap?: Record<string, string>;
     start?: number;
     end?: number;
     channel?: string;
   };
+}
+
+/** 用 scene_data.__source.videoFileMap 把用户写的相对路径解析到实际落地路径 */
+function resolveVideoPath(
+  userPath: string,
+  map?: Record<string, string>,
+): string {
+  if (!map || !userPath) return userPath;
+  if (map[userPath]) return map[userPath];
+  const mp4 = userPath.replace(/\.(mov|webm|mkv|avi)$/i, ".mp4");
+  if (map[mp4]) return map[mp4];
+  return userPath;
 }
 
 const AnthropicTalkingHead: React.FC<StyleComponentProps<"slide">> = ({
@@ -73,7 +86,10 @@ const AnthropicTalkingHead: React.FC<StyleComponentProps<"slide">> = ({
   const src = sd.__source || {};
 
   // 决议视频文件 / 时间范围
-  const videoFile = sd.videoFile || src.videoFile || "";
+  // 优先级：scene_data.videoFile (显式) > __source.videoFile (dispatcher 注入的 source_0)
+  // 用 videoFileMap 把相对路径 (如 "talking/lecture.mp4") 解析到实际落地路径
+  const rawVideoFile = sd.videoFile || src.videoFile || "";
+  const videoFile = resolveVideoPath(rawVideoFile, src.videoFileMap);
   const clipStart = sd.clipStart ?? src.start ?? 0;
   const clipEnd = sd.clipEnd ?? src.end ?? clipStart + 8;
   const muted = sd.muted !== false;

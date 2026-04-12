@@ -35,6 +35,21 @@ QUALITY_PROFILES = {
         # LLM 的 style catalog 只会看到 id 以此开头的组件
         "style_id_prefix": "slide.anthropic-",
     },
+    "tech_explainer": {
+        "label": "技术解说片（Anthropic 风格）",
+        "description": "米白衬线风格的通用技术视频：talking-head 穿插 screen-clip，硬切，无段数/时长约束",
+        "weights": {
+            "objective": 0.5,
+            "subjective": 0.5,
+        },
+        "theme": "anthropic-cream",
+        # 复用 Anthropic 风格组件库（14 个含 screen-clip / section-title / callout）
+        "style_id_prefix": "slide.anthropic-",
+        # 关闭全局运镜（硬切风格不要额外 pan/zoom）
+        "camera_rig": False,
+        # 默认段间硬切
+        "default_transition": "none",
+    },
 }
 
 
@@ -61,6 +76,10 @@ def resolve_quality_profile(name: str | None) -> dict:
         "theme": profile.get("theme", ""),
         # 可选：style catalog 注入的白名单前缀
         "style_id_prefix": profile.get("style_id_prefix", ""),
+        # 可选：是否启用全局 CameraRig 运镜（None = 走默认）
+        "camera_rig": profile.get("camera_rig"),
+        # 可选：默认段间转场（"none" = 硬切）
+        "default_transition": profile.get("default_transition", ""),
     }
 
 

@@ -67,6 +67,20 @@ def run_capture(cfg: Config, project_id: str) -> int:
                 success += 1
                 continue
 
+        # L1.5: 动态录屏（有 URL 时）
+        urls = _extract_urls(instruction)
+        if urls and _dynamic_record(instruction, narration, rec_path, duration=15.0):
+            click.echo(f"      ✅ L1.5 动态录屏成功")
+            library.add(MaterialEntry(
+                type="capture",
+                path=str(rec_path),
+                keywords=_extract_keywords(instruction),
+                description=instruction[:80],
+                source_project=project_id,
+            ))
+            success += 1
+            continue
+
         # L2: Playwright 自动截图
         screenshots_dir = output_dir / "screenshots" / f"seg_{seg_id}"
         captured = _smart_capture(instruction, narration, screenshots_dir)
@@ -385,6 +399,191 @@ def _is_blocked_page(page) -> bool:
         return any(signal in text_lower for signal in block_signals)
     except Exception:
         return False
+
+
+def _extract_highlight_keywords(narration: str) -> list[str]:
+    """从 narration 中提取高亮关键词：英文术语 + 引号内容。"""
+    keywords: list[str] = []
+
+    # 引号内容
+    quoted = re.findall(r"""[''""](.+?)[''""]""", narration)
+    keywords.extend(quoted)
+
+    # 英文术语（连续英文字母序列 >= 3 字符）
+    english_terms = re.findall(r'[A-Za-z][A-Za-z0-9]{2,}(?:\s+[A-Za-z][A-Za-z0-9]{2,})*', narration)
+    keywords.extend(english_terms)
+
+    # 去重，取最长的 top 5
+    seen: set[str] = set()
+    unique: list[str] = []
+    for kw in keywords:
+        lower = kw.lower()
+        if lower not in seen:
+            seen.add(lower)
+            unique.append(kw)
+    unique.sort(key=len, reverse=True)
+    return unique[:5]
+
+
+def _dynamic_record(
+    instruction: str,
+    narration: str,
+    output_path: Path,
+    duration: float = 15.0,
+) -> bool:
+    """L1.5: Playwright 动态录屏 — 打开 URL、高亮关键词、平滑滚动。
+
+    返回 True 如果录屏成功生成。
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return False
+
+    urls = _extract_urls(instruction)
+    if not urls:
+        return False
+
+    url = urls[0]  # 取第一个 URL
+    highlight_keywords = _extract_highlight_keywords(narration)
+
+    import tempfile
+    import time
+
+    temp_dir = tempfile.mkdtemp(prefix="v2g_dynrec_")
+    temp_path = Path(temp_dir)
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+            )
+            ctx = browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                record_video_dir=str(temp_path),
+                record_video_size={"width": 1920, "height": 1080},
+                user_agent=(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                ),
+                locale="zh-CN",
+            )
+            page = ctx.new_page()
+            page.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
+
+            record_start = time.time()
+
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            except Exception as e:
+                click.echo(f"      ⚠️ 动态录屏导航失败: {e}")
+                ctx.close()
+                browser.close()
+                return False
+
+            page.wait_for_timeout(2000)
+
+            # 记录内容就绪时间（用于后续裁掉加载阶段）
+            content_ready = time.time() - record_start
+
+            # 关闭 cookie banner（尝试多个常见 selector）
+            cookie_selectors = [
+                "button:has-text('Accept')",
+                "button:has-text('accept')",
+                "button:has-text('同意')",
+                "button:has-text('OK')",
+                "button:has-text('Got it')",
+                "[id*='cookie'] button",
+                "[class*='cookie'] button",
+                "[class*='consent'] button",
+            ]
+            for sel in cookie_selectors:
+                try:
+                    btn = page.query_selector(sel)
+                    if btn and btn.is_visible():
+                        btn.click()
+                        page.wait_for_timeout(500)
+                        break
+                except Exception:
+                    pass
+
+            # JS 注入高亮关键词
+            if highlight_keywords:
+                # 转义 JS 字符串
+                kw_js = json.dumps(highlight_keywords, ensure_ascii=False)
+                page.evaluate(f"""(() => {{
+                    const keywords = {kw_js};
+                    const style = document.createElement('style');
+                    style.textContent = `
+                        .v2g-highlight {{
+                            background: linear-gradient(120deg, rgba(255,215,0,0.3) 0%, rgba(255,215,0,0.5) 100%);
+                            padding: 2px 4px;
+                            border-radius: 3px;
+                            transition: background 0.3s;
+                        }}
+                    `;
+                    document.head.appendChild(style);
+
+                    const walker = document.createTreeWalker(
+                        document.body, NodeFilter.SHOW_TEXT
+                    );
+                    const nodes = [];
+                    while (walker.nextNode()) nodes.push(walker.currentNode);
+
+                    for (const node of nodes) {{
+                        let text = node.textContent;
+                        let replaced = false;
+                        for (const kw of keywords) {{
+                            const regex = new RegExp('(' + kw.replace(/[.*+?^${{}}()|[\\]\\\\]/g, '\\\\$&') + ')', 'gi');
+                            if (regex.test(text)) {{
+                                replaced = true;
+                                const span = document.createElement('span');
+                                span.innerHTML = text.replace(regex, '<mark class="v2g-highlight">$1</mark>');
+                                node.parentNode.replaceChild(span, node);
+                                break;
+                            }}
+                        }}
+                    }}
+                }})()""")
+                page.wait_for_timeout(500)
+
+            # 平滑滚动
+            total_scroll_time = max(2.0, duration - content_ready - 2)
+            scroll_steps = int(total_scroll_time / 0.5)
+            for _ in range(min(scroll_steps, 20)):
+                page.evaluate("window.scrollBy({top: window.innerHeight * 0.3, behavior: 'smooth'})")
+                page.wait_for_timeout(500)
+
+            # 等一下让最后的内容稳定
+            page.wait_for_timeout(1000)
+
+            ctx.close()
+            browser.close()
+
+        # 找到录制的 webm 文件
+        webm_files = list(temp_path.glob("*.webm"))
+        if not webm_files:
+            return False
+
+        webm_file = webm_files[0]
+
+        # webm → mp4，裁掉 content_ready 秒
+        from v2g.recorder import webm_to_mp4
+        return webm_to_mp4(
+            webm_file,
+            output_path,
+            trim_start=content_ready,
+            max_duration=duration,
+        )
+
+    except Exception as e:
+        click.echo(f"      ⚠️ 动态录屏失败: {e}")
+        return False
+    finally:
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _extract_keywords(instruction: str) -> list[str]:

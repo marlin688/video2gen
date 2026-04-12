@@ -41,6 +41,10 @@ import "./styles/slide/anthropic-session-detail";
 import "./styles/slide/anthropic-brand-title";
 import "./styles/slide/anthropic-brand-outro";
 import "./styles/slide/anthropic-talking-head";
+import "./styles/slide/anthropic-screen-clip";
+import "./styles/slide/anthropic-section-title";
+import "./styles/slide/anthropic-callout";
+import "./styles/slide/web-scroll";
 
 // terminal (3 styles)
 import "./styles/terminal/aurora";

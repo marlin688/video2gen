@@ -186,6 +186,18 @@ export interface VideoCompositionProps {
   filmGrain?: boolean;
   /** 启用烧入字幕（默认 true） */
   subtitles?: boolean;
+  /**
+   * 默认段间转场覆盖。空字符串 = VideoComposition 的自动轮换 (fade/slide-left/zoom-in/glitch)；
+   * "none" = 硬切，适合 talking-head ↔ screen-clip 的技术解说片。
+   */
+  defaultTransition?: string;
+  /**
+   * 源视频路径 map：原始相对路径 → public/ 下实际落地路径（可能换了扩展名）。
+   * 由 render.mjs 扫描 sources/ 后填充，screen-clip / talking-head 组件通过
+   * scene_data.__source.videoFileMap 读取，把用户写的 "recordings/demo.mov" 解析成
+   * 实际存在的 "recordings/demo.mp4"。
+   */
+  sourceVideoMap?: Record<string, string>;
 }
 
 /** 计算每个 segment 在时间线上的帧范围 */

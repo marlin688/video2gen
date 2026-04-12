@@ -183,3 +183,48 @@ def run_auto_record(cfg: Config, video_id: str) -> int:
 
     click.echo(f"\n✅ 自动录屏完成: {success}/{len(b_segments)}")
     return success
+
+
+def webm_to_mp4(
+    input_path: Path,
+    output_path: Path,
+    trim_start: float = 0,
+    max_duration: float = 0,
+) -> bool:
+    """WebM → H.264 MP4，可选裁剪开头和限制时长。
+
+    Args:
+        input_path: 输入 webm 文件
+        output_path: 输出 mp4 文件
+        trim_start: 裁掉开头 N 秒（跳过页面加载阶段）
+        max_duration: 限制最大时长（0 = 不限制）
+
+    Returns:
+        True 如果转码成功。
+    """
+    ffmpeg = _get_ffmpeg()
+
+    cmd = [ffmpeg, "-y"]
+    if trim_start > 0:
+        cmd += ["-ss", f"{trim_start:.2f}"]
+    cmd += ["-i", str(input_path)]
+    if max_duration > 0:
+        cmd += ["-t", f"{max_duration:.2f}"]
+    cmd += [
+        "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
+               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-pix_fmt", "yuv420p",
+        "-r", "30",
+        "-an",
+        str(output_path),
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=120,
+        )
+        return result.returncode == 0 and output_path.exists()
+    except Exception:
+        return False

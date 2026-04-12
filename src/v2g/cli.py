@@ -57,7 +57,7 @@ def prepare(cfg: Config, video_id_or_url, model, whisper_model, no_whisper):
 @main.command()
 @click.argument("video_id")
 @click.option("--model", default=None, help="脚本生成模型")
-@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand)")
+@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand / tech_explainer)")
 @click.pass_obj
 def script(cfg: Config, video_id, model, profile):
     """Stage 3: AI 生成二创解说脚本"""
@@ -200,7 +200,7 @@ def assemble(cfg: Config, video_id):
 @click.option("--topic", required=True, help="主题名称 (如 'Claude Code技巧')")
 @click.option("--project-id", default=None, help="项目 ID (默认自动生成)")
 @click.option("--model", default=None, help="LLM 模型")
-@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand)")
+@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand / tech_explainer)")
 @click.option("--whisper-model", default="medium", help="Whisper 模型大小")
 @click.pass_obj
 def multi(cfg: Config, urls, topic, project_id, model, profile, whisper_model):
@@ -288,7 +288,7 @@ def multi(cfg: Config, urls, topic, project_id, model, profile, whisper_model):
 @click.option("--topic", "-t", required=True, help="视频主题/标题方向")
 @click.option("--model", default=None, help="LLM 模型")
 @click.option("--duration", default=240, type=int, help="目标视频时长(秒)")
-@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand)")
+@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand / tech_explainer)")
 @click.pass_obj
 def agent_cmd(cfg: Config, project_id, sources, topic, model, duration, profile):
     """AI Agent 智能编排视频脚本 (支持 markdown/文章URL/字幕等多源输入)
@@ -644,7 +644,7 @@ def scout_plan(cfg: Config, skip_notebooklm, duration, topic_index):
 @click.option("--topic-index", "-i", default=None, type=int, help="直接选择第 N 个话题")
 @click.option("--duration", "-d", default=240, type=int, help="目标视频时长秒数 (默认 240)")
 @click.option("--model", default=None, help="LLM 模型")
-@click.option("--profile", default="tutorial_general", help="质量档位 (default / tutorial_general / anthropic_brand)")
+@click.option("--profile", default="tutorial_general", help="质量档位 (default / tutorial_general / anthropic_brand / tech_explainer)")
 @click.option("--skip-download", is_flag=True, help="跳过视频下载（仅用已有 sources/）")
 @click.pass_obj
 def scout_produce(cfg: Config, topic_index, duration, model, profile, skip_download):
@@ -902,7 +902,7 @@ def scout_all(cfg: Config):
 @click.argument("video_id_or_url")
 @click.option("--model", default=None, help="LLM 模型")
 @click.option("--whisper-model", default="medium", help="Whisper 模型大小")
-@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand)")
+@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand / tech_explainer)")
 @click.option("--auto", is_flag=True, default=False, help="全自动模式: 跳过人工审核，B类素材使用终端动画")
 @click.pass_obj
 def run(cfg: Config, video_id_or_url, model, whisper_model, profile, auto):
@@ -990,7 +990,7 @@ def config_list(cfg: Config):
 
 @main.command("eval")
 @click.argument("video_id")
-@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand)")
+@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand / tech_explainer)")
 @click.pass_obj
 def eval_script(cfg: Config, video_id, profile):
     """评估脚本质量（规则化检查，不消耗 LLM 额度）"""

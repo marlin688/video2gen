@@ -128,6 +128,8 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
     sourceChannels = [],
     voiceoverFile,
     availableRecordings = [],
+    defaultTransition = "",
+    sourceVideoMap = {},
   } = props;
   const segments = script.segments;
 
@@ -152,8 +154,9 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
 
     switch (schema) {
       case "slide": {
-        // slide 组件可以通过 scene_data.__source 拿到源视频信息（talking-head 场景用）。
-        // 这样不用扩展 StyleComponentProps 就能让 slide 组件访问 sourceVideoFiles 数组。
+        // slide 组件可以通过 scene_data.__source 拿到源视频信息
+        // (talking-head / screen-clip 场景用)。不扩展 StyleComponentProps
+        // 就能让 slide schema 组件访问 sourceVideoFiles + sourceVideoMap。
         const baseSceneData = seg.slide_content?.scene_data || {};
         const sourceIdx = seg.source_video_index ?? 0;
         const mergedSceneData = {
@@ -161,6 +164,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
           __source: {
             videoFile: sourceVideoFiles[sourceIdx] || "",
             videoFiles: sourceVideoFiles,
+            videoFileMap: sourceVideoMap,
             start: seg.source_start,
             end: seg.source_end,
             channel: sourceChannels[sourceIdx] || "",
@@ -428,8 +432,12 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
 
               const items: React.ReactNode[] = [];
 
-              // 段间转场（第一段之前不加，"none" = 硬切跳过）
-              if (idx > 0 && seg.transition !== "none") {
+              // 段间转场：优先级 seg.transition > props.defaultTransition > 自动轮换。
+              // "none" = 硬切（直接跳过 TransitionSeries.Transition 节点）。
+              const effectiveTransition =
+                (seg.transition as TransitionType | undefined) ||
+                (defaultTransition as TransitionType | undefined);
+              if (idx > 0 && effectiveTransition !== "none") {
                 // 转场帧数不能超过前后 segment 中较短者的时长
                 const prevT = timing[String(prevSeg?.id)];
                 const prevDur = prevT ? Math.round(prevT.duration * fps) : Infinity;
@@ -439,7 +447,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
                     <TransitionSeries.Transition
                       key={`t-${seg.id}`}
                       presentation={resolveTransition(
-                        seg.transition,
+                        effectiveTransition,
                         prevSeg?.type,
                         seg.type,
                         idx,

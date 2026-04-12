@@ -483,6 +483,12 @@ def eval_script(
             category="subjective",
         )
 
+    # --- scene_data 字段名正确性 ---
+    from v2g.scene_data_validator import validate_and_fix_scene_data
+    _, sd_warnings = validate_and_fix_scene_data(script, auto_fix=False)
+    check("scene_data字段名正确", len(sd_warnings) == 0, weight=3,
+          detail="; ".join(sd_warnings[:3]) if sd_warnings else "")
+
     # --- 按 weight 分级汇总 ---
     critical_failed = [c for c in report["checks"] if not c["passed"] and c["weight"] >= 3]
     warning_failed = [c for c in report["checks"] if not c["passed"] and c["weight"] == 2]

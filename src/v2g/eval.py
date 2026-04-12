@@ -274,9 +274,35 @@ def eval_script(
     schemas_used = {_seg_schema(s) for s in segments}
     check(
         "视觉 schema 多样性",
-        len(schemas_used) >= 3,
-        weight=2,
-        detail=f"使用了 {len(schemas_used)} 种 schema: {sorted(schemas_used)}",
+        len(schemas_used) >= 4,
+        weight=3,
+        detail=f"使用了 {len(schemas_used)} 种 schema: {sorted(schemas_used)}（要求 ≥4）",
+        category="objective",
+    )
+
+    # --- 显式 component 覆盖率 ---
+    a_segs = [s for s in segments if s.get("material") == "A"]
+    a_with_component = [s for s in a_segs if s.get("component")]
+    if a_segs:
+        coverage = len(a_with_component) / len(a_segs)
+        check(
+            "A素材段显式指定component",
+            coverage >= 0.8,
+            weight=2,
+            detail=f"{len(a_with_component)}/{len(a_segs)} 个 A 段有 component ({coverage:.0%})",
+            category="objective",
+        )
+
+    # --- image-overlay 使用提醒 ---
+    image_overlay_count = sum(
+        1 for s in segments
+        if (s.get("component", "").startswith("image-overlay") or s.get("image_content"))
+    )
+    check(
+        "配图丰富度(image-overlay)",
+        image_overlay_count >= 1,
+        weight=1,
+        detail=f"当前 {image_overlay_count} 个 image-overlay 段落（建议 2-4 个，用截图/搜图增强视觉）",
         category="subjective",
     )
 

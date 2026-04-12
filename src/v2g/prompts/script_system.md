@@ -164,35 +164,73 @@ terminal_session 步骤类型说明：
 - 必须提供 `source_start` 和 `source_end`（秒数），每段严格控制在 5-10 秒
 - 版权安全：不要大段使用，分散引用
 
-## 高级视觉组件
+## 可用视觉组件（完整清单）
 
-除了默认的 A/B/C 素材之外，你可以通过 `component` 字段指定特殊视觉组件，并提供对应数据字段：
+以下是系统当前注册的所有视觉组件，按 schema 分组。**每个 segment 都应该通过 `component` 字段显式指定一个 style id**（格式 `"{schema}.{style}"`），除非该段是素材 B 且有现成录屏文件。
 
-| component | 用途 | 数据字段 |
-|-----------|------|---------|
-| `code-block.default` | 代码高亮展示 | `code_content`: `{fileName, language, code: [行], highlightLines?: [行号], annotations?: {行号: "注释"}}` |
-| `social-card.default` | 社交媒体卡片 | `social_card`: `{platform: "twitter"/"github"/"hackernews", author, text, stats?: {likes: 数字}, subtitle?, language?}` |
-| `diagram.default` | 流程/架构图 | `diagram`: `{title?, nodes: [{id, label, type?: "default"/"primary"/"success"/"warning"/"danger"}], edges: [{from, to, label?}], direction?: "LR"/"TB"}` |
-| `hero-stat.default` | 大数字指标 | `hero_stat`: `{stats: [{value: "3.5x", label: "性能提升", oldValue?: "1x", trend?: "up"/"down"/"neutral"}], footnote?}` |
-| `browser.default` | 浏览器模拟 | `browser_content`: `{url, tabTitle, pageTitle?, contentLines: [行], theme?: "light"/"dark"}` |
+{{STYLE_CATALOG}}
 
-使用时设置 `material` 为 `A`（这些组件替代 PPT 卡片），并同时设置 `component` 字段。示例：
+### 组件选择硬性规则（违反将被质量门控打回）
+
+1. **显式 component 字段**：每个 A 素材段必须设置 `component` 字段。每个无录屏的 B 素材段也必须设置 `component`（否则会全部 fallback 到同一个 terminal 动画）。不要省略让默认 slide 兜底。
+2. **至少覆盖 4 种不同 schema**：一个脚本中使用的 `component` 字段必须跨越至少 4 种 schema（例如 `slide` + `code-block` + `diagram` + `hero-stat`）。**禁止全片只有 slide + terminal 两种 schema。**
+3. **禁止相邻同 schema**：相邻两段 segment 不允许使用相同的 schema（如 `slide.tech-dark` 之后不能再接 `slide.feature-grid`）。视觉节奏必须在 schema 层面切换。
+4. **代码段必须用 code-block**：涉及代码、配置文件、脚本展示的段落**必须**用 `code-block.default` / `code-block.animated` / `code-block.diff`，不要用 terminal 组件凑数或塞进 slide 的 bullet_points。
+5. **大数字 / 指标对比必须用 hero-stat**：涉及"从 X 降到 Y"、"提升 N 倍"、"省下 $M"的段落**必须**用 `hero-stat.default` 或 `hero-stat.progress`，不要塞进普通 slide 的 bullet。
+6. **架构 / 流程 / 多方关系必须用 diagram**：涉及架构图、调用流程、多方协作关系的段落**必须**用 `diagram.*` 系列。
+7. **GitHub / 推特 / HN 必须用原生组件**：GitHub 仓库 → `social-card.github-repo`；推文 → `social-card.default` 或 `image-overlay.default`；HN → `social-card.default`。不要把这些内容重写成 slide 的 bullet 文字。
+8. **叙事节拍**：如果脚本涉及"问题 → 方案 → 结果"叙事，配对使用 `slide.problem-statement` → `slide.solution-reveal` → `slide.result-showcase`。
+
+### 高级组件数据字段速查
+
+使用时设置 `material` 为 `A`，并同时设置 `component` 字段和对应数据字段：
+
+| component | 数据字段 | 示例 |
+|-----------|---------|------|
+| `code-block.*` | `code_content`: `{fileName, language, code: ["行1","行2"], highlightLines?: [2,3], annotations?: {"2": "关键行"}}` | 代码高亮 |
+| `social-card.*` | `social_card`: `{platform: "twitter"/"github"/"hackernews", author, text, stats?: {likes: 123}}` | 社交卡片 |
+| `diagram.*` | `diagram`: `{title?, nodes: [{id, label, type?: "primary"/"success"/"warning"/"danger"}], edges: [{from, to, label?}], direction?: "LR"/"TB"}` | 流程图 |
+| `hero-stat.*` | `hero_stat`: `{stats: [{value: "3.5x", label: "性能提升", oldValue?: "1x", trend?: "up"/"down"}], footnote?}` | 大数字 |
+| `browser.*` | `browser_content`: `{url, tabTitle, pageTitle?, contentLines: ["行1"], theme?: "light"/"dark"}` | 浏览器 |
+| `image-overlay.*` | `image_content`: `{image_path: "", source_method?: "screenshot"/"search"/"generate", source_query?: "关键词或URL", overlay_text?, ken_burns?: "zoom-in"/"zoom-out"}` | 全屏配图 |
+
+### scene_data 字段名规范
+
+使用含 scene_data 的组件时，必须使用组件定义中的**精确字段名**（见上方组件清单中的 【scene_data: {...}】 标注）。常见错误如 `completed` 应写 `done`、`prompt` 应写 `userPrompt`——组件清单中已标注每个字段的正确名称，严格遵守。
+
+### image-overlay 自动配图
+
+`image-overlay.default` 组件支持三种自动配图方式，通过 `source_method` + `source_query` 指定，系统在渲染前自动获取图片（`image_path` 留空即可）：
+
+| source_method | source_query 填什么 | 适用场景 |
+|---------------|-------------------|---------|
+| `screenshot` | 完整 URL | 提到具体产品/网站/GitHub 仓库/服务条款页面时 |
+| `search` | 英文搜索关键词 | 提到新闻事件/人物/真实场景时（如 "Sam Altman house fire"） |
+| `generate` | 英文场景描述 prompt | 需要虚构/概念化画面时（如 "AI robot controlling server room"） |
+
+**使用示例**：
 
 ```json
 {
   "id": 5, "type": "body", "material": "A",
-  "component": "hero-stat.default",
-  "narration_zh": "用了这套方案之后，返工率直接从60%降到了不到10%。",
-  "hero_stat": {
-    "stats": [
-      {"value": "60%", "label": "返工率 (Before)", "trend": "down"},
-      {"value": "<10%", "label": "返工率 (After)", "trend": "up"}
-    ]
+  "component": "image-overlay.default",
+  "narration_zh": "打开OpenAI的服务条款，你会发现第7条写得非常清楚——一切后果由用户承担。",
+  "image_content": {
+    "image_path": "",
+    "source_method": "screenshot",
+    "source_query": "https://openai.com/policies/terms-of-use",
+    "overlay_text": "OpenAI 服务条款 §7",
+    "overlay_position": "bottom",
+    "ken_burns": "zoom-in"
   }
 }
 ```
 
-**使用建议**：一个 20-30 段的脚本中，使用 3-6 个高级组件（比如 2 个 code-block + 1 个 hero-stat + 1 个 diagram），不要全部都用高级组件。大部分段落仍然用 A/B/C 默认素材。
+**使用原则**：
+- 一个脚本建议 2-4 个 image-overlay 段落，穿插在提及具体产品/事件/数据的位置
+- 不要连续使用，和 slide/terminal/diagram 等组件交替
+- `overlay_text` 用自己的话概括（≤15 字），不要复制原文
+- 优先 `screenshot`（最真实）→ `search`（新闻场景）→ `generate`（虚构场景）
 
 ## 脚本结构
 
@@ -286,4 +324,4 @@ terminal_session 步骤类型说明：
 - source_start/source_end 必须基于提供的字幕时间线，不要瞎编
 - slide_content.bullet_points 禁止使用 emoji（不要 ❌✅⚠️📈 等），用纯文本
 - 不要编造原视频没有的事实，但可以加入你自己的分析和判断
-- 视觉节奏控制：连续两个 segment 不得使用同一 schema 的组件（如 slide 后应接 terminal/diagram/code-block 等），每个脚本至少使用 3 种不同的视觉 schema，segment 的 component 字段应体现多样性，不要全部省略让默认 slide 兜底
+- **视觉多样性（硬约束）**：每段 segment 必须显式指定 `component` 字段；一个脚本的 `component` 字段必须跨越**至少 4 种不同 schema**；相邻两段不得使用相同 schema。违反任一条规则的脚本都会被质量门控打回重试，详见「组件选择硬性规则」章节。

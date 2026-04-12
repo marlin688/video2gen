@@ -155,35 +155,18 @@ terminal_session 步骤类型说明：
 - 可以从不同视频中交叉引用
 - 版权安全：不要大段使用，分散引用
 
-## 高级视觉组件
+## 可用视觉组件（完整清单）
 
-除了默认的 A/B/C 素材之外，你可以通过 `component` 字段指定特殊视觉组件，并提供对应数据字段：
+以下是系统当前注册的所有视觉组件。**每个 A 素材段必须通过 `component` 字段显式指定一个 style id**。
 
-| component | 用途 | 数据字段 |
-|-----------|------|---------|
-| `code-block.default` | 代码高亮展示 | `code_content`: `{fileName, language, code: [行], highlightLines?: [行号], annotations?: {行号: "注释"}}` |
-| `social-card.default` | 社交媒体卡片 | `social_card`: `{platform: "twitter"/"github"/"hackernews", author, text, stats?: {likes: 数字}, subtitle?, language?}` |
-| `diagram.default` | 流程/架构图 | `diagram`: `{title?, nodes: [{id, label, type?: "default"/"primary"/"success"/"warning"/"danger"}], edges: [{from, to, label?}], direction?: "LR"/"TB"}` |
-| `hero-stat.default` | 大数字指标 | `hero_stat`: `{stats: [{value: "3.5x", label: "性能提升", oldValue?: "1x", trend?: "up"/"down"/"neutral"}], footnote?}` |
-| `browser.default` | 浏览器模拟 | `browser_content`: `{url, tabTitle, pageTitle?, contentLines: [行], theme?: "light"/"dark"}` |
+{{STYLE_CATALOG}}
 
-使用时设置 `material` 为 `A`（这些组件替代 PPT 卡片），并同时设置 `component` 字段。示例：
+### 组件选择规则
 
-```json
-{
-  "id": 5, "type": "body", "material": "A",
-  "component": "hero-stat.default",
-  "narration_zh": "用了这套方案之后，返工率直接从60%降到了不到10%。",
-  "hero_stat": {
-    "stats": [
-      {"value": "60%", "label": "返工率 (Before)", "trend": "down"},
-      {"value": "<10%", "label": "返工率 (After)", "trend": "up"}
-    ]
-  }
-}
-```
-
-**使用建议**：**每个脚本必须使用至少 2 种不同的高级组件**（如 1 个 code-block + 1 个 hero-stat 或 diagram）。当没有 C 素材（原视频片段）时，必须使用至少 3 种不同高级组件来保证视觉多样性。大部分段落仍然用 A/B/C 默认素材，不要全部都用高级组件。
+1. **显式 component**：每个 A 段必须设置 `component`。不要省略让默认 slide 兜底。
+2. **至少 4 种 schema**：一个脚本的 component 必须跨越至少 4 种 schema（如 slide + code-block + diagram + hero-stat）。
+3. **禁止相邻同 schema**：相邻两段不得使用相同 schema。
+4. **代码 → code-block**，**大数字 → hero-stat**，**架构图 → diagram**，**社交媒体 → social-card**。不要把这些内容塞进 slide 的 bullet 文字。
 
 ## 脚本结构
 

@@ -299,7 +299,12 @@ def run_script(
         raise click.ClickException(str(e))
     profile_prompt = load_profile_prompt(profile["name"])
 
-    system_prompt = _read_prompt("script_system.md")
+    from v2g.style_catalog import inject_catalog
+    style_id_prefix = profile.get("style_id_prefix") or None
+    system_prompt = inject_catalog(
+        _read_prompt("script_system.md"),
+        id_prefix=style_id_prefix,
+    )
     if profile_prompt:
         system_prompt = (
             system_prompt
@@ -444,7 +449,12 @@ def run_multi_script(
         raise click.ClickException(str(e))
     profile_prompt = load_profile_prompt(profile["name"])
 
-    system_prompt = _read_prompt("script_multi_system.md")
+    from v2g.style_catalog import inject_catalog as _inject_catalog
+    style_id_prefix_m = profile.get("style_id_prefix") or None
+    system_prompt = _inject_catalog(
+        _read_prompt("script_multi_system.md"),
+        id_prefix=style_id_prefix_m,
+    )
     if profile_prompt:
         system_prompt = (
             system_prompt

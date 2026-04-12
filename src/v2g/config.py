@@ -48,6 +48,11 @@ class Config:
     telegram_chat_id: str = ""
     youtube_api_key: str = ""
 
+    # Bilibili
+    bilibili_sessdata: str = ""
+    bilibili_bili_jct: str = ""
+    bilibili_retention_api: str = ""  # 自定义留存曲线 API endpoint
+
     @classmethod
     def load(cls, env_path: str | None = None) -> "Config":
         """从 .env 文件加载配置。"""
@@ -81,6 +86,9 @@ class Config:
             telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
             youtube_api_key=os.environ.get("YOUTUBE_API_KEY", ""),
+            bilibili_sessdata=os.environ.get("BILIBILI_SESSDATA", ""),
+            bilibili_bili_jct=os.environ.get("BILIBILI_BILI_JCT", ""),
+            bilibili_retention_api=os.environ.get("BILIBILI_RETENTION_API", ""),
         )
 
         # 应用平台切换（复用 lecture2note 的模式）

@@ -489,6 +489,9 @@ def eval_script(
     check("scene_data字段名正确", len(sd_warnings) == 0, weight=3,
           detail="; ".join(sd_warnings[:3]) if sd_warnings else "")
 
+    # --- 历史 pattern 比对（info 级别，仅在有足够数据时触发） ---
+    _add_historical_checks(report, script, check)
+
     # --- 按 weight 分级汇总 ---
     critical_failed = [c for c in report["checks"] if not c["passed"] and c["weight"] >= 3]
     warning_failed = [c for c in report["checks"] if not c["passed"] and c["weight"] == 2]
@@ -509,6 +512,81 @@ def eval_script(
     report["weighted_pct"] = weighted_pct
 
     return report
+
+
+def _add_historical_checks(report: dict, script: dict, check) -> None:
+    """基于历史高表现视频数据添加 info 级别的 pattern 比对。
+
+    只在 assets.db 有 ≥3 个有 stats+features 的视频时触发。
+    所有检查为 info（weight=1），不影响 pass/fail 判定。
+    """
+    from pathlib import Path
+
+    db_path = Path("output/assets.db")
+    if not db_path.exists():
+        return
+
+    try:
+        from v2g.asset_store import AssetStore
+        with AssetStore(db_path) as store:
+            patterns = store.get_high_performing_patterns()
+            if not patterns:
+                return
+
+            segments = script.get("segments", [])
+            n = len(segments)
+            if n == 0:
+                return
+
+            # 当前脚本特征
+            materials = [s.get("material", "A") for s in segments]
+            cur_b_ratio = materials.count("B") / n
+
+            schemas = set()
+            for seg in segments:
+                comp = seg.get("component", "")
+                if comp:
+                    schemas.add(comp.split(".")[0])
+                elif seg.get("terminal_session"):
+                    schemas.add("terminal")
+                elif seg.get("slide_content"):
+                    schemas.add("slide")
+            cur_diversity = len(schemas)
+
+            narr_lens = [len(s.get("narration_zh", "") or "") for s in segments]
+            cur_avg_narr = sum(narr_lens) / n if n else 0
+
+            avg_b = patterns["avg_material_b"]
+            avg_div = patterns["avg_schema_diversity"]
+            avg_narr = patterns["avg_narration_len"]
+            sample = patterns["sample_size"]
+
+            # B 素材比例偏差
+            if abs(cur_b_ratio - avg_b) > 0.15:
+                check(
+                    f"[历史] B素材比例偏离高表现均值",
+                    False, weight=1,
+                    detail=f"当前 {cur_b_ratio:.0%} vs 高表现视频均值 {avg_b:.0%} (n={sample})"
+                )
+
+            # Schema 多样性偏差
+            if cur_diversity < avg_div - 1:
+                check(
+                    f"[历史] Schema多样性低于高表现均值",
+                    False, weight=1,
+                    detail=f"当前 {cur_diversity} 种 vs 高表现视频均值 {avg_div:.1f} 种 (n={sample})"
+                )
+
+            # 旁白密度偏差
+            if cur_avg_narr > 0 and avg_narr > 0 and abs(cur_avg_narr - avg_narr) > 20:
+                direction = "过长" if cur_avg_narr > avg_narr else "过短"
+                check(
+                    f"[历史] 旁白平均字数{direction}",
+                    False, weight=1,
+                    detail=f"当前 {cur_avg_narr:.0f} 字 vs 高表现视频均值 {avg_narr:.0f} 字 (n={sample})"
+                )
+    except Exception:
+        pass  # 历史检查不应阻塞主流程
 
 
 def eval_score_pct(report: dict) -> float:

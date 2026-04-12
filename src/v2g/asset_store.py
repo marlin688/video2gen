@@ -102,6 +102,51 @@ class AssetStore:
 
     def _init_tables(self):
         self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS video_stats (
+                bvid TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                title TEXT DEFAULT '',
+                view_count INTEGER DEFAULT 0,
+                like_count INTEGER DEFAULT 0,
+                coin_count INTEGER DEFAULT 0,
+                fav_count INTEGER DEFAULT 0,
+                share_count INTEGER DEFAULT 0,
+                danmaku_count INTEGER DEFAULT 0,
+                reply_count INTEGER DEFAULT 0,
+                duration INTEGER DEFAULT 0,
+                interact_rate INTEGER DEFAULT 0,
+                crash_rate INTEGER DEFAULT 0,
+                play_trans_fan_rate INTEGER DEFAULT 0,
+                viewer_tags TEXT DEFAULT '[]',
+                tip TEXT DEFAULT '',
+                fetched_at TEXT
+            )
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS video_features (
+                video_id TEXT PRIMARY KEY,
+                title TEXT DEFAULT '',
+                segment_count INTEGER DEFAULT 0,
+                material_a_ratio REAL DEFAULT 0,
+                material_b_ratio REAL DEFAULT 0,
+                material_c_ratio REAL DEFAULT 0,
+                schema_diversity INTEGER DEFAULT 0,
+                schemas_used TEXT DEFAULT '[]',
+                avg_narration_len REAL DEFAULT 0,
+                max_narration_len INTEGER DEFAULT 0,
+                min_narration_len INTEGER DEFAULT 0,
+                has_terminal INTEGER DEFAULT 0,
+                has_image_overlay INTEGER DEFAULT 0,
+                has_web_video INTEGER DEFAULT 0,
+                has_code_block INTEGER DEFAULT 0,
+                has_diagram INTEGER DEFAULT 0,
+                has_social_card INTEGER DEFAULT 0,
+                hook_type TEXT DEFAULT '',
+                total_duration_hint REAL DEFAULT 0,
+                extracted_at TEXT
+            )
+        """)
+        self._conn.execute("""
             CREATE TABLE IF NOT EXISTS assets (
                 clip_id TEXT PRIMARY KEY,
                 source_video TEXT NOT NULL,
@@ -297,6 +342,171 @@ class AssetStore:
                 f"freshness={a.freshness}"
             )
         return "\n".join(lines)
+
+    # ── video_stats 方法 ──────────────────────────────────
+
+    def upsert_video_stats(
+        self,
+        bvid: str,
+        project_id: str,
+        *,
+        title: str = "",
+        view_count: int = 0,
+        like_count: int = 0,
+        coin_count: int = 0,
+        fav_count: int = 0,
+        share_count: int = 0,
+        danmaku_count: int = 0,
+        reply_count: int = 0,
+        duration: int = 0,
+        interact_rate: int = 0,
+        crash_rate: int = 0,
+        play_trans_fan_rate: int = 0,
+        viewer_tags: list[str] | None = None,
+        tip: str = "",
+    ) -> None:
+        """插入或更新视频级别的 stats。"""
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """INSERT OR REPLACE INTO video_stats
+               (bvid, project_id, title, view_count, like_count, coin_count,
+                fav_count, share_count, danmaku_count, reply_count, duration,
+                interact_rate, crash_rate, play_trans_fan_rate, viewer_tags, tip,
+                fetched_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (bvid, project_id, title, view_count, like_count, coin_count,
+             fav_count, share_count, danmaku_count, reply_count, duration,
+             interact_rate, crash_rate, play_trans_fan_rate,
+             json.dumps(viewer_tags or [], ensure_ascii=False), tip, now),
+        )
+        self._conn.commit()
+
+    def get_video_stats(self, bvid: str) -> dict | None:
+        """按 bvid 获取 video stats。"""
+        row = self._conn.execute(
+            "SELECT * FROM video_stats WHERE bvid = ?", (bvid,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_video_stats(self) -> list[dict]:
+        """列出所有 video stats。"""
+        rows = self._conn.execute(
+            "SELECT * FROM video_stats ORDER BY fetched_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def aggregate_video_performance(self) -> dict:
+        """聚合视频级别表现指标，用于 LLM context。
+
+        返回: {
+            "total_videos": int,
+            "avg_like_rate": float,  # 平均点赞率 (like/view)
+            "avg_coin_rate": float,  # 平均投币率
+            "avg_fav_rate": float,   # 平均收藏率
+        }
+        """
+        row = self._conn.execute("""
+            SELECT COUNT(*) as cnt,
+                   AVG(CASE WHEN view_count > 0
+                        THEN CAST(like_count AS REAL) / view_count ELSE 0 END) as avg_like_rate,
+                   AVG(CASE WHEN view_count > 0
+                        THEN CAST(coin_count AS REAL) / view_count ELSE 0 END) as avg_coin_rate,
+                   AVG(CASE WHEN view_count > 0
+                        THEN CAST(fav_count AS REAL) / view_count ELSE 0 END) as avg_fav_rate
+            FROM video_stats
+            WHERE view_count > 0
+        """).fetchone()
+        if not row or row["cnt"] == 0:
+            return {}
+        return {
+            "total_videos": row["cnt"],
+            "avg_like_rate": round(row["avg_like_rate"], 4),
+            "avg_coin_rate": round(row["avg_coin_rate"], 4),
+            "avg_fav_rate": round(row["avg_fav_rate"], 4),
+        }
+
+    def all_bvids(self) -> list[tuple[str, str]]:
+        """返回所有 (bvid, project_id) 对。"""
+        rows = self._conn.execute(
+            "SELECT bvid, project_id FROM video_stats"
+        ).fetchall()
+        return [(r["bvid"], r["project_id"]) for r in rows]
+
+    # ── video_features 方法 ────────────────────────────────
+
+    def upsert_video_features(self, feat) -> None:
+        """插入或更新视频特征。feat: VideoFeatures dataclass。"""
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """INSERT OR REPLACE INTO video_features
+               (video_id, title, segment_count,
+                material_a_ratio, material_b_ratio, material_c_ratio,
+                schema_diversity, schemas_used, avg_narration_len,
+                max_narration_len, min_narration_len,
+                has_terminal, has_image_overlay, has_web_video,
+                has_code_block, has_diagram, has_social_card,
+                hook_type, total_duration_hint, extracted_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                feat.video_id, feat.title, feat.segment_count,
+                feat.material_a_ratio, feat.material_b_ratio, feat.material_c_ratio,
+                feat.schema_diversity,
+                json.dumps(feat.schemas_used, ensure_ascii=False),
+                feat.avg_narration_len,
+                feat.max_narration_len, feat.min_narration_len,
+                int(feat.has_terminal), int(feat.has_image_overlay),
+                int(feat.has_web_video), int(feat.has_code_block),
+                int(feat.has_diagram), int(feat.has_social_card),
+                feat.hook_type, feat.total_duration_hint, now,
+            ),
+        )
+        self._conn.commit()
+
+    def get_high_performing_patterns(self) -> dict | None:
+        """关联 video_stats + video_features，返回高互动视频的平均特征。
+
+        "高互动" = like_rate (like/view) 高于中位数的视频。
+        需要至少 3 个有 stats + features 的视频。
+        """
+        rows = self._conn.execute("""
+            SELECT f.*, s.view_count, s.like_count, s.interact_rate, s.crash_rate
+            FROM video_features f
+            JOIN video_stats s ON f.video_id = s.project_id
+            WHERE s.view_count > 0
+            ORDER BY CAST(s.like_count AS REAL) / s.view_count DESC
+        """).fetchall()
+
+        if len(rows) < 3:
+            return None
+
+        # 取前半部分作为"高表现"组
+        top_n = max(1, len(rows) // 2)
+        top_rows = rows[:top_n]
+
+        def avg(key):
+            vals = [r[key] for r in top_rows if r[key] is not None]
+            return round(sum(vals) / len(vals), 2) if vals else 0
+
+        # 统计 schema 使用频率
+        schema_freq: dict[str, int] = {}
+        for r in top_rows:
+            schemas = json.loads(r["schemas_used"]) if r["schemas_used"] else []
+            for s in schemas:
+                schema_freq[s] = schema_freq.get(s, 0) + 1
+
+        top_schemas = sorted(schema_freq.items(), key=lambda x: -x[1])
+
+        return {
+            "sample_size": top_n,
+            "total_videos": len(rows),
+            "avg_segment_count": avg("segment_count"),
+            "avg_material_a": avg("material_a_ratio"),
+            "avg_material_b": avg("material_b_ratio"),
+            "avg_schema_diversity": avg("schema_diversity"),
+            "avg_narration_len": avg("avg_narration_len"),
+            "avg_crash_rate": avg("crash_rate"),
+            "schema_ranking": [(s, f"{c}/{top_n}") for s, c in top_schemas[:6]],
+        }
 
     def close(self):
         self._conn.close()

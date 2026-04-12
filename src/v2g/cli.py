@@ -1072,6 +1072,33 @@ def assets_ingest(cfg: Config, project_id):
         click.echo(f"✅ 入库 {count} 个片段，素材库总量: {total}")
 
 
+@assets.command("extract")
+@click.argument("project_id")
+@click.pass_obj
+def assets_extract(cfg: Config, project_id):
+    """提取脚本结构特征 → 写入 assets.db（用于历史 pattern 分析）"""
+    from v2g.asset_store import AssetStore
+    from v2g.feature_extractor import extract_features
+
+    script_path = cfg.output_dir / project_id / "script.json"
+    if not script_path.exists():
+        raise click.ClickException(f"script.json 不存在: {script_path}")
+
+    feat = extract_features(script_path, project_id)
+    click.echo(f"📊 脚本特征: {feat.segment_count} 段, "
+               f"A:{feat.material_a_ratio:.0%} B:{feat.material_b_ratio:.0%} C:{feat.material_c_ratio:.0%}, "
+               f"{feat.schema_diversity} 种 schema")
+    click.echo(f"   旁白: 均 {feat.avg_narration_len:.0f} 字, "
+               f"范围 [{feat.min_narration_len}, {feat.max_narration_len}]")
+    click.echo(f"   Schema: {', '.join(feat.schemas_used)}")
+    click.echo(f"   Hook: {feat.hook_type}")
+
+    db_path = cfg.output_dir / "assets.db"
+    with AssetStore(db_path) as store:
+        store.upsert_video_features(feat)
+    click.echo("   ✅ 特征已写入 assets.db")
+
+
 @assets.command("refresh")
 @click.pass_obj
 def assets_refresh(cfg: Config):
@@ -1127,6 +1154,148 @@ def assets_annotate(cfg: Config, project_id, retention_csv):
     with AssetStore(db_path) as store:
         results = annotate_retention(cfg, project_id, Path(retention_csv), store)
         print_retention_report(results, project_id)
+
+
+@assets.command("fetch")
+@click.argument("project_id")
+@click.option("--bvid", required=True, help="B站 BV 号或视频链接")
+@click.pass_obj
+def assets_fetch(cfg: Config, project_id, bvid):
+    """拉取 B站视频数据：公开 stats + 创作中心诊断(可选)"""
+    from v2g.asset_store import AssetStore
+    from v2g.bilibili import fetch_video_stats, fetch_play_diagnosis, extract_bvid
+    from v2g.checkpoint import PipelineState
+
+    bv = extract_bvid(bvid)
+    if not bv:
+        raise click.ClickException(f"无法解析 BV 号: {bvid}")
+
+    # 1. 公开 stats
+    click.echo(f"📊 获取视频数据: {bv}")
+    stats = fetch_video_stats(bv)
+    if not stats:
+        raise click.ClickException("获取视频数据失败")
+
+    click.echo(f"   标题: {stats.title}")
+    click.echo(f"   播放: {stats.view_count:,}  点赞: {stats.like_count:,}  "
+               f"投币: {stats.coin_count:,}  收藏: {stats.fav_count:,}")
+
+    # 2. 创作中心诊断（可选）
+    diag = None
+    if cfg.bilibili_sessdata:
+        click.echo("🔄 获取创作中心诊断...")
+        diag = fetch_play_diagnosis(bv, cfg.bilibili_sessdata, cfg.bilibili_bili_jct)
+        if diag:
+            click.echo(f"   互动率: {diag.interact_rate / 100:.2f}%  "
+                       f"流失率: {diag.crash_rate / 100:.2f}%  "
+                       f"播转粉: {diag.play_trans_fan_rate / 100:.2f}%")
+            if diag.viewer_tags:
+                click.echo(f"   受众标签: {', '.join(diag.viewer_tags[:5])}")
+            if diag.tip:
+                click.echo(f"   诊断: {diag.tip}")
+        else:
+            click.echo("   ⚠️ 诊断数据未获取到")
+    else:
+        click.echo("   💡 配置 BILIBILI_SESSDATA 可获取互动率/流失率/受众标签")
+
+    # 3. 写入 DB
+    db_path = cfg.output_dir / "assets.db"
+    with AssetStore(db_path) as store:
+        store.upsert_video_stats(
+            bvid=bv,
+            project_id=project_id,
+            title=stats.title,
+            view_count=stats.view_count,
+            like_count=stats.like_count,
+            coin_count=stats.coin_count,
+            fav_count=stats.fav_count,
+            share_count=stats.share_count,
+            danmaku_count=stats.danmaku_count,
+            reply_count=stats.reply_count,
+            duration=stats.duration,
+            interact_rate=diag.interact_rate if diag else 0,
+            crash_rate=diag.crash_rate if diag else 0,
+            play_trans_fan_rate=diag.play_trans_fan_rate if diag else 0,
+            viewer_tags=diag.viewer_tags if diag else [],
+            tip=diag.tip if diag else "",
+        )
+        click.echo("   ✅ 数据已写入 assets.db")
+
+    # 4. 保存 bvid 到 checkpoint
+    state = PipelineState.load(cfg.output_dir, project_id)
+    if not state.bvid:
+        state.bvid = bv
+        state.save(cfg.output_dir)
+        click.echo(f"   ✅ BV 号已存入 checkpoint: {bv}")
+
+
+@assets.command("fetch-all")
+@click.pass_obj
+def assets_fetch_all(cfg: Config):
+    """批量更新所有已关联 BV 号的视频数据"""
+    from v2g.asset_store import AssetStore
+    from v2g.bilibili import fetch_video_stats
+    import time
+
+    db_path = cfg.output_dir / "assets.db"
+    if not db_path.exists():
+        click.echo("素材库为空，请先用 assets fetch 关联视频")
+        return
+
+    with AssetStore(db_path) as store:
+        pairs = store.all_bvids()
+        if not pairs:
+            # 也从 checkpoint 中扫描
+            pairs = _scan_bvids_from_checkpoints(cfg)
+            if not pairs:
+                click.echo("未找到任何已关联的 BV 号")
+                return
+
+        click.echo(f"📊 批量更新 {len(pairs)} 个视频...")
+        updated = 0
+        for i, (bvid, project_id) in enumerate(pairs):
+            if i > 0:
+                time.sleep(1.0)
+            stats = fetch_video_stats(bvid)
+            if stats:
+                store.upsert_video_stats(
+                    bvid=bvid,
+                    project_id=project_id,
+                    title=stats.title,
+                    view_count=stats.view_count,
+                    like_count=stats.like_count,
+                    coin_count=stats.coin_count,
+                    fav_count=stats.fav_count,
+                    share_count=stats.share_count,
+                    danmaku_count=stats.danmaku_count,
+                    reply_count=stats.reply_count,
+                    duration=stats.duration,
+                )
+                click.echo(f"   ✅ {bvid} ({project_id}): {stats.view_count:,} 播放")
+                updated += 1
+            else:
+                click.echo(f"   ⚠️ {bvid} 获取失败")
+
+        click.echo(f"\n✅ 更新完成: {updated}/{len(pairs)} 个视频")
+
+
+def _scan_bvids_from_checkpoints(cfg: Config) -> list[tuple[str, str]]:
+    """从 output/ 下的 checkpoint.json 中扫描 bvid。"""
+    import json
+    pairs = []
+    output_dir = cfg.output_dir
+    if not output_dir.exists():
+        return pairs
+    for cp_path in output_dir.glob("*/checkpoint.json"):
+        try:
+            data = json.loads(cp_path.read_text(encoding="utf-8"))
+            bvid = data.get("bvid", "")
+            if bvid:
+                project_id = data.get("project_id") or data.get("video_id") or cp_path.parent.name
+                pairs.append((bvid, project_id))
+        except Exception:
+            continue
+    return pairs
 
 
 @assets.command("context")

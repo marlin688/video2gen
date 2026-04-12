@@ -15,6 +15,7 @@ import click
 from v2g.config import Config
 from v2g.checkpoint import PipelineState
 from v2g.quality_profile import resolve_quality_profile, load_profile_prompt
+from v2g.asset_context import build_asset_context
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -959,6 +960,11 @@ def run_agent(
         if profile_prompt:
             click.echo(f"   🧪 应用质量档位: {profile['name']}")
             system_prompt += "\n\n## 质量档位约束\n" + profile_prompt
+
+        # 注入素材库历史反馈（留存表现 + 可复用素材）
+        asset_ctx = build_asset_context(cfg)
+        if asset_ctx:
+            system_prompt += "\n\n" + asset_ctx
 
         from v2g.llm import call_llm
         from v2g.scriptwriter import _extract_json, _generate_script_md, _generate_recording_guide

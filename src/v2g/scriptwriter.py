@@ -12,6 +12,7 @@ from v2g.config import Config
 from v2g.checkpoint import PipelineState
 from v2g.llm import call_llm
 from v2g.quality_profile import resolve_quality_profile, load_profile_prompt
+from v2g.asset_context import build_asset_context
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -286,6 +287,11 @@ def run_script(
         user_parts.append(f"\n## 视频摘要\n")
         user_parts.append(summary_path.read_text(encoding="utf-8"))
 
+    # 注入素材库历史反馈（留存表现 + 可复用素材）
+    asset_ctx = build_asset_context(cfg)
+    if asset_ctx:
+        user_parts.append(f"\n{asset_ctx}")
+
     user_message = "\n".join(user_parts)
     try:
         profile = resolve_quality_profile(quality_profile)
@@ -425,6 +431,11 @@ def run_multi_script(
             user_parts.append(f"中文字幕:\n{zh_text}")
         else:
             user_parts.append("中文字幕: 不可用")
+
+    # 注入素材库历史反馈（留存表现 + 可复用素材）
+    asset_ctx = build_asset_context(cfg)
+    if asset_ctx:
+        user_parts.append(f"\n{asset_ctx}")
 
     user_message = "\n".join(user_parts)
     try:

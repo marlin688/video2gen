@@ -13,7 +13,7 @@ sources/{video_id}/              ← 输入素材 (下载的视频 + 字幕)
     video.mp4, subtitle_en.srt, subtitle_zh.srt
 
 output/{project_id}/             ← 项目工作目录
-    checkpoint.json              ← 流水线状态 (含 cost_summary)
+    checkpoint.json              ← 流水线状态 (含 cost_summary, bvid, published_at)
     script.json, script.md       ← 脚本 (顶层方便引用)
     script_meta.json             ← 生成元数据 (模型、prompt hash、时间戳)
     recording_guide.md
@@ -81,6 +81,9 @@ v2g assets refresh                        # Monthly: mark stale assets (product_
 v2g assets stats                          # Asset library statistics + engagement aggregation
 v2g assets context [--limit N]            # Output LLM-ready asset list for script generation
 v2g assets annotate <project_id> --retention <csv>  # Map B站 retention curve to segment scores
+v2g assets fetch <project_id> --bvid BVxxx  # Fetch B站 stats + creator diagnostics → assets.db
+v2g assets fetch-all                      # Batch update all linked videos' stats
+v2g assets extract <project_id>           # Extract script structural features → assets.db
 ```
 
 ### Remotion (from `remotion-video/`)
@@ -321,6 +324,9 @@ See `.env.example` for the full list. Notable variables:
 - `ARTICLE_RSS_URLS` — comma-separated RSS feed URLs
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — Telegram push notifications
 - `YOUTUBE_API_KEY` — YouTube Data API v3 (optional, for ideation competitive analysis)
+- `BILIBILI_SESSDATA` — B站 SESSDATA cookie (for creator dashboard diagnostics)
+- `BILIBILI_BILI_JCT` — B站 bili_jct cookie (csrf token, paired with SESSDATA)
+- `BILIBILI_RETENTION_API` — custom retention API endpoint (override if default path changes)
 
 ### Global Segment Animation
 
@@ -334,6 +340,11 @@ Both effects apply globally — no per-component changes needed. All 30+ registe
 
 SQLite-based reusable asset library at `output/assets.db`. Follows `scout/store.py` patterns.
 
+**Three tables**:
+- `assets` — segment-level clips with visual_type/mood/product tags + engagement_score
+- `video_stats` — video-level B站 metrics (views, likes, coins, interact_rate, crash_rate, viewer_tags)
+- `video_features` — script structural features (segment_count, material ratios, schema_diversity, narration stats)
+
 **Enum tag system** (hardcoded, no free-form values):
 - `visual_type`: screen_recording, product_ui, terminal, browser, code_editor, diagram, chart, text_slide, person, screenshot, image_overlay, web_video
 - `product`: claude, claude-code, cursor, github, vscode, chatgpt, openai, anthropic, google, deepseek, gemini, other
@@ -343,9 +354,21 @@ SQLite-based reusable asset library at `output/assets.db`. Follows `scout/store.
 **Lifecycle**:
 1. **Ingest** (`asset_ingest.py`): After render, `v2g assets ingest` reads script.json + timing.json → ffmpeg cuts video by segment → auto-tags from script metadata → SQLite insert
 2. **Search** (`AssetStore.search()`): Tag-based hard filter, ordered by `captured_date` DESC (newer assets first)
-3. **Context injection** (`asset_context.py`): `build_asset_context()` generates LLM-ready text listing available assets + engagement stats, for injection into script generation prompts
+3. **Context injection** (`asset_context.py`): `build_asset_context()` generates LLM-ready text listing available assets + engagement stats + high-performing patterns, for injection into script generation prompts (`scriptwriter.py` and `agent.py`)
 4. **Freshness** (`AssetStore.mark_stale()`): product_ui/screenshot expire at 3 months, terminal/browser at 6 months, diagram/chart/text_slide are evergreen
 5. **Retention feedback** (`retention.py`): Maps B站 retention CSV to segment engagement scores (-1/0/1), stored per-asset for data-driven optimization
+6. **B站 data fetch** (`bilibili.py`): Public API (views/likes/coins) + creator dashboard diagnostics (interact_rate/crash_rate/viewer_tags). Requires `BILIBILI_SESSDATA` + `BILIBILI_BILI_JCT` for diagnostics.
+7. **Feature extraction** (`feature_extractor.py`): Extracts 17 structural features from script.json (material ratios, schema diversity, narration density, component usage). `get_high_performing_patterns()` correlates features with video_stats to identify winning structures.
+
+**Self-evolution feedback loop**:
+```
+v2g assets fetch <project> --bvid BVxxx   → pull B站 stats + diagnostics
+v2g assets extract <project>               → extract script structural features
+                                            → data accumulates in assets.db
+                                            → eval.py auto-compares against historical patterns (≥3 videos)
+                                            → build_asset_context() injects high-performing patterns into LLM
+                                            → next script generation biases toward winning structures
+```
 
 **Asset preprocessing** (`asset_normalize.py`): Normalizes external assets to 1920x1080 H.264 — supports center-crop or Gaussian blur background fill for mismatched aspect ratios.
 
@@ -364,7 +387,7 @@ SQLite-based reusable asset library at `output/assets.db`. Follows `scout/store.
 
 - **Chinese-only narration**: `narration_zh` is the only narration field. TTS voices (`zh-CN-YunxiNeural`, MiniMax Chinese voices), prompts, and eval rules all assume Chinese. Multi-language support requires schema changes.
 - **Remotion license**: Remotion framework uses a [commercial license](https://remotion.dev/license). Free for personal use and companies with <3 employees. SaaS/larger teams require a paid license.
-- **Eval blind spots**: `eval.py` only checks structural rules (segment count, material ratios, character count, punctuation). No semantic quality assessment (narrative coherence, hook effectiveness, terminology consistency).
+- **Eval blind spots**: `eval.py` checks structural rules + historical pattern comparison (when ≥3 videos have stats+features). No semantic quality assessment (narrative coherence, hook effectiveness, terminology consistency).
 - **Render performance**: No benchmarks recorded. `preview.mjs` claims "10x+ faster than full render" but no timing data. Full Remotion render for 5-8 min video is significantly slower than FFmpeg path.
 - **No test coverage for LLM/TTS/pipeline**: Only `eval.py` and `schema.py` have unit tests. Core modules (`llm.py`, `agent.py`, `tts.py`) require real API keys and are not easily testable without mocks.
 

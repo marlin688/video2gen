@@ -118,6 +118,19 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
         return
 
     script = json.loads(script_path.read_text(encoding="utf-8"))
+
+    # 自动修复脚本结构问题（在 eval 之前）
+    from v2g.script_fixer import fix_script
+    project_dir = cfg.output_dir / video_id
+    script, fix_logs = fix_script(script, project_dir)
+    if fix_logs:
+        click.echo(f"\n🔧 脚本结构修复: {len(fix_logs)} 处")
+        for log in fix_logs:
+            click.echo(f"   {log}")
+        script_path.write_text(
+            json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
     report = eval_script(script, video_id, quality_profile=quality_profile)
     pct = eval_score_pct(report)
     blocking_warnings = get_blocking_warnings(report)

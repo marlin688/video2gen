@@ -11,7 +11,7 @@
  * - 可选轻微随机旋转 + 噪点纹理增强手工感
  */
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { AbsoluteFill, Img, staticFile, useCurrentFrame } from "remotion";
 
 export interface FlashMemeProps {
@@ -90,6 +90,13 @@ export const FlashMeme: React.FC<FlashMemeProps> = ({
     [],
   );
 
+  const [imgError, setImgError] = useState(false);
+
+  // 图片不存在或加载失败 → 不渲染（静默跳过）
+  if (!imageFileName || imgError) {
+    return null;
+  }
+
   return (
     <AbsoluteFill
       style={{
@@ -100,7 +107,11 @@ export const FlashMeme: React.FC<FlashMemeProps> = ({
         alignItems: "center",
       }}
     >
-      <Img src={staticFile(imageFileName)} style={imgStyle} />
+      <Img
+        src={staticFile(imageFileName)}
+        style={imgStyle}
+        onError={() => setImgError(true)}
+      />
       {scanlines && <div style={scanlineStyle} />}
     </AbsoluteFill>
   );

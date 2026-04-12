@@ -381,6 +381,32 @@ if (!cameraRigEnabled) console.log(`   运镜: 关闭 (硬切风格)`);
 const defaultTransition = cpData.default_transition || "";
 if (defaultTransition) console.log(`   默认段间转场: ${defaultTransition}`);
 
+// ═══ 渲染前资源检查：清理不存在的图片引用 ═══
+let cleanedImages = 0;
+for (const seg of script.segments) {
+  // flash_meme 引用不存在 → 删除
+  if (seg.flash_meme && seg.flash_meme.image) {
+    const memePath = path.join(publicDir, seg.flash_meme.image);
+    if (!fs.existsSync(memePath)) {
+      console.log(`   ⚠️ seg_${seg.id}: flash_meme 图片不存在，已清理 (${seg.flash_meme.image})`);
+      delete seg.flash_meme;
+      cleanedImages++;
+    }
+  }
+  // image_content.image_path 不存在 → 清空（组件内部有空路径兜底）
+  if (seg.image_content && seg.image_content.image_path) {
+    const imgPath = path.join(publicDir, seg.image_content.image_path);
+    if (!fs.existsSync(imgPath)) {
+      console.log(`   ⚠️ seg_${seg.id}: image_path 不存在，已清空 (${seg.image_content.image_path})`);
+      seg.image_content.image_path = "";
+      cleanedImages++;
+    }
+  }
+}
+if (cleanedImages > 0) {
+  console.log(`   🧹 清理了 ${cleanedImages} 个缺失图片引用`);
+}
+
 // 构建 props
 const inputProps = {
   script,

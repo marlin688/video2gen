@@ -1005,6 +1005,17 @@ def run_agent(
                 json.dumps(script_data, ensure_ascii=False, indent=2), encoding="utf-8"
             )
 
+        # ── Phase 2.2: 脚本结构自动修复 ──────────────────────
+        from v2g.script_fixer import fix_script
+        script_data, fix_logs = fix_script(script_data, output_dir)
+        if fix_logs:
+            click.echo(f"\n🔧 脚本结构修复: {len(fix_logs)} 处")
+            for log in fix_logs:
+                click.echo(f"   {log}")
+            script_path.write_text(
+                json.dumps(script_data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+
         state.scripted = True
         state.last_error = ""
         state.save(cfg.output_dir)

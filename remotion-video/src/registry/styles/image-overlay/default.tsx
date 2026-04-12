@@ -14,7 +14,7 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import React from "react";
+import React, { useState } from "react";
 import type { StyleComponentProps } from "../../types";
 import { registry } from "../../registry";
 import { useTheme } from "../../theme";
@@ -78,20 +78,28 @@ const ImageOverlayDefault: React.FC<StyleComponentProps<"image-overlay">> = ({
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000", overflow: "hidden" }}>
-      {/* 图片层 + Ken Burns */}
+      {/* 图片层 + Ken Burns（空路径时显示纯色背景） */}
       <AbsoluteFill
         style={{
           transform: `scale(${scale}) translate(${tx}%, ${ty}%)`,
         }}
       >
-        <Img
-          src={staticFile(data.imagePath)}
-          style={{
+        {data.imagePath ? (
+          <Img
+            src={staticFile(data.imagePath)}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+            }}
+          />
+        ) : (
+          <div style={{
             width: "100%",
             height: "100%",
-            objectFit: "cover",
-          }}
-        />
+            background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)",
+          }} />
+        )}
       </AbsoluteFill>
 
       {/* 渐变遮罩层 */}

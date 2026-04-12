@@ -71,8 +71,22 @@ def _segment_text(seg: dict) -> str:
     return "\n".join(parts)
 
 
-def _is_tutorial_script(script: dict, segments: list[dict]) -> bool:
-    """粗判教程型脚本（规则只在教程类场景启用）。"""
+def _is_tutorial_script(script: dict, segments: list[dict], profile: dict) -> bool:
+    """判断是否启用教程类检查规则。
+
+    优先看 profile 的 content_type：
+    - "tutorial" → 强制启用
+    - "commentary" / "news" / "brand" → 强制关闭
+    - "auto" → 用关键词猜测（仅 default profile）
+    """
+    content_type = profile.get("content_type", "auto")
+
+    if content_type == "tutorial":
+        return True
+    if content_type in ("commentary", "news", "brand"):
+        return False
+
+    # auto: 关键词猜测（向后兼容）
     b_count = sum(1 for s in segments if s.get("material") == "B")
     if b_count < 2:
         return False
@@ -87,7 +101,6 @@ def _is_tutorial_script(script: dict, segments: list[dict]) -> bool:
 
     tutorial_signals = (
         "教程", "技巧", "实战", "上手", "工作流", "避坑", "配置",
-        "claude code", "claude", "obsidian", "coding agent", "自动化",
     )
     return any(sig in joined for sig in tutorial_signals)
 
@@ -390,7 +403,7 @@ def eval_script(
           detail=f"{component_count} 个高级组件")
 
     # --- 教程型脚本深度检查 ---
-    if _is_tutorial_script(script, segments):
+    if _is_tutorial_script(script, segments, profile):
         seg_texts = [_segment_text(s) for s in segments]
 
         # 1) 可复现闭环：B 段应具备「指令 + 可见输出」

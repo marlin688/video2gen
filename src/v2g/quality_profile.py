@@ -10,6 +10,7 @@ QUALITY_PROFILES = {
     "default": {
         "label": "默认平衡",
         "description": "规则优先，兼顾内容表达",
+        "content_type": "auto",  # 自动检测（关键词猜测）
         "weights": {
             "objective": 0.7,
             "subjective": 0.3,
@@ -18,14 +19,34 @@ QUALITY_PROFILES = {
     "tutorial_general": {
         "label": "通用教程高质量",
         "description": "主观内容优先（适合 AI 教程/技巧分享）",
+        "content_type": "tutorial",
         "weights": {
             "objective": 0.3,
             "subjective": 0.7,
         },
     },
+    "news_briefing": {
+        "label": "热点播报",
+        "description": "每日/每周 AI 热点快报，配图丰富，信息密度高",
+        "content_type": "news",
+        "weights": {
+            "objective": 0.6,
+            "subjective": 0.4,
+        },
+    },
+    "commentary": {
+        "label": "深度评论/分析",
+        "description": "观点驱动的深度分析，不要求教程闭环和可执行交付",
+        "content_type": "commentary",
+        "weights": {
+            "objective": 0.6,
+            "subjective": 0.4,
+        },
+    },
     "anthropic_brand": {
         "label": "Anthropic 品牌片",
         "description": "米白衬线品牌短片，专用 slide.anthropic-* 场景组件",
+        "content_type": "brand",
         "weights": {
             "objective": 0.4,
             "subjective": 0.6,
@@ -38,6 +59,7 @@ QUALITY_PROFILES = {
     "tech_explainer": {
         "label": "技术解说片（Anthropic 风格）",
         "description": "米白衬线风格的通用技术视频：talking-head 穿插 screen-clip，硬切，无段数/时长约束",
+        "content_type": "tutorial",
         "weights": {
             "objective": 0.5,
             "subjective": 0.5,
@@ -80,6 +102,8 @@ def resolve_quality_profile(name: str | None) -> dict:
         "camera_rig": profile.get("camera_rig"),
         # 可选：默认段间转场（"none" = 硬切）
         "default_transition": profile.get("default_transition", ""),
+        # 内容类型：控制 eval 规则适用性
+        "content_type": profile.get("content_type", "auto"),
     }
 
 

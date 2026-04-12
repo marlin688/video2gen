@@ -139,7 +139,9 @@ class RepoInfo(BaseModel):
 class ImageContent(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    image_path: str
+    image_path: str = ""  # 可为空，render 前由 image_prepare 填充
+    source_method: Literal["screenshot", "search", "generate"] | None = None
+    source_query: str | None = None  # URL / 关键词 / prompt
     overlay_text: str | None = None
     overlay_position: Literal["top", "center", "bottom"] | None = None
     ken_burns: Literal["zoom-in", "zoom-out", "pan-left", "pan-right"] | None = None

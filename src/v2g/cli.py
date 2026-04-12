@@ -1053,6 +1053,41 @@ def status(cfg: Config, video_id):
 
 
 @main.group()
+def image():
+    """自动配图（网页截图 / 搜图 / AI 生图）"""
+
+
+@image.command("prepare")
+@click.argument("project_id")
+@click.pass_obj
+def image_prepare_cmd(cfg: Config, project_id):
+    """扫描 script.json，自动执行配图并填充 image_path"""
+    from v2g.image_prepare import prepare_images
+
+    click.echo(f"🖼️ 自动配图: {project_id}")
+    count = prepare_images(cfg, project_id)
+    if count == 0:
+        click.echo("   没有需要配图的 segment（source_method 为空或 image_path 已存在）")
+
+
+@image.command("test")
+@click.argument("method", type=click.Choice(["screenshot", "search", "generate"]))
+@click.argument("query")
+@click.option("--output", "output_dir", default="output/test/images", help="输出目录")
+@click.pass_obj
+def image_test(cfg: Config, method, query, output_dir):
+    """测试单种配图方式"""
+    from v2g.image_source import source_image
+
+    out = Path(output_dir)
+    result = source_image(query, method, out)
+    if result:
+        click.echo(f"\n✅ 配图成功: {result}")
+    else:
+        click.echo("\n❌ 配图失败")
+
+
+@main.group()
 def assets():
     """素材库管理（入库、打标、检索、保鲜）"""
 

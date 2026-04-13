@@ -81,24 +81,40 @@ const timing = JSON.parse(fs.readFileSync(timingPath, "utf-8"));
 const publicDir = path.join(__dirname, "public");
 fs.mkdirSync(publicDir, { recursive: true });
 
+// 本次渲染写入 public/ 的临时缓存（渲染后清理，避免跨项目污染）
+const stagedTargets = new Set();
+function markStaged(targetPath) {
+  stagedTargets.add(path.resolve(targetPath));
+}
+
 // 辅助: 硬拷贝文件到 public（Remotion 不支持 symlink）
 function copyAsset(src, dst) {
   const absSrc = path.resolve(src);
   if (!fs.existsSync(absSrc)) return;
+  const srcStat = fs.statSync(absSrc);
+
+  if (srcStat.isDirectory()) {
+    // 目录采用“先删后拷”保持与项目输出一致，避免残留旧文件
+    if (fs.existsSync(dst)) {
+      fs.rmSync(dst, { recursive: true, force: true });
+    }
+    fs.cpSync(absSrc, dst, { recursive: true });
+    markStaged(dst);
+    console.log(`   复制目录: ${path.basename(dst)}`);
+    return;
+  }
+
   if (fs.existsSync(dst)) {
-    const srcStat = fs.statSync(absSrc);
     const dstStat = fs.statSync(dst);
-    if (srcStat.isDirectory()) return;
-    if (srcStat.size === dstStat.size) return;
+    if (srcStat.size === dstStat.size) {
+      markStaged(dst);
+      return;
+    }
     console.log(`   覆盖: ${path.basename(dst)} (${dstStat.size} → ${srcStat.size})`);
   }
-  if (fs.statSync(absSrc).isDirectory()) {
-    fs.cpSync(absSrc, dst, { recursive: true });
-    console.log(`   复制目录: ${path.basename(dst)}`);
-  } else {
-    fs.copyFileSync(absSrc, dst);
-    console.log(`   复制: ${path.basename(dst)}`);
-  }
+  fs.copyFileSync(absSrc, dst);
+  markStaged(dst);
+  console.log(`   复制: ${path.basename(dst)}`);
 }
 
 // 复制配音文件（新路径优先，向后兼容旧路径）
@@ -115,7 +131,11 @@ copyAsset(path.join(videoDir, "slides"), path.join(publicDir, "slides"));
 const imagesSrc = path.join(videoDir, "images");
 const imagesDst = path.join(publicDir, "images");
 if (fs.existsSync(imagesSrc)) {
+  if (fs.existsSync(imagesDst)) {
+    fs.rmSync(imagesDst, { recursive: true, force: true });
+  }
   fs.cpSync(imagesSrc, imagesDst, { recursive: true });
+  markStaged(imagesDst);
   console.log(`   复制: images/ (${fs.readdirSync(imagesSrc).length} 文件)`);
 }
 
@@ -128,7 +148,9 @@ const bgmCandidates = [
 ];
 for (const bgmPath of bgmCandidates) {
   if (fs.existsSync(bgmPath)) {
-    fs.copyFileSync(bgmPath, path.join(publicDir, "bgm.mp3"));
+    const bgmDst = path.join(publicDir, "bgm.mp3");
+    fs.copyFileSync(bgmPath, bgmDst);
+    markStaged(bgmDst);
     bgmFile = "bgm.mp3";
     console.log(`   复制: bgm.mp3 (${(fs.statSync(bgmPath).size / 1024).toFixed(0)}KB)`);
     break;
@@ -139,20 +161,26 @@ for (const bgmPath of bgmCandidates) {
 const webVideosSrc = path.join(videoDir, "web_videos");
 const webVideosDst = path.join(publicDir, "web_videos");
 if (fs.existsSync(webVideosSrc)) {
+  if (fs.existsSync(webVideosDst)) {
+    fs.rmSync(webVideosDst, { recursive: true, force: true });
+  }
   fs.cpSync(webVideosSrc, webVideosDst, { recursive: true });
+  markStaged(webVideosDst);
   console.log(`   复制: web_videos/ (${fs.readdirSync(webVideosSrc).length} 文件)`);
 }
 
-// 复制/创建 recordings 目录
+// 复制/创建 recordings 目录（每次同步，避免旧缓存残留）
 const recordingsSrc = path.join(videoDir, "recordings");
 const recordingsDst = path.join(publicDir, "recordings");
-if (!fs.existsSync(recordingsDst)) {
-  if (fs.existsSync(recordingsSrc)) {
-    fs.cpSync(recordingsSrc, recordingsDst, { recursive: true });
-  } else {
-    fs.mkdirSync(recordingsDst, { recursive: true });
-  }
+if (fs.existsSync(recordingsDst)) {
+  fs.rmSync(recordingsDst, { recursive: true, force: true });
 }
+if (fs.existsSync(recordingsSrc)) {
+  fs.cpSync(recordingsSrc, recordingsDst, { recursive: true });
+} else {
+  fs.mkdirSync(recordingsDst, { recursive: true });
+}
+markStaged(recordingsDst);
 
 // 准备源视频 (支持多源和单源)
 const checkpointPath = path.join(videoDir, "checkpoint.json");
@@ -161,7 +189,10 @@ const sourceChannels = [];
 
 function prepareSourceVideo(srcPath, destName) {
   const dst = path.join(publicDir, destName);
-  if (fs.existsSync(dst)) { return; }
+  if (fs.existsSync(dst)) {
+    markStaged(dst);
+    return;
+  }
   if (!srcPath || !fs.existsSync(srcPath)) { return; }
 
   let needsTranscode = false;
@@ -189,6 +220,7 @@ function prepareSourceVideo(srcPath, destName) {
     fs.copyFileSync(srcPath, dst);
     console.log(`   复制: ${destName}`);
   }
+  markStaged(dst);
 }
 
 /**
@@ -287,7 +319,10 @@ function prepareVideoWithRelPath(srcPath, relPath) {
   const dst = path.join(publicDir, relMp4);
   const dstDir = path.dirname(dst);
   if (!fs.existsSync(dstDir)) fs.mkdirSync(dstDir, { recursive: true });
-  if (fs.existsSync(dst)) return relMp4;
+  if (fs.existsSync(dst)) {
+    markStaged(dst);
+    return relMp4;
+  }
 
   let needsTranscode = false;
   try {
@@ -315,6 +350,7 @@ function prepareVideoWithRelPath(srcPath, relPath) {
     fs.copyFileSync(srcPath, dst);
     console.log(`   复制: ${relMp4}`);
   }
+  markStaged(dst);
   return relMp4;
 }
 
@@ -558,67 +594,67 @@ console.log(`   视频 ID: ${videoId}`);
 console.log(`   段落数: ${script.segments.length}`);
 console.log(`   Chrome: ${chromePath}`);
 
-async function main() {
-  // 1. Bundle
-  console.log("📦 打包 Remotion 项目...");
-  const bundled = await bundle({
-    entryPoint: path.join(__dirname, "src/index.ts"),
-    webpackOverride: (config) => config,
-  });
-
-  // 2. 获取 composition 元数据
-  console.log("📐 计算视频参数...");
-  const composition = await selectComposition({
-    serveUrl: bundled,
-    id: "V2GVideo",
-    inputProps,
-    browserExecutable: chromePath,
-  });
-
-  console.log(`   分辨率: ${composition.width}x${composition.height}`);
-  console.log(`   时长: ${composition.durationInFrames} 帧 (${(composition.durationInFrames / 30).toFixed(1)}s)`);
-
-  // 3. 渲染到 final/ 目录
-  const outputPath = path.join(finalDir, "video.mp4");
-  console.log(`🎨 渲染中... → ${outputPath}`);
-
-  await renderMedia({
-    composition,
-    serveUrl: bundled,
-    codec: "h264",
-    outputLocation: outputPath,
-    inputProps,
-    browserExecutable: chromePath,
-    onProgress: ({ progress }) => {
-      if (Math.round(progress * 100) % 10 === 0) {
-        process.stdout.write(`\r   进度: ${Math.round(progress * 100)}%`);
-      }
-    },
-  });
-
-  console.log(`\n✅ 渲染完成!`);
-  const stats = fs.statSync(outputPath);
-  console.log(`   视频: ${outputPath} (${(stats.size / 1024 / 1024).toFixed(1)}MB)`);
-  console.log(`   字幕: ${srtPath}`);
-
-  // 4. 清理 public/ 缓存（避免跨项目污染）
+function cleanupStagedPublicAssets() {
+  if (stagedTargets.size === 0) return;
   console.log("🧹 清理 public/ 缓存...");
-  const cleanTargets = ["voiceover.mp3", "slides", "recordings"];
-  // 清理源视频缓存
-  for (const f of fs.readdirSync(publicDir)) {
-    if (f.startsWith("source_") && f.endsWith(".mp4")) cleanTargets.push(f);
-    if (f.startsWith("src-video")) cleanTargets.push(f);
-  }
-  for (const target of cleanTargets) {
-    const p = path.join(publicDir, target);
+  // 先删深层路径，避免父目录先删导致重复日志
+  const targets = Array.from(stagedTargets).sort((a, b) => b.length - a.length);
+  let cleaned = 0;
+  for (const p of targets) {
+    if (!p.startsWith(path.resolve(publicDir))) continue;
     if (!fs.existsSync(p)) continue;
-    if (fs.statSync(p).isDirectory()) {
-      fs.rmSync(p, { recursive: true });
-    } else {
-      fs.unlinkSync(p);
-    }
+    fs.rmSync(p, { recursive: true, force: true });
+    cleaned += 1;
   }
-  console.log("   ✅ 已清理");
+  console.log(`   ✅ 已清理 ${cleaned} 项缓存`);
+}
+
+async function main() {
+  try {
+    // 1. Bundle
+    console.log("📦 打包 Remotion 项目...");
+    const bundled = await bundle({
+      entryPoint: path.join(__dirname, "src/index.ts"),
+      webpackOverride: (config) => config,
+    });
+
+    // 2. 获取 composition 元数据
+    console.log("📐 计算视频参数...");
+    const composition = await selectComposition({
+      serveUrl: bundled,
+      id: "V2GVideo",
+      inputProps,
+      browserExecutable: chromePath,
+    });
+
+    console.log(`   分辨率: ${composition.width}x${composition.height}`);
+    console.log(`   时长: ${composition.durationInFrames} 帧 (${(composition.durationInFrames / 30).toFixed(1)}s)`);
+
+    // 3. 渲染到 final/ 目录
+    const outputPath = path.join(finalDir, "video.mp4");
+    console.log(`🎨 渲染中... → ${outputPath}`);
+
+    await renderMedia({
+      composition,
+      serveUrl: bundled,
+      codec: "h264",
+      outputLocation: outputPath,
+      inputProps,
+      browserExecutable: chromePath,
+      onProgress: ({ progress }) => {
+        if (Math.round(progress * 100) % 10 === 0) {
+          process.stdout.write(`\r   进度: ${Math.round(progress * 100)}%`);
+        }
+      },
+    });
+
+    console.log(`\n✅ 渲染完成!`);
+    const stats = fs.statSync(outputPath);
+    console.log(`   视频: ${outputPath} (${(stats.size / 1024 / 1024).toFixed(1)}MB)`);
+    console.log(`   字幕: ${srtPath}`);
+  } finally {
+    cleanupStagedPublicAssets();
+  }
 }
 
 main().catch((err) => {

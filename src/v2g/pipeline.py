@@ -131,7 +131,12 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
             json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-    report = eval_script(script, video_id, quality_profile=quality_profile)
+    report = eval_script(
+        script,
+        video_id,
+        quality_profile=quality_profile,
+        assets_db_path=cfg.output_dir / "assets.db",
+    )
     pct = eval_score_pct(report)
     blocking_warnings = get_blocking_warnings(report)
 
@@ -179,7 +184,12 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
         state = regen_fn(cfg, video_id, model)
 
         script = json.loads(script_path.read_text(encoding="utf-8"))
-        report = eval_script(script, video_id, quality_profile=quality_profile)
+        report = eval_script(
+            script,
+            video_id,
+            quality_profile=quality_profile,
+            assets_db_path=cfg.output_dir / "assets.db",
+        )
         pct = eval_score_pct(report)
         blocking_warnings = get_blocking_warnings(report)
 

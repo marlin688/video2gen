@@ -228,7 +228,7 @@ def _parse_rate_to_speed(rate: str) -> float:
         return 1.0
 
 
-def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
+def run_tts(cfg: Config, video_id: str, voice: str, rate: str, force: bool = False) -> PipelineState:
     """执行 Stage 4: TTS 配音。"""
     state = PipelineState.load(cfg.output_dir, video_id)
     if not state.script_reviewed:
@@ -259,6 +259,22 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str) -> PipelineState:
     if not script_path.exists():
         raise click.ClickException(f"脚本不存在: {script_path}")
     script_data = json.loads(script_path.read_text(encoding="utf-8"))
+
+    # 硬门禁：结构错误 / 空 narration_zh 不允许继续 TTS
+    from v2g.schema import collect_script_blockers
+    blockers = collect_script_blockers(script_data, require_narration=True)
+    if blockers:
+        click.echo("❌ 脚本结构校验失败（已阻断 TTS）:")
+        for i, err in enumerate(blockers[:10], start=1):
+            click.echo(f"   {i}. {err}")
+        if len(blockers) > 10:
+            click.echo(f"   ... 其余 {len(blockers) - 10} 项省略")
+
+        if not force:
+            raise click.ClickException(
+                "请先修复 script.json 后再运行 tts；如需跳过可加 --force"
+            )
+        click.echo("⚠️  已使用 --force，继续执行 TTS")
 
     segments = script_data.get("segments", [])
     timing = {}

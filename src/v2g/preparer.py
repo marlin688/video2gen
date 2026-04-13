@@ -245,12 +245,20 @@ def run_prepare(cfg: Config, video_id_or_url: str, model: str = "",
             state.save(cfg.output_dir)
             raise click.ClickException(state.last_error)
 
-        state.subtitled = True
         en_srt = source_dir / "subtitle_en.srt"
+        zh_srt = source_dir / "subtitle_zh.srt"
         state.en_srt = str(en_srt.resolve()) if en_srt.exists() else ""
-        state.zh_srt = ""  # 不再自动翻译
+        state.zh_srt = str(zh_srt.resolve()) if zh_srt.exists() else ""
+        # 单视频流程允许 zh/en 任一字幕作为脚本输入
+        state.subtitled = bool(state.zh_srt or state.en_srt)
     else:
         click.echo("⏭️  字幕已存在，跳过")
+        # 自愈：历史项目可能只有 en 或手动补了 zh，进入 prepare 时同步状态
+        en_srt = source_dir / "subtitle_en.srt"
+        zh_srt = source_dir / "subtitle_zh.srt"
+        state.en_srt = str(en_srt.resolve()) if en_srt.exists() else ""
+        state.zh_srt = str(zh_srt.resolve()) if zh_srt.exists() else ""
+        state.subtitled = bool(state.zh_srt or state.en_srt)
 
     # 2) 下载视频
     if not state.downloaded:

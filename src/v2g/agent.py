@@ -8,6 +8,7 @@
 import json
 import os
 import re
+from contextvars import ContextVar
 from pathlib import Path
 
 import click
@@ -124,8 +125,15 @@ TOOLS = [
 # Tool implementations
 # ---------------------------------------------------------------------------
 
-# Runtime context — set by run_agent() before agent loop starts
-_ctx: dict = {}
+# Runtime context — per-agent-run context (避免模块级共享状态串扰)
+_CTX_VAR: ContextVar[dict | None] = ContextVar("v2g_agent_ctx", default=None)
+
+
+def _get_ctx() -> dict:
+    ctx = _CTX_VAR.get()
+    if ctx is None:
+        raise RuntimeError("Agent 上下文未初始化")
+    return ctx
 
 
 def _exec_tool(name: str, input_data: dict) -> str:
@@ -172,7 +180,8 @@ def _tool_read_source_file(path: str) -> str:
 
 
 def _tool_save_outline(outline_json_str: str) -> str:
-    output_dir: Path = _ctx["output_dir"]
+    ctx = _get_ctx()
+    output_dir: Path = ctx["output_dir"]
     try:
         outline = _safe_parse_json(outline_json_str)
     except (json.JSONDecodeError, ValueError) as e:
@@ -189,12 +198,13 @@ def _tool_save_outline(outline_json_str: str) -> str:
     # 同时保存可读版本
     _generate_outline_md(outline, output_dir / "outline.md")
 
-    _ctx["outline_saved"] = True
+    ctx["outline_saved"] = True
     return "大纲已保存到 outline.json，等待用户确认。"
 
 
 def _tool_save_script(script_json_str: str) -> str:
-    output_dir: Path = _ctx["output_dir"]
+    ctx = _get_ctx()
+    output_dir: Path = ctx["output_dir"]
     try:
         script_data = _safe_parse_json(script_json_str)
     except (json.JSONDecodeError, ValueError) as e:
@@ -217,7 +227,7 @@ def _tool_save_script(script_json_str: str) -> str:
 
     click.echo(f"   ✅ 脚本已保存: {script_json_path}")
 
-    _ctx["script_saved"] = True
+    ctx["script_saved"] = True
     return "脚本已保存到 script.json、script.md、recording_guide.md。"
 
 
@@ -867,11 +877,12 @@ def run_agent(
         state.save(cfg.output_dir)
 
     # Initialize context
-    _ctx.clear()
-    _ctx["output_dir"] = output_dir
-    _ctx["cfg"] = cfg
-    _ctx["outline_saved"] = False
-    _ctx["script_saved"] = False
+    _CTX_VAR.set({
+        "output_dir": output_dir,
+        "cfg": cfg,
+        "outline_saved": False,
+        "script_saved": False,
+    })
 
     # ── Phase 1: 素材分析 + 大纲生成 ──────────────────────────
     outline_path = output_dir / "outline.json"
@@ -902,7 +913,7 @@ def run_agent(
 
         _dispatch_agent_loop(system_prompt, user_message, model)
 
-        if not _ctx.get("outline_saved"):
+        if not _get_ctx().get("outline_saved"):
             raise click.ClickException("Agent 未生成大纲。请检查素材内容后重试。")
 
         state.agent_outline_done = True
@@ -1037,6 +1048,7 @@ def run_agent(
         json.loads(script_path.read_text(encoding="utf-8")),
         project_id,
         quality_profile=profile["name"],
+        assets_db_path=cfg.output_dir / "assets.db",
     )
     blocking_warnings = get_blocking_warnings(report)
     if report.get("has_critical") or blocking_warnings:

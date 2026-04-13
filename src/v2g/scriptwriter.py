@@ -239,6 +239,32 @@ def _generate_script_md(script_data: dict, output_path: Path):
     output_path.write_text("".join(lines), encoding="utf-8")
 
 
+def _load_subtitles_for_script(state: PipelineState) -> tuple[str, str]:
+    """加载脚本生成所需字幕，优先中文，缺失时回退英文。
+
+    Returns:
+        (zh_text, en_text)
+    """
+    zh_text = ""
+    en_text = ""
+
+    zh_srt_path = Path(state.zh_srt) if state.zh_srt else None
+    en_srt_path = Path(state.en_srt) if state.en_srt else None
+
+    if zh_srt_path and zh_srt_path.exists():
+        zh_text = _parse_srt_to_text(zh_srt_path.read_text(encoding="utf-8"))
+
+    if en_srt_path and en_srt_path.exists():
+        en_text = _parse_srt_to_text(en_srt_path.read_text(encoding="utf-8"))
+
+    if not zh_text and not en_text:
+        raise click.ClickException(
+            "未找到可用字幕：需要 subtitle_zh.srt 或 subtitle_en.srt。"
+        )
+
+    return zh_text, en_text
+
+
 def run_script(
     cfg: Config,
     video_id: str,
@@ -257,27 +283,22 @@ def run_script(
     output_dir = cfg.output_dir / video_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 读取字幕
-    zh_srt_path = Path(state.zh_srt)
-    en_srt_path = Path(state.en_srt)
-
-    if not zh_srt_path.exists():
-        raise click.ClickException(f"中文字幕不存在: {zh_srt_path}")
-
-    zh_text = _parse_srt_to_text(zh_srt_path.read_text(encoding="utf-8"))
-    en_text = ""
-    if en_srt_path.exists():
-        en_text = _parse_srt_to_text(en_srt_path.read_text(encoding="utf-8"))
+    # 读取字幕（优先中文，缺失时回退英文）
+    zh_text, en_text = _load_subtitles_for_script(state)
 
     # 构建 user message
     user_parts = [
         f"## 视频信息\n",
         f"- Video ID: {video_id}",
         f"- URL: {state.video_url}",
-        f"\n## 中文字幕\n",
-        zh_text,
     ]
-    if en_text:
+    if zh_text:
+        user_parts.append(f"\n## 中文字幕\n")
+        user_parts.append(zh_text)
+    if en_text and not zh_text:
+        user_parts.append(f"\n## 英文字幕（仅有英文字幕，请据此生成中文解说）\n")
+        user_parts.append(en_text)
+    elif en_text:
         user_parts.append(f"\n## 英文字幕 (参考)\n")
         user_parts.append(en_text)
 

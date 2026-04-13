@@ -109,6 +109,7 @@ def eval_script(
     script: dict,
     video_id: str = "",
     quality_profile: str = "default",
+    assets_db_path: Path | None = None,
 ) -> dict:
     """评估脚本质量（纯函数版，接受 dict），返回评分报告。
 
@@ -287,9 +288,16 @@ def eval_script(
     schemas_used = {_seg_schema(s) for s in segments}
     check(
         "视觉 schema 多样性",
-        len(schemas_used) >= 4,
-        weight=3,
-        detail=f"使用了 {len(schemas_used)} 种 schema: {sorted(schemas_used)}（要求 ≥4）",
+        len(schemas_used) >= (
+            4 if profile.get("content_type") == "tutorial"
+            else 2 if profile.get("content_type") == "brand"
+            else 3
+        ),
+        weight=2,
+        detail=(
+            f"使用了 {len(schemas_used)} 种 schema: {sorted(schemas_used)}"
+            f"（要求 ≥{4 if profile.get('content_type') == 'tutorial' else 2 if profile.get('content_type') == 'brand' else 3}）"
+        ),
         category="objective",
     )
 
@@ -301,7 +309,7 @@ def eval_script(
         check(
             "A素材段显式指定component",
             coverage >= 0.8,
-            weight=2,
+            weight=2 if profile.get("content_type") == "tutorial" else 1,
             detail=f"{len(a_with_component)}/{len(a_segs)} 个 A 段有 component ({coverage:.0%})",
             category="objective",
         )
@@ -529,7 +537,7 @@ def eval_script(
           detail="; ".join(sd_warnings[:3]) if sd_warnings else "")
 
     # --- 历史 pattern 比对（info 级别，仅在有足够数据时触发） ---
-    _add_historical_checks(report, script, check)
+    _add_historical_checks(report, script, check, assets_db_path=assets_db_path)
 
     # --- 按 weight 分级汇总 ---
     critical_failed = [c for c in report["checks"] if not c["passed"] and c["weight"] >= 3]
@@ -553,7 +561,12 @@ def eval_script(
     return report
 
 
-def _add_historical_checks(report: dict, script: dict, check) -> None:
+def _add_historical_checks(
+    report: dict,
+    script: dict,
+    check,
+    assets_db_path: Path | None = None,
+) -> None:
     """基于历史高表现视频数据添加 info 级别的 pattern 比对。
 
     只在 assets.db 有 ≥3 个有 stats+features 的视频时触发。
@@ -561,7 +574,10 @@ def _add_historical_checks(report: dict, script: dict, check) -> None:
     """
     from pathlib import Path
 
-    db_path = Path("output/assets.db")
+    if assets_db_path is None:
+        return
+
+    db_path = Path(assets_db_path)
     if not db_path.exists():
         return
 
@@ -628,11 +644,16 @@ def _add_historical_checks(report: dict, script: dict, check) -> None:
         pass  # 历史检查不应阻塞主流程
 
 
-def eval_score_pct(report: dict) -> float:
-    """从 report 中计算百分比得分 (0-100)。"""
-    if "weighted_pct" in report:
-        return float(report["weighted_pct"])
-    return report["score"] / max(report["max_score"], 1) * 100
+def eval_score_pct(report: dict, weighted: bool = False) -> float:
+    """从 report 中计算百分比得分 (0-100)。
+
+    默认返回原始规则分 (score/max_score) 以兼容历史调用方。
+    weighted=True 时返回分层加权分（objective/subjective）。
+    """
+    raw_pct = report["score"] / max(report["max_score"], 1) * 100
+    if weighted:
+        return float(report.get("weighted_pct", raw_pct))
+    return raw_pct
 
 
 def run_eval(cfg: Config, video_id: str, quality_profile: str = "default") -> dict:
@@ -643,7 +664,12 @@ def run_eval(cfg: Config, video_id: str, quality_profile: str = "default") -> di
         raise click.ClickException(f"脚本不存在: {script_path}")
 
     script = json.loads(script_path.read_text(encoding="utf-8"))
-    report = eval_script(script, video_id, quality_profile=quality_profile)
+    report = eval_script(
+        script,
+        video_id,
+        quality_profile=quality_profile,
+        assets_db_path=cfg.output_dir / "assets.db",
+    )
 
     # 附加元数据
     meta_path = output_dir / "script_meta.json"

@@ -352,3 +352,27 @@ def validate_script(script: dict) -> tuple[ScriptData | None, list[str]]:
         else:
             errors.append(err_str)
         return None, errors
+
+
+def collect_script_blockers(script: dict, require_narration: bool = True) -> list[str]:
+    """收集会阻塞下游阶段的脚本问题。
+
+    包括:
+    1) schema 结构错误（字段缺失、component 非法、类型错误等）
+    2) （可选）空 narration_zh 段落
+    """
+    _, errors = validate_script(script)
+    blockers = list(errors)
+
+    if require_narration:
+        for idx, seg in enumerate(script.get("segments", []), start=1):
+            if not isinstance(seg, dict):
+                blockers.append(f"[segments → {idx}] 结构错误: 段落不是对象")
+                continue
+            narration = (seg.get("narration_zh") or "").strip()
+            if narration:
+                continue
+            seg_id = seg.get("id", idx)
+            blockers.append(f"[segment {seg_id}] narration_zh 不能为空")
+
+    return blockers

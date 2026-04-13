@@ -1,5 +1,6 @@
 """Click CLI 入口。"""
 
+import json
 import os
 from pathlib import Path
 
@@ -73,8 +74,9 @@ def script(cfg: Config, video_id, model, profile):
 
 @main.command()
 @click.argument("video_id")
+@click.option("--force", is_flag=True, help="忽略脚本结构/旁白校验失败，强制标记审核通过")
 @click.pass_obj
-def review(cfg: Config, video_id):
+def review(cfg: Config, video_id, force):
     """标记脚本审核通过 (确认录屏素材已就绪)"""
     state = PipelineState.load(cfg.output_dir, video_id)
     if not state.scripted:
@@ -90,6 +92,24 @@ def review(cfg: Config, video_id):
             click.echo("   如已修改 script.md 中的旁白，请同步修改到 script.json 的 narration_zh 字段")
             if not click.confirm("确认 script.json 已是最终版本？"):
                 return
+
+    # 硬门禁：结构错误 / 空 narration_zh 不允许进入后续阶段
+    if script_json.exists():
+        from v2g.schema import collect_script_blockers
+        script_data = json.loads(script_json.read_text(encoding="utf-8"))
+        blockers = collect_script_blockers(script_data, require_narration=True)
+        if blockers:
+            click.echo("❌ 脚本结构校验失败（已阻断 review）:")
+            for i, err in enumerate(blockers[:10], start=1):
+                click.echo(f"   {i}. {err}")
+            if len(blockers) > 10:
+                click.echo(f"   ... 其余 {len(blockers) - 10} 项省略")
+
+            if not force:
+                raise click.ClickException(
+                    "请先修复 script.json 后再运行 review；如需跳过可加 --force"
+                )
+            click.echo("⚠️  已使用 --force，继续标记审核通过")
 
     # 检查录屏素材状态
     from v2g.editor import check_recordings
@@ -113,13 +133,14 @@ def review(cfg: Config, video_id):
 @click.argument("video_id")
 @click.option("--voice", default=None, help="TTS 声音 (默认: zh-CN-YunxiNeural)")
 @click.option("--rate", default=None, help="语速 (默认: +5%)")
+@click.option("--force", is_flag=True, help="忽略脚本结构/旁白校验失败，强制继续 TTS")
 @click.pass_obj
-def tts(cfg: Config, video_id, voice, rate):
+def tts(cfg: Config, video_id, voice, rate, force):
     """Stage 4: TTS 配音 → output/{video_id}/voiceover/"""
     from v2g.tts import run_tts
     voice = voice or cfg.tts_voice
     rate = rate or cfg.tts_rate
-    state = run_tts(cfg, video_id, voice, rate)
+    state = run_tts(cfg, video_id, voice, rate, force=force)
     click.echo(f"\n✅ TTS 配音完成: output/{video_id}/voiceover/full.mp3")
     click.echo(f"   下一步: v2g slides {video_id}")
 

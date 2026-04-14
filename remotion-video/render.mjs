@@ -61,6 +61,8 @@ fs.mkdirSync(finalDir, { recursive: true });
 
 // 检查必要文件
 const scriptPath = path.join(videoDir, "script.json");
+const renderPlanPath = path.join(videoDir, "render_plan.json");
+const shotPlanPath = path.join(videoDir, "shot_plan.json");
 
 // 查找 timing.json（新路径优先，向后兼容旧路径）
 let timingPath = path.join(videoDir, "voiceover", "timing.json");
@@ -76,6 +78,22 @@ if (!fs.existsSync(scriptPath)) {
 // 读取数据
 const script = JSON.parse(fs.readFileSync(scriptPath, "utf-8"));
 const timing = JSON.parse(fs.readFileSync(timingPath, "utf-8"));
+const renderPlan = fs.existsSync(renderPlanPath)
+  ? JSON.parse(fs.readFileSync(renderPlanPath, "utf-8"))
+  : null;
+const shotPlan = fs.existsSync(shotPlanPath)
+  ? JSON.parse(fs.readFileSync(shotPlanPath, "utf-8"))
+  : null;
+if (renderPlan?.segments?.length) {
+  console.log(`   渲染规划: ✅ (${renderPlan.segments.length} 段)`);
+} else {
+  console.log("   渲染规划: ❌ 使用自动推断");
+}
+if (shotPlan?.shots?.length) {
+  console.log(`   分镜规划: ✅ (${shotPlan.shots.length} 句)`);
+} else {
+  console.log("   分镜规划: ❌ 使用段级标签");
+}
 
 // 准备 public 目录（链接素材文件）
 const publicDir = path.join(__dirname, "public");
@@ -455,6 +473,8 @@ const inputProps = {
   sourceVideoMap,
   voiceoverFile: "voiceover.mp3",
   availableRecordings,
+  renderPlan: renderPlan || undefined,
+  shotPlan: shotPlan || undefined,
   theme: themeId,
   cameraRig: cameraRigEnabled,
   defaultTransition,

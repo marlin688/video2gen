@@ -22,7 +22,14 @@ import { slide } from "@remotion/transitions/slide";
 import { wipe } from "@remotion/transitions/wipe";
 import type { TransitionPresentation } from "@remotion/transitions";
 
-import type { VideoCompositionProps, ScriptSegment, TransitionType } from "./types";
+import type {
+  VideoCompositionProps,
+  ScriptSegment,
+  TransitionType,
+  CinematographyTags,
+  CameraMoveTag,
+  LightingTag,
+} from "./types";
 import { registry } from "./registry/registry";
 import "./registry/init"; // 触发所有 style 自注册
 import { ThemeProvider, getTheme } from "./registry/theme";
@@ -34,6 +41,7 @@ import { LightLeak } from "./registry/components/LightLeak";
 import { FlashMeme } from "./registry/components/FlashMeme";
 import { CameraRig } from "./registry/components/CameraRig";
 import { FilmGrain } from "./registry/components/FilmGrain";
+import { LightingRig } from "./registry/components/LightingRig";
 import { SubtitleOverlay } from "./components/SubtitleOverlay";
 
 import type {
@@ -48,6 +56,29 @@ import type {
 const TRANSITION_FRAMES = 12; // 转场持续帧数（0.4s @ 30fps）
 
 type AnyPresentation = TransitionPresentation<Record<string, unknown>>;
+
+const VALID_CAMERA_MOVES: CameraMoveTag[] = [
+  "static",
+  "push-in",
+  "subtle-zoom",
+  "drift-left",
+  "drift-right",
+];
+
+const VALID_LIGHTING_TAGS: LightingTag[] = [
+  "neutral",
+  "bright",
+  "dramatic",
+  "cool",
+  "warm",
+  "accent",
+];
+
+const isCameraMove = (v: unknown): v is CameraMoveTag =>
+  typeof v === "string" && VALID_CAMERA_MOVES.includes(v as CameraMoveTag);
+
+const isLightingTag = (v: unknown): v is LightingTag =>
+  typeof v === "string" && VALID_LIGHTING_TAGS.includes(v as LightingTag);
 
 /**
  * 解析转场类型 → TransitionPresentation
@@ -132,6 +163,46 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
     sourceVideoMap = {},
   } = props;
   const segments = script.segments;
+
+  const segmentCinematography = React.useMemo(() => {
+    const fromPlan = new Map<number, Partial<CinematographyTags>>();
+    const planned = props.renderPlan?.segments || [];
+    for (const row of planned) {
+      if (typeof row.segment_id === "number" && row.cinematography) {
+        fromPlan.set(row.segment_id, row.cinematography as Partial<CinematographyTags>);
+      }
+    }
+
+    const plans: Record<number, {
+      shot_type: string;
+      camera_move: CameraMoveTag;
+      lighting_tag: LightingTag;
+      camera_intensity: number;
+    }> = {};
+
+    for (const seg of segments) {
+      const rp = fromPlan.get(seg.id) || {};
+      const shot_type = (seg.shot_type || rp.shot_type || "medium") as string;
+      const rawMove = seg.camera_move || rp.camera_move || "subtle-zoom";
+      const camera_move = isCameraMove(rawMove) ? rawMove : "subtle-zoom";
+      const rawLight = seg.lighting_tag || rp.lighting_tag || "neutral";
+      const lighting_tag = isLightingTag(rawLight) ? rawLight : "neutral";
+      const defaultIntensity =
+        seg.rhythm === "fast" ? 1.0 : seg.rhythm === "slow" ? 0.55 : 0.75;
+      const rawIntensity = Number(seg.camera_intensity ?? rp.camera_intensity ?? defaultIntensity);
+      const camera_intensity = Number.isFinite(rawIntensity)
+        ? Math.max(0, Math.min(rawIntensity, 1.2))
+        : defaultIntensity;
+
+      plans[seg.id] = {
+        shot_type,
+        camera_move,
+        lighting_tag,
+        camera_intensity: camera_move === "static" ? 0 : camera_intensity,
+      };
+    }
+    return plans;
+  }, [segments, props.renderPlan]);
 
   // 获取视频主题（通过 props 传入或默认 tech-blue）
   const { theme: themeId } = props;
@@ -383,14 +454,68 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
     let accum = 0;
     return segments.map((seg) => {
       const t = timing[String(seg.id)];
-      if (!t) return { start: accum, duration: 0, gap: 0 };
+      if (!t) return { segmentId: seg.id, start: accum, duration: 0, gap: 0 };
       const dur = Math.round(t.duration * fps);
       const gap = Math.round((t.gap_after || 0) * fps);
-      const info = { start: accum, duration: dur, gap };
+      const info = { segmentId: seg.id, start: accum, duration: dur, gap };
       accum += dur + gap;
       return info;
     });
   }, [segments, timing, fps]);
+
+  const beatCinematography = React.useMemo(() => {
+    const shots = props.shotPlan?.shots || [];
+    if (!shots.length) return [];
+
+    const segMap = new Map<number, ScriptSegment>();
+    for (const seg of segments) segMap.set(seg.id, seg);
+
+    return shots
+      .map((shot) => {
+        if (typeof shot.segment_id !== "number") return null;
+        if (typeof shot.start_sec !== "number" || typeof shot.end_sec !== "number") return null;
+        if (!(shot.end_sec > shot.start_sec)) return null;
+
+        const seg = segMap.get(shot.segment_id);
+        const fallback = segmentCinematography[shot.segment_id];
+        const move = isCameraMove(shot.camera_move)
+          ? shot.camera_move
+          : fallback?.camera_move || "subtle-zoom";
+        const lighting = isLightingTag(shot.lighting_tag)
+          ? shot.lighting_tag
+          : fallback?.lighting_tag || "neutral";
+        const defaultIntensity =
+          seg?.rhythm === "fast" ? 1.0 : seg?.rhythm === "slow" ? 0.55 : 0.75;
+        const rawIntensity = Number(
+          shot.camera_intensity ?? fallback?.camera_intensity ?? defaultIntensity,
+        );
+        const intensity = Number.isFinite(rawIntensity)
+          ? Math.max(0, Math.min(rawIntensity, 1.2))
+          : defaultIntensity;
+
+        const rawStart = Math.max(0, Math.round(shot.start_sec * fps));
+        const rawEnd = Math.max(rawStart + 1, Math.round(shot.end_sec * fps));
+        return {
+          beatId: shot.beat_id,
+          segmentId: shot.segment_id,
+          startFrame: rawStart,
+          endFrame: rawEnd,
+          camera_move: move,
+          lighting_tag: lighting,
+          camera_intensity: move === "static" ? 0 : intensity,
+        };
+      })
+      .filter((v): v is {
+        beatId: number;
+        segmentId: number;
+        startFrame: number;
+        endFrame: number;
+        camera_move: CameraMoveTag;
+        lighting_tag: LightingTag;
+        camera_intensity: number;
+      } => Boolean(v))
+      .sort((a, b) => a.startFrame - b.startFrame);
+  }, [props.shotPlan, segments, segmentCinematography, fps]);
 
   // ── LightLeak 位置：每 3 个转场边界 ──
 
@@ -419,6 +544,8 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
         {/* CameraRig 全局运镜（包裹所有可视内容） */}
         <CameraRig
           segmentFrameInfo={segmentFrameInfo}
+          segmentCameraPlans={segmentCinematography}
+          beatCameraPlans={beatCinematography}
           enabled={props.cameraRig !== false}
         >
           {/* 视频片段序列（TransitionSeries 多种转场） */}
@@ -531,6 +658,14 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
             />
           )}
         </CameraRig>
+
+        {/* 逐段光线标签叠加层（基于 render_plan / script 标签） */}
+        <LightingRig
+          segmentFrameInfo={segmentFrameInfo}
+          segmentLightingPlans={segmentCinematography}
+          beatLightingPlans={beatCinematography}
+          enabled={true}
+        />
 
         {/* FilmGrain 后期质感层（固定在屏幕上，不受运镜影响） */}
         <FilmGrain enabled={props.filmGrain !== false} />

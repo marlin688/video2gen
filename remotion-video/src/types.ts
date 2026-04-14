@@ -21,6 +21,33 @@ export type TransitionType =
   | "glitch"
   | "none";
 
+export type ShotTypeTag =
+  | "establishing"
+  | "medium"
+  | "close-up"
+  | "detail"
+  | "screen"
+  | "diagram"
+  | "data"
+  | "social"
+  | "cta"
+  | "quote";
+
+export type CameraMoveTag =
+  | "static"
+  | "push-in"
+  | "subtle-zoom"
+  | "drift-left"
+  | "drift-right";
+
+export type LightingTag =
+  | "neutral"
+  | "bright"
+  | "dramatic"
+  | "cool"
+  | "warm"
+  | "accent";
+
 export interface ScriptSegment {
   id: number;
   type: "intro" | "body" | "outro";
@@ -33,6 +60,11 @@ export interface ScriptSegment {
   component?: string;
   /** 进入本段的转场类型。缺失时按 segment.type 自动选择。 */
   transition?: TransitionType;
+  /** 可选电影语言标签（有则优先于自动推断） */
+  shot_type?: ShotTypeTag;
+  camera_move?: CameraMoveTag;
+  lighting_tag?: LightingTag;
+  camera_intensity?: number;
   // 素材 A
   slide_content?: SlideContent;
   // 素材 B
@@ -159,6 +191,62 @@ export interface SegmentTiming {
 
 export type TimingMap = Record<string, SegmentTiming>;
 
+export interface CinematographyTags {
+  shot_type: ShotTypeTag;
+  camera_move: CameraMoveTag;
+  lighting_tag: LightingTag;
+  camera_intensity: number;
+  tag_source?: "auto" | "script";
+}
+
+export interface RenderPlanSegment {
+  segment_id: number;
+  type: "intro" | "body" | "outro";
+  material: "A" | "B" | "C";
+  component?: string;
+  visual_type?: string;
+  narration_chars?: number;
+  asset_path?: string;
+  expected_assets?: string[];
+  scene_hint?: string;
+  cinematography?: CinematographyTags;
+  start_sec?: number;
+  end_sec?: number;
+  duration_sec?: number;
+  gap_after_sec?: number;
+}
+
+export interface RenderPlanData {
+  version: string;
+  title?: string;
+  render_backend?: string;
+  timing_source?: string;
+  has_timing?: boolean;
+  segments: RenderPlanSegment[];
+}
+
+export interface ShotPlanShot {
+  shot_id: number;
+  beat_id: number;
+  segment_id: number;
+  text?: string;
+  shot_type?: ShotTypeTag;
+  camera_move?: CameraMoveTag;
+  lighting_tag?: LightingTag;
+  camera_intensity?: number;
+  start_sec?: number | null;
+  end_sec?: number | null;
+  duration_sec?: number | null;
+}
+
+export interface ShotPlanData {
+  version: string;
+  title?: string;
+  timing_source?: string;
+  has_timing?: boolean;
+  shots: ShotPlanShot[];
+}
+
 /** 传给主 Composition 的 props */
 export interface VideoCompositionProps {
   script: ScriptData;
@@ -198,6 +286,10 @@ export interface VideoCompositionProps {
    * 实际存在的 "recordings/demo.mp4"。
    */
   sourceVideoMap?: Record<string, string>;
+  /** script.json 的渲染规划 sidecar（可选） */
+  renderPlan?: RenderPlanData;
+  /** script.json 的逐句分镜 sidecar（可选） */
+  shotPlan?: ShotPlanData;
 }
 
 /** 计算每个 segment 在时间线上的帧范围 */

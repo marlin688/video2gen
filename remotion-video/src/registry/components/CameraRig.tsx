@@ -18,12 +18,12 @@ import {
   AbsoluteFill,
   interpolate,
   useCurrentFrame,
-  useVideoConfig,
 } from "remotion";
 import { GLOBAL_EASE } from "../utils/easing";
 
 /** 运镜模式 */
 type CameraMove = "push-in" | "drift-right" | "subtle-zoom" | "drift-left";
+type CameraMoveTag = CameraMove | "static";
 
 const CAMERA_SEQUENCE: CameraMove[] = [
   "push-in",
@@ -33,14 +33,31 @@ const CAMERA_SEQUENCE: CameraMove[] = [
 ];
 
 interface SegmentFrameInfo {
+  segmentId: number;
   start: number;
   duration: number;
   gap: number;
 }
 
+interface SegmentCameraPlan {
+  camera_move?: CameraMoveTag;
+  camera_intensity?: number;
+}
+
+interface BeatCameraPlan {
+  beatId?: number;
+  segmentId: number;
+  startFrame: number;
+  endFrame: number;
+  camera_move?: CameraMoveTag;
+  camera_intensity?: number;
+}
+
 interface CameraRigProps {
   children: React.ReactNode;
   segmentFrameInfo: SegmentFrameInfo[];
+  segmentCameraPlans?: Record<number, SegmentCameraPlan>;
+  beatCameraPlans?: BeatCameraPlan[];
   enabled?: boolean;
   /** 最大缩放量（硬性上限 1.02） */
   maxScale?: number;
@@ -51,12 +68,13 @@ interface CameraRigProps {
 export const CameraRig: React.FC<CameraRigProps> = ({
   children,
   segmentFrameInfo,
+  segmentCameraPlans,
+  beatCameraPlans,
   enabled = true,
   maxScale = 1.02,
   maxTranslate = 12,
 }) => {
   const frame = useCurrentFrame();
-  const { durationInFrames } = useVideoConfig();
 
   // 硬性上限
   const scale = Math.min(maxScale, 1.02);
@@ -84,16 +102,33 @@ export const CameraRig: React.FC<CameraRigProps> = ({
     const info = segmentFrameInfo[currentSegIdx];
     if (!info || info.duration === 0) return "none";
 
-    const segEnd = info.start + info.duration + info.gap;
-    // 段内进度 0→1
+    const activeBeat = beatCameraPlans?.find(
+      (b) => frame >= b.startFrame && frame < b.endFrame,
+    );
+    const windowStart = activeBeat ? activeBeat.startFrame : info.start;
+    const windowEnd = activeBeat
+      ? Math.max(activeBeat.startFrame + 1, activeBeat.endFrame)
+      : info.start + info.duration + info.gap;
+
+    // 当前时间窗内进度 0→1（优先逐句，否则按段）
     const progress = interpolate(
       frame,
-      [info.start, segEnd],
+      [windowStart, windowEnd],
       [0, 1],
       { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: GLOBAL_EASE },
     );
 
-    const move = CAMERA_SEQUENCE[currentSegIdx % CAMERA_SEQUENCE.length];
+    const planned = segmentCameraPlans?.[info.segmentId];
+    const plannedMove = activeBeat?.camera_move ?? planned?.camera_move;
+    const move: CameraMoveTag =
+      plannedMove && (plannedMove === "static" || CAMERA_SEQUENCE.includes(plannedMove as CameraMove))
+        ? plannedMove
+        : CAMERA_SEQUENCE[currentSegIdx % CAMERA_SEQUENCE.length];
+    const rawIntensity = Number(activeBeat?.camera_intensity ?? planned?.camera_intensity ?? 0.75);
+    const intensity = Number.isFinite(rawIntensity)
+      ? Math.max(0, Math.min(rawIntensity, 1.2))
+      : 0.75;
+    if (move === "static" || intensity <= 0) return "none";
 
     // 钟形曲线 (sin bell)：progress 0 → 0, 0.5 → 1, 1 → 0
     // 保证每段起止都回到 identity，段边界零断层
@@ -107,24 +142,24 @@ export const CameraRig: React.FC<CameraRigProps> = ({
     switch (move) {
       case "push-in":
         // scale 在段中间峰值到 maxScale，两端均为 1.0
-        sx = sy = 1 + (scale - 1) * bell;
+        sx = sy = 1 + (scale - 1) * bell * intensity;
         break;
       case "subtle-zoom":
         // 更温和的推进（40% 力度），与 push-in 形成强弱对比
-        sx = sy = 1 + (scale - 1) * bell * 0.6;
+        sx = sy = 1 + (scale - 1) * bell * 0.6 * intensity;
         break;
       case "drift-right":
         // tx 在段中间峰值到 +translate，两端均为 0
-        tx = translate * bell;
+        tx = translate * bell * intensity;
         break;
       case "drift-left":
         // tx 在段中间峰值到 -translate，两端均为 0
-        tx = -translate * bell;
+        tx = -translate * bell * intensity;
         break;
     }
 
     return `scale(${sx}, ${sy}) translate(${tx}px, ${ty}px)`;
-  }, [enabled, frame, segmentFrameInfo, scale, translate]);
+  }, [enabled, frame, segmentFrameInfo, segmentCameraPlans, beatCameraPlans, scale, translate]);
 
   if (!enabled) {
     return <AbsoluteFill>{children}</AbsoluteFill>;

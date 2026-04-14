@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -64,6 +67,7 @@ class AssetMeta:
     freshness: str = "current"
     engagement_score: int | None = None  # -1/0/1
     file_path: str = ""
+    notes: str = ""
 
     def validate(self) -> list[str]:
         """校验枚举值，返回错误列表。"""
@@ -101,6 +105,12 @@ class AssetStore:
         self.close()
 
     def _init_tables(self):
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS store_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT DEFAULT ''
+            )
+        """)
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS video_stats (
                 bvid TEXT PRIMARY KEY,
@@ -164,6 +174,7 @@ class AssetStore:
                 freshness TEXT DEFAULT 'current',
                 engagement_score INTEGER,
                 file_path TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
                 created_at TEXT
             )
         """)
@@ -176,7 +187,19 @@ class AssetStore:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_freshness ON assets(freshness)"
         )
+        self._ensure_asset_columns()
         self._conn.commit()
+
+    def _ensure_asset_columns(self) -> None:
+        """Perform lightweight schema migrations for existing databases."""
+        columns = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(assets)").fetchall()
+        }
+        if "notes" not in columns:
+            self._conn.execute(
+                "ALTER TABLE assets ADD COLUMN notes TEXT DEFAULT ''"
+            )
 
     def insert(self, meta: AssetMeta) -> None:
         """插入素材，校验枚举值。"""
@@ -190,8 +213,8 @@ class AssetStore:
                (clip_id, source_video, time_range_start, time_range_end,
                 duration, captured_date, visual_type, tags, product, mood,
                 has_text_overlay, has_useful_audio, reusable, freshness,
-                engagement_score, file_path, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                engagement_score, file_path, notes, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 meta.clip_id, meta.source_video,
                 meta.time_range_start, meta.time_range_end,
@@ -202,7 +225,7 @@ class AssetStore:
                 meta.mood,
                 int(meta.has_text_overlay), int(meta.has_useful_audio),
                 int(meta.reusable), meta.freshness,
-                meta.engagement_score, meta.file_path, now,
+                meta.engagement_score, meta.file_path, meta.notes, now,
             ),
         )
         self._conn.commit()
@@ -265,6 +288,134 @@ class AssetStore:
         """素材总数。"""
         row = self._conn.execute("SELECT COUNT(*) FROM assets").fetchone()
         return row[0] if row else 0
+
+    def get_meta(self, key: str, default: str = "") -> str:
+        """Read a metadata value from the store."""
+        row = self._conn.execute(
+            "SELECT value FROM store_meta WHERE key = ?",
+            (key,),
+        ).fetchone()
+        return row["value"] if row else default
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Persist a metadata value in the store."""
+        self._conn.execute(
+            """INSERT OR REPLACE INTO store_meta (key, value)
+               VALUES (?, ?)""",
+            (key, value),
+        )
+        self._conn.commit()
+
+    def list_assets(
+        self,
+        *,
+        reusable_only: bool = False,
+        limit: int | None = None,
+    ) -> list[AssetMeta]:
+        """List assets ordered by recency."""
+        query = "SELECT * FROM assets"
+        params: list = []
+        if reusable_only:
+            query += " WHERE reusable = 1"
+        query += " ORDER BY captured_date DESC, created_at DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        rows = self._conn.execute(query, params).fetchall()
+        return [self._row_to_meta(r) for r in rows]
+
+    def search_text(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        reusable_only: bool = True,
+    ) -> list[AssetMeta]:
+        """Search assets by free-text overlap across notes, tags, and metadata."""
+        query_tokens = _tokenize_text(query)
+        if not query_tokens:
+            return []
+
+        candidates = self.list_assets(reusable_only=reusable_only)
+        scored: list[tuple[float, AssetMeta]] = []
+        min_hits = 1 if len(query_tokens) <= 2 else max(
+            2, math.ceil(len(query_tokens) * 0.3)
+        )
+
+        for asset in candidates:
+            asset_tokens = _asset_tokens(asset)
+            overlap = query_tokens & asset_tokens
+            if len(overlap) < min_hits:
+                continue
+
+            freshness_bonus = 0.05 if asset.freshness == "current" else 0.0
+            audio_bonus = 0.03 if asset.has_useful_audio else 0.0
+            score = len(overlap) / len(query_tokens) + freshness_bonus + audio_bonus
+            scored.append((score, asset))
+
+        scored.sort(
+            key=lambda item: (
+                item[0],
+                item[1].captured_date,
+                item[1].clip_id,
+            ),
+            reverse=True,
+        )
+        return [asset for _, asset in scored[:limit]]
+
+    def delete(self, clip_id: str) -> bool:
+        """Delete an asset by clip id."""
+        cur = self._conn.execute(
+            "DELETE FROM assets WHERE clip_id = ?",
+            (clip_id,),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def upsert_manual_asset(
+        self,
+        *,
+        file_path: str,
+        keywords: list[str],
+        description: str = "",
+        asset_type: str = "recording",
+        source_project: str = "",
+        duration: float = 0.0,
+        clip_id: str = "",
+        created_at: str = "",
+    ) -> AssetMeta:
+        """Insert or update a manually curated asset in the unified store."""
+        existing = self._conn.execute(
+            "SELECT clip_id FROM assets WHERE file_path = ?",
+            (file_path,),
+        ).fetchone()
+        normalized_path = str(Path(file_path))
+        resolved_clip_id = (
+            existing["clip_id"]
+            if existing
+            else (clip_id or _manual_clip_id(normalized_path))
+        )
+        created_ts = created_at or datetime.now(timezone.utc).isoformat()
+        captured_date = created_ts[:10]
+
+        meta = AssetMeta(
+            clip_id=resolved_clip_id,
+            source_video=source_project or "manual-library",
+            time_range_start=0.0,
+            time_range_end=duration,
+            duration=duration,
+            captured_date=captured_date,
+            visual_type=_normalize_manual_visual_type(asset_type),
+            tags=_dedupe_preserve_order(keywords),
+            product=_infer_products(description, keywords),
+            mood="demo",
+            reusable=True,
+            freshness="current",
+            file_path=normalized_path,
+            notes=description.strip(),
+        )
+        self.insert(meta)
+        return meta
 
     def count_stale(self) -> int:
         """过期素材数量。"""
@@ -336,10 +487,11 @@ class AssetStore:
         lines = ["## 可用素材库（可选复用）\n"]
         for a in assets:
             tags_str = ", ".join(a.tags[:3]) if a.tags else ""
+            note_str = f", note={a.notes[:24]}" if a.notes else ""
             lines.append(
                 f"- `{a.clip_id}`: {a.visual_type}/{a.mood}, "
                 f"tags=[{tags_str}], {a.duration:.1f}s, "
-                f"freshness={a.freshness}"
+                f"freshness={a.freshness}{note_str}"
             )
         return "\n".join(lines)
 
@@ -530,4 +682,69 @@ class AssetStore:
             freshness=row["freshness"] or "current",
             engagement_score=row["engagement_score"],
             file_path=row["file_path"] or "",
+            notes=row["notes"] or "",
         )
+
+
+def _normalize_manual_visual_type(asset_type: str) -> str:
+    normalized = (asset_type or "").strip().lower()
+    if normalized in {"recording", "capture"}:
+        return "screen_recording"
+    if normalized == "screenshot":
+        return "screenshot"
+    if normalized in VISUAL_TYPES:
+        return normalized
+    return "screen_recording"
+
+
+def _infer_products(description: str, keywords: list[str]) -> list[str]:
+    text = " ".join([description, *keywords]).lower()
+    inferred = [product for product in PRODUCTS if product in text and product != "other"]
+    return inferred[:3] if inferred else ["other"]
+
+
+def _manual_clip_id(file_path: str) -> str:
+    stem = Path(file_path).stem or "asset"
+    safe_stem = re.sub(r"[^a-z0-9]+", "-", stem.lower()).strip("-") or "asset"
+    digest = hashlib.sha1(file_path.encode("utf-8")).hexdigest()[:8]
+    return f"manual-{safe_stem}-{digest}"
+
+
+def _asset_tokens(asset: AssetMeta) -> set[str]:
+    tokens = set()
+    for value in (
+        asset.clip_id,
+        asset.source_video,
+        asset.visual_type,
+        asset.mood,
+        asset.file_path,
+        asset.notes,
+    ):
+        tokens.update(_tokenize_text(value))
+    for group in (asset.tags, asset.product):
+        for value in group:
+            tokens.update(_tokenize_text(value))
+    return tokens
+
+
+def _tokenize_text(text: str) -> set[str]:
+    if not text:
+        return set()
+    tokens = set(re.findall(r"[a-zA-Z0-9_\-\.]+", text.lower()))
+    for seg in re.findall(r"[\u4e00-\u9fff]+", text):
+        tokens.add(seg)
+        for i in range(len(seg) - 1):
+            tokens.add(seg[i : i + 2])
+    return tokens
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        cleaned = value.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result

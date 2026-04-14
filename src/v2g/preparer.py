@@ -1,6 +1,7 @@
 """Stage 2: 调用 yt-dlp 下载视频 + 英文字幕。"""
 
 import re
+import shutil
 import subprocess
 from dataclasses import asdict
 from pathlib import Path
@@ -9,6 +10,11 @@ import click
 
 from v2g.config import Config
 from v2g.checkpoint import PipelineState, SourceVideo
+from v2g.services.input_adapters import (
+    build_youtube_url,
+    find_local_video_subtitles,
+    resolve_source_input,
+)
 
 
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".avi"}
@@ -31,20 +37,14 @@ def _which(name: str) -> str | None:
 
 def _extract_video_id(video_id_or_url: str) -> str:
     """从 URL 或纯 ID 提取 video_id。"""
-    if re.match(r"^[\w-]{11}$", video_id_or_url):
-        return video_id_or_url
-    patterns = [
-        r"(?:v=|youtu\.be/|embed/)([^&?/]+)",
-    ]
-    for pat in patterns:
-        m = re.search(pat, video_id_or_url)
-        if m:
-            return m.group(1)
-    return video_id_or_url
+    source = resolve_source_input(video_id_or_url)
+    if source.kind == "youtube":
+        return source.video_id
+    return source.stable_id
 
 
 def _build_youtube_url(video_id: str) -> str:
-    return f"https://www.youtube.com/watch?v={video_id}"
+    return build_youtube_url(video_id)
 
 
 def _find_source_dir(video_id: str, cfg: Config) -> Path:
@@ -218,11 +218,38 @@ def _download_video(url: str, output_dir: Path) -> Path | None:
     return _find_existing_video(output_dir)
 
 
+def _prepare_local_video(source_path: Path, output_dir: Path) -> tuple[Path, Path | None, Path | None]:
+    """Stage local video files into sources/<id>/ and discover sidecar subtitles."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    staged_video = output_dir / f"video{source_path.suffix.lower()}"
+    if not staged_video.exists():
+        try:
+            staged_video.symlink_to(source_path.resolve())
+        except OSError:
+            shutil.copy2(source_path, staged_video)
+
+    zh_srt, en_srt = find_local_video_subtitles(source_path)
+    staged_zh: Path | None = None
+    staged_en: Path | None = None
+
+    if zh_srt:
+        staged_zh = output_dir / "subtitle_zh.srt"
+        if not staged_zh.exists():
+            shutil.copy2(zh_srt, staged_zh)
+    if en_srt:
+        staged_en = output_dir / "subtitle_en.srt"
+        if not staged_en.exists():
+            shutil.copy2(en_srt, staged_en)
+
+    return staged_video, staged_zh, staged_en
+
+
 def run_prepare(cfg: Config, video_id_or_url: str, model: str = "",
                 whisper_model: str = "medium", use_whisper: bool = True) -> PipelineState:
     """执行 Stage 2: 下载英文字幕 + 下载视频。"""
+    source = resolve_source_input(video_id_or_url)
     video_id = _extract_video_id(video_id_or_url)
-    url = _build_youtube_url(video_id)
+    url = source.url or source.raw
 
     state = PipelineState.load(cfg.output_dir, video_id)
     state.video_id = video_id
@@ -230,6 +257,32 @@ def run_prepare(cfg: Config, video_id_or_url: str, model: str = "",
     state.selected = True
 
     source_dir = _ensure_source_dir(video_id, cfg)
+
+    if source.kind == "local_video" and source.path:
+        click.echo("📁 接入本地视频素材...")
+        try:
+            video_path, zh_srt, en_srt = _prepare_local_video(source.path, source_dir)
+        except Exception as e:
+            state.last_error = f"本地视频准备失败: {e}"
+            state.save(cfg.output_dir)
+            raise click.ClickException(state.last_error)
+
+        state.source_video = str(video_path.absolute())
+        state.zh_srt = str(zh_srt.resolve()) if zh_srt and zh_srt.exists() else ""
+        state.en_srt = str(en_srt.resolve()) if en_srt and en_srt.exists() else ""
+        state.downloaded = True
+        state.subtitled = bool(state.zh_srt or state.en_srt)
+        if not state.subtitled:
+            state.last_error = (
+                "本地视频缺少明确命名的字幕文件。"
+                "请在同目录提供 subtitle_zh.srt 或 subtitle_en.srt"
+            )
+            state.save(cfg.output_dir)
+            raise click.ClickException(state.last_error)
+
+        state.last_error = ""
+        state.save(cfg.output_dir)
+        return state
 
     # 1) 下载英文字幕
     if not state.subtitled:

@@ -21,6 +21,7 @@ dependencies = [
 scout = ["feedparser>=6.0"]
 notebooklm = ["notebooklm-py[browser]>=0.1"]
 subtitle = ["mlx-whisper>=0.4"]
+tts_voxcpm = ["voxcpm", "soundfile>=0.12"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

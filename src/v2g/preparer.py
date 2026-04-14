@@ -248,6 +248,7 @@ def run_prepare(cfg: Config, video_id_or_url: str, model: str = "",
                 whisper_model: str = "medium", use_whisper: bool = True) -> PipelineState:
     """执行 Stage 2: 下载英文字幕 + 下载视频。"""
     source = resolve_source_input(video_id_or_url)
+    from v2g.workflow_contract import sync_workflow_contract
     video_id = _extract_video_id(video_id_or_url)
     url = source.url or source.raw
 
@@ -257,6 +258,13 @@ def run_prepare(cfg: Config, video_id_or_url: str, model: str = "",
     state.selected = True
 
     source_dir = _ensure_source_dir(video_id, cfg)
+    project_dir = cfg.output_dir / video_id
+    sync_workflow_contract(
+        project_dir, video_id,
+        stage="prepare", status="start",
+        message="开始下载字幕和视频",
+        extra={"video_url": url},
+    )
 
     if source.kind == "local_video" and source.path:
         click.echo("📁 接入本地视频素材...")
@@ -296,6 +304,11 @@ def run_prepare(cfg: Config, video_id_or_url: str, model: str = "",
         except Exception as e:
             state.last_error = f"字幕下载失败: {e}"
             state.save(cfg.output_dir)
+            sync_workflow_contract(
+                project_dir, video_id,
+                stage="prepare", status="error",
+                message=state.last_error,
+            )
             raise click.ClickException(state.last_error)
 
         en_srt = source_dir / "subtitle_en.srt"
@@ -326,6 +339,11 @@ def run_prepare(cfg: Config, video_id_or_url: str, model: str = "",
         except Exception as e:
             state.last_error = f"视频下载失败: {e}"
             state.save(cfg.output_dir)
+            sync_workflow_contract(
+                project_dir, video_id,
+                stage="prepare", status="error",
+                message=state.last_error,
+            )
             raise click.ClickException(state.last_error)
 
         state.downloaded = True
@@ -334,6 +352,12 @@ def run_prepare(cfg: Config, video_id_or_url: str, model: str = "",
 
     state.last_error = ""
     state.save(cfg.output_dir)
+    sync_workflow_contract(
+        project_dir, video_id,
+        stage="prepare", status="ok",
+        message="prepare 完成",
+        extra={"subtitled": state.subtitled, "downloaded": state.downloaded},
+    )
     return state
 
 
@@ -342,6 +366,8 @@ def run_multi_prepare(cfg: Config, urls: list[str], project_id: str,
                       whisper_model: str = "medium",
                       use_whisper: bool = True) -> PipelineState:
     """批量准备 N 个源视频: 下载字幕 + 下载视频。"""
+    from v2g.workflow_contract import sync_workflow_contract
+
     state = PipelineState.load(cfg.output_dir, project_id)
     state.project_id = project_id
     state.video_id = project_id
@@ -361,6 +387,13 @@ def run_multi_prepare(cfg: Config, urls: list[str], project_id: str,
         )))
 
     total = len(state.sources)
+    project_dir = cfg.output_dir / project_id
+    sync_workflow_contract(
+        project_dir, project_id,
+        stage="multi_prepare", status="start",
+        message="开始多源准备",
+        extra={"topic": topic, "source_count": total},
+    )
     click.echo(f"📦 多源准备: {total} 个视频, 主题: {topic}\n")
 
     all_done = True
@@ -391,6 +424,11 @@ def run_multi_prepare(cfg: Config, urls: list[str], project_id: str,
             all_done = False
             state.sources[i] = asdict(src)
             state.save(cfg.output_dir)
+            sync_workflow_contract(
+                project_dir, project_id,
+                stage="multi_prepare", status="error",
+                message=f"{src.video_id} 字幕失败: {e}",
+            )
             continue
 
         # 2) 下载视频
@@ -405,6 +443,11 @@ def run_multi_prepare(cfg: Config, urls: list[str], project_id: str,
             all_done = False
             state.sources[i] = asdict(src)
             state.save(cfg.output_dir)
+            sync_workflow_contract(
+                project_dir, project_id,
+                stage="multi_prepare", status="error",
+                message=f"{src.video_id} 视频失败: {e}",
+            )
             continue
 
         # 提取频道名和标题
@@ -430,7 +473,12 @@ def run_multi_prepare(cfg: Config, urls: list[str], project_id: str,
     state.downloaded = all_done
     state.selected = True
     state.save(cfg.output_dir)
-
     done_count = sum(1 for s in state.get_sources() if s.prepared)
+    sync_workflow_contract(
+        project_dir, project_id,
+        stage="multi_prepare", status="ok" if all_done else "partial",
+        message="multi prepare 完成",
+        extra={"prepared": done_count, "total": total},
+    )
     click.echo(f"\n📊 准备完成: {done_count}/{total}")
     return state

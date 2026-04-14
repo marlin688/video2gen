@@ -1,9 +1,10 @@
-"""Stage 4: TTS 中文语音合成 (支持 edge-tts / MiniMax Speech / GPT-SoVITS)。"""
+"""Stage 4: TTS 中文语音合成 (支持 VoxCPM / edge-tts / MiniMax Speech / GPT-SoVITS)。"""
 
 import asyncio
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import click
@@ -11,6 +12,8 @@ import requests
 
 from v2g.config import Config
 from v2g.checkpoint import PipelineState
+
+_VOXCPM_MODEL_CACHE: dict[str, object] = {}
 
 
 def _get_ffprobe() -> str:
@@ -51,7 +54,8 @@ async def _generate_segment_edge(text: str, output_path: Path, voice: str, rate:
 
     proxy = os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY") or os.environ.get("http_proxy") or os.environ.get("HTTP_PROXY")
     communicate = edge_tts.Communicate(text, voice, rate=rate, proxy=proxy)
-    await communicate.save(str(output_path))
+    timeout_sec = float(os.environ.get("TTS_EDGE_TIMEOUT", "120"))
+    await asyncio.wait_for(communicate.save(str(output_path)), timeout=timeout_sec)
 
 
 # ─── MiniMax Speech 引擎 ───
@@ -107,6 +111,143 @@ def _generate_segment_minimax(text: str, output_path: Path, voice_id: str, speed
 
     audio_bytes = bytes.fromhex(audio_hex)
     output_path.write_bytes(audio_bytes)
+
+
+# ─── VoxCPM 引擎 ───
+
+VOXCPM_DEFAULT_MODEL = "openbmb/VoxCPM2"
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _load_voxcpm_model():
+    """按环境变量加载并缓存 VoxCPM 模型，避免每个 segment 重复加载。"""
+    model_id = os.environ.get("TTS_VOXCPM_MODEL", VOXCPM_DEFAULT_MODEL).strip() or VOXCPM_DEFAULT_MODEL
+    device = os.environ.get("TTS_VOXCPM_DEVICE", "auto").strip() or "auto"
+    optimize = _env_bool("TTS_VOXCPM_OPTIMIZE", True)
+    load_denoiser = _env_bool("TTS_VOXCPM_LOAD_DENOISER", False)
+    cache_key = f"{model_id}|{device}|{optimize}|{load_denoiser}"
+
+    cached = _VOXCPM_MODEL_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        from voxcpm import VoxCPM
+    except ImportError as e:
+        raise RuntimeError(
+            "未安装 voxcpm，请先执行: pip install voxcpm soundfile"
+        ) from e
+
+    kwargs = {
+        "device": device,
+        "load_denoiser": load_denoiser,
+        "optimize": optimize,
+    }
+    try:
+        model = VoxCPM.from_pretrained(model_id, **kwargs)
+    except TypeError:
+        # 兼容旧版本接口（可能不支持 optimize 参数）
+        kwargs.pop("optimize", None)
+        model = VoxCPM.from_pretrained(model_id, **kwargs)
+
+    _VOXCPM_MODEL_CACHE.clear()
+    _VOXCPM_MODEL_CACHE[cache_key] = model
+    return model
+
+
+def _normalize_voxcpm_waveform(wav):
+    """将 VoxCPM 输出统一为可写盘的一维浮点数组。"""
+    if hasattr(wav, "detach"):  # torch.Tensor
+        wav = wav.detach().cpu().numpy()
+    elif hasattr(wav, "cpu") and hasattr(wav, "numpy"):  # 其他 tensor 类型
+        wav = wav.cpu().numpy()
+
+    try:
+        import numpy as np
+        arr = np.asarray(wav)
+        if arr.ndim > 1:
+            arr = arr.squeeze()
+        return arr
+    except Exception:
+        return wav
+
+
+def _build_voxcpm_text(narration: str) -> str:
+    """按控制指令拼接 VoxCPM 输入文本。"""
+    control = (os.environ.get("TTS_VOXCPM_CONTROL") or "").strip()
+    if not control:
+        return narration
+    stripped = narration.lstrip()
+    if stripped.startswith("("):
+        return narration
+    return f"({control}){narration}"
+
+
+def _generate_segment_voxcpm(text: str, output_path: Path):
+    """VoxCPM 本地推理并输出 MP3。"""
+    model = _load_voxcpm_model()
+
+    cfg_value = float(os.environ.get("TTS_VOXCPM_CFG_VALUE", "2.0"))
+    inference_timesteps = int(os.environ.get("TTS_VOXCPM_INFERENCE_TIMESTEPS", "10"))
+    normalize = _env_bool("TTS_VOXCPM_NORMALIZE", False)
+    denoise = _env_bool("TTS_VOXCPM_DENOISE", False)
+    retry_badcase = _env_bool("TTS_VOXCPM_RETRY_BADCASE", True)
+
+    reference_wav_path = (os.environ.get("TTS_VOXCPM_REFERENCE_AUDIO") or "").strip()
+    prompt_wav_path = (os.environ.get("TTS_VOXCPM_PROMPT_AUDIO") or "").strip()
+    prompt_text = (os.environ.get("TTS_VOXCPM_PROMPT_TEXT") or "").strip()
+
+    if bool(prompt_wav_path) != bool(prompt_text):
+        raise RuntimeError(
+            "VoxCPM 高保真克隆需要同时设置 TTS_VOXCPM_PROMPT_AUDIO 与 TTS_VOXCPM_PROMPT_TEXT"
+        )
+    if reference_wav_path and not Path(reference_wav_path).exists():
+        raise RuntimeError(f"TTS_VOXCPM_REFERENCE_AUDIO 不存在: {reference_wav_path}")
+    if prompt_wav_path and not Path(prompt_wav_path).exists():
+        raise RuntimeError(f"TTS_VOXCPM_PROMPT_AUDIO 不存在: {prompt_wav_path}")
+
+    kwargs = {
+        "text": _build_voxcpm_text(text),
+        "cfg_value": cfg_value,
+        "inference_timesteps": inference_timesteps,
+        "normalize": normalize,
+        "denoise": denoise,
+        "retry_badcase": retry_badcase,
+    }
+    if reference_wav_path:
+        kwargs["reference_wav_path"] = reference_wav_path
+    if prompt_wav_path:
+        kwargs["prompt_wav_path"] = prompt_wav_path
+        kwargs["prompt_text"] = prompt_text
+
+    wav = model.generate(**kwargs)
+    sample_rate = getattr(getattr(model, "tts_model", None), "sample_rate", None)
+    if isinstance(wav, tuple) and len(wav) == 2:
+        wav, sr = wav
+        if isinstance(sr, int):
+            sample_rate = sr
+    sample_rate = int(sample_rate or 48000)
+    wav = _normalize_voxcpm_waveform(wav)
+
+    wav_tmp = output_path.with_suffix(".wav")
+    try:
+        import soundfile as sf
+    except ImportError as e:
+        raise RuntimeError("未安装 soundfile，请先执行: pip install soundfile") from e
+
+    sf.write(str(wav_tmp), wav, sample_rate)
+    subprocess.run(
+        [_get_ffmpeg_exe(), "-y", "-i", str(wav_tmp),
+         "-c:a", "libmp3lame", "-q:a", "2", str(output_path)],
+        capture_output=True, text=True, timeout=120,
+    )
+    wav_tmp.unlink(missing_ok=True)
 
 
 # ─── GPT-SoVITS 引擎 ───
@@ -209,14 +350,14 @@ def _concat_segments(segment_files: list[Path], output_path: Path, gap_sec: floa
 
 
 def _detect_tts_engine() -> str:
-    """检测使用哪个 TTS 引擎: edge / minimax / sovits。
+    """检测使用哪个 TTS 引擎: voxcpm / edge / minimax / sovits。
 
-    默认 edge（免费），设置 TTS_ENGINE=minimax 或 sovits 切换。
+    默认 voxcpm，本地高质量；可通过 TTS_ENGINE 覆盖。
     """
     engine = os.environ.get("TTS_ENGINE", "").lower()
-    if engine in ("minimax", "edge", "sovits"):
+    if engine in ("voxcpm", "minimax", "edge", "sovits"):
         return engine
-    return "edge"
+    return "voxcpm"
 
 
 def _parse_rate_to_speed(rate: str) -> float:
@@ -228,17 +369,43 @@ def _parse_rate_to_speed(rate: str) -> float:
         return 1.0
 
 
+def _is_transient_edge_error(err: Exception) -> bool:
+    if isinstance(err, TimeoutError):
+        return True
+    msg = str(err)
+    transient_markers = (
+        "No audio was received",
+        "Cannot connect to host",
+        "Connection reset",
+        "timed out",
+        "Temporary failure",
+    )
+    return any(m in msg for m in transient_markers)
+
+
 def run_tts(cfg: Config, video_id: str, voice: str, rate: str, force: bool = False) -> PipelineState:
     """执行 Stage 4: TTS 配音。"""
+    from v2g.workflow_contract import sync_workflow_contract
+
     state = PipelineState.load(cfg.output_dir, video_id)
     if not state.script_reviewed:
         raise click.ClickException("脚本尚未审核，请先运行 v2g review")
 
     output_dir = cfg.output_dir / video_id
     voiceover_dir = output_dir / "voiceover"
+    sync_workflow_contract(
+        output_dir, video_id,
+        stage="tts", status="start",
+        message="开始 TTS 配音",
+    )
 
     if state.tts_done:
         click.echo("⏭️  TTS 已完成，跳过")
+        sync_workflow_contract(
+            output_dir, video_id,
+            stage="tts", status="skip",
+            message="TTS 已存在，跳过",
+        )
         # 自愈：即使 TTS 已完成，若缺少 word_timing.json 仍尝试补齐词级对齐
         if not (voiceover_dir / "word_timing.json").exists():
             click.echo("   🔁 缺少 word_timing.json，自动补齐词级对齐")
@@ -271,6 +438,12 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str, force: bool = Fal
             click.echo(f"   ... 其余 {len(blockers) - 10} 项省略")
 
         if not force:
+            sync_workflow_contract(
+                output_dir, video_id,
+                stage="tts", status="error",
+                message="脚本结构校验失败，阻断 TTS",
+                extra={"blocker_count": len(blockers)},
+            )
             raise click.ClickException(
                 "请先修复 script.json 后再运行 tts；如需跳过可加 --force"
             )
@@ -285,7 +458,15 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str, force: bool = Fal
 
     engine = _detect_tts_engine()
 
-    if engine == "sovits":
+    if engine == "voxcpm":
+        voxcpm_model = os.environ.get("TTS_VOXCPM_MODEL", VOXCPM_DEFAULT_MODEL)
+        voxcpm_device = os.environ.get("TTS_VOXCPM_DEVICE", "auto")
+        voxcpm_control = (os.environ.get("TTS_VOXCPM_CONTROL") or "").strip()
+        msg = f"🎙️ TTS 配音 [VoxCPM] (模型: {voxcpm_model}, device: {voxcpm_device})"
+        if voxcpm_control:
+            msg += f" (控制: {voxcpm_control})"
+        click.echo(msg)
+    elif engine == "sovits":
         sovits_url = os.environ.get("TTS_SOVITS_URL", SOVITS_DEFAULT_URL)
         sovits_ref = os.environ.get("TTS_SOVITS_REF_AUDIO", "")
         sovits_ref_text = os.environ.get("TTS_SOVITS_REF_TEXT", "")
@@ -308,37 +489,61 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str, force: bool = Fal
         seg_file = segments_dir / f"seg_{seg_id}.mp3"
         click.echo(f"   Segment {seg_id}: {narration[:30]}...")
 
-        try:
-            if engine == "sovits":
-                _generate_segment_sovits(
-                    narration, seg_file,
-                    server_url=sovits_url,
-                    ref_audio=sovits_ref,
-                    ref_text=sovits_ref_text,
-                    speed=sovits_speed,
-                )
-            elif engine == "minimax":
-                _generate_segment_minimax(narration, seg_file, minimax_voice, minimax_speed)
-            else:
-                asyncio.run(_generate_segment_edge(narration, seg_file, voice, rate))
+        retries = int(os.environ.get("TTS_SEGMENT_RETRIES", "4"))
+        last_error: Exception | None = None
 
-            # 记录 TTS 字符消耗
-            from v2g.cost import get_tracker
-            get_tracker().record_tts(len(narration), engine)
+        for attempt in range(1, retries + 1):
+            try:
+                if engine == "voxcpm":
+                    _generate_segment_voxcpm(narration, seg_file)
+                elif engine == "sovits":
+                    _generate_segment_sovits(
+                        narration, seg_file,
+                        server_url=sovits_url,
+                        ref_audio=sovits_ref,
+                        ref_text=sovits_ref_text,
+                        speed=sovits_speed,
+                    )
+                elif engine == "minimax":
+                    _generate_segment_minimax(narration, seg_file, minimax_voice, minimax_speed)
+                else:
+                    asyncio.run(_generate_segment_edge(narration, seg_file, voice, rate))
 
-            duration = _get_duration(seg_file)
-            timing[str(seg_id)] = {
-                "file": str(seg_file),
-                "duration": duration,
-                "text_length": len(narration),
-                "gap_after": gap_sec,
-            }
-            segment_files.append(seg_file)
-            click.echo(f"   ✅ {duration:.1f}s")
-        except Exception as e:
-            click.echo(f"   ❌ Segment {seg_id} 失败: {e}")
-            state.last_error = f"TTS segment {seg_id} 失败: {e}"
+                # 记录 TTS 字符消耗
+                from v2g.cost import get_tracker
+                get_tracker().record_tts(len(narration), engine)
+
+                duration = _get_duration(seg_file)
+                timing[str(seg_id)] = {
+                    "file": str(seg_file),
+                    "duration": duration,
+                    "text_length": len(narration),
+                    "gap_after": gap_sec,
+                }
+                segment_files.append(seg_file)
+                click.echo(f"   ✅ {duration:.1f}s")
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+                seg_file.unlink(missing_ok=True)
+                if engine == "edge" and attempt < retries and _is_transient_edge_error(e):
+                    wait_sec = min(8, 2 * attempt)
+                    click.echo(f"   ⚠️ Segment {seg_id} 临时失败，{wait_sec}s 后重试: {e}")
+                    time.sleep(wait_sec)
+                    continue
+                break
+
+        if last_error is not None:
+            click.echo(f"   ❌ Segment {seg_id} 失败: {last_error}")
+            state.last_error = f"TTS segment {seg_id} 失败: {last_error}"
             state.save(cfg.output_dir)
+            sync_workflow_contract(
+                output_dir, video_id,
+                stage="tts", status="error",
+                message=state.last_error,
+                extra={"segment_id": seg_id},
+            )
             raise click.ClickException(state.last_error)
 
     # 最后一段不加静音
@@ -352,6 +557,21 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str, force: bool = Fal
     timing_path.write_text(json.dumps(timing, ensure_ascii=False, indent=2), encoding="utf-8")
     state.voiceover_timing = str(timing_path)
 
+    # 将 TTS 时间轴回写到 shot_plan/render_plan，形成可卡点分镜
+    from v2g.scriptwriter import sync_script_sidecars, validate_script_sidecars
+    sync_script_sidecars(script_data, output_dir)
+    sidecar_issues = validate_script_sidecars(script_data, output_dir)
+    if sidecar_issues:
+        sync_workflow_contract(
+            output_dir, video_id,
+            stage="tts", status="error",
+            message="TTS 后 sidecar 一致性校验失败",
+            extra={"issues": sidecar_issues[:8]},
+        )
+        raise click.ClickException(
+            "TTS 后 sidecar 一致性校验失败:\n- " + "\n- ".join(sidecar_issues[:8])
+        )
+
     # 合并音频
     if segment_files:
         voiceover_path = voiceover_dir / "full.mp3"
@@ -364,6 +584,12 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str, force: bool = Fal
     state.tts_done = True
     state.last_error = ""
     state.save(cfg.output_dir)
+    sync_workflow_contract(
+        output_dir, video_id,
+        stage="tts", status="ok",
+        message="TTS 完成",
+        extra={"engine": engine, "segments": len(segment_files)},
+    )
 
     # 词级时间戳对齐（可选，mlx-whisper 未安装时跳过）
     try:

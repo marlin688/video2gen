@@ -221,15 +221,20 @@ def _tool_save_script(script_json_str: str) -> str:
     )
 
     # 复用 scriptwriter 的辅助生成
-    from v2g.scriptwriter import _generate_script_md, _generate_recording_guide
+    from v2g.scriptwriter import (
+        sync_script_sidecars,
+        validate_script_sidecars,
+    )
 
-    _generate_script_md(script_data, output_dir / "script.md")
-    _generate_recording_guide(script_data, output_dir / "recording_guide.md")
+    sync_script_sidecars(script_data, output_dir)
+    sidecar_issues = validate_script_sidecars(script_data, output_dir)
+    if sidecar_issues:
+        return "脚本已保存，但 sidecar 校验失败: " + "; ".join(sidecar_issues[:5])
 
     click.echo(f"   ✅ 脚本已保存: {script_json_path}")
 
     ctx["script_saved"] = True
-    return "脚本已保存到 script.json、script.md、recording_guide.md。"
+    return "脚本已保存到 script.json、script.md、recording_guide.md、script_beats.md、shot_plan.json、render_plan.json。"
 
 
 def _tool_search_github(query: str, min_stars: int = 100) -> str:
@@ -840,6 +845,8 @@ def run_agent(
     auto_confirm: True 时根据评分自动确认大纲，不需人工交互。
     auto_confirm_threshold: 自动确认的最低分数（0-100）。
     """
+    from v2g.workflow_contract import sync_workflow_contract
+
     model = model or cfg.script_model
     try:
         profile = resolve_quality_profile(quality_profile)
@@ -861,6 +868,12 @@ def run_agent(
 
     output_dir = cfg.output_dir / project_id
     output_dir.mkdir(parents=True, exist_ok=True)
+    sync_workflow_contract(
+        output_dir, project_id,
+        stage="agent", status="start",
+        message="Agent 任务启动",
+        extra={"topic": topic, "source_count": len(sources)},
+    )
 
     # Load or create state
     state = PipelineState.load(cfg.output_dir, project_id)
@@ -927,6 +940,11 @@ def run_agent(
         _dispatch_agent_loop(system_prompt, user_message, model)
 
         if not _get_ctx().get("outline_saved"):
+            sync_workflow_contract(
+                output_dir, project_id,
+                stage="agent", status="error",
+                message="Agent 未生成大纲",
+            )
             raise click.ClickException("Agent 未生成大纲。请检查素材内容后重试。")
 
         state.agent_outline_done = True
@@ -991,7 +1009,11 @@ def run_agent(
             system_prompt += "\n\n" + asset_ctx
 
         from v2g.llm import call_llm
-        from v2g.scriptwriter import _extract_json, _generate_script_md, _generate_recording_guide
+        from v2g.scriptwriter import (
+            _extract_json,
+            sync_script_sidecars,
+            validate_script_sidecars,
+        )
 
         try:
             script_data = _generate_script_phased(
@@ -1000,15 +1022,17 @@ def run_agent(
         except Exception as e:
             state.last_error = f"脚本生成失败: {e}"
             state.save(cfg.output_dir)
+            sync_workflow_contract(
+                output_dir, project_id,
+                stage="agent", status="error",
+                message=state.last_error,
+            )
             raise click.ClickException(state.last_error)
 
         # 保存脚本及辅助文件
         script_path.write_text(
             json.dumps(script_data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        _generate_script_md(script_data, output_dir / "script.md")
-        _generate_recording_guide(script_data, output_dir / "recording_guide.md")
-
         # Update checkpoint
         state.script_json = str(script_path)
         state.recording_guide = str(output_dir / "recording_guide.md")
@@ -1040,9 +1064,29 @@ def run_agent(
                 json.dumps(script_data, ensure_ascii=False, indent=2), encoding="utf-8"
             )
 
+        # 统一以最终修复后的 script 生成辅助文件，避免产物不一致
+        sync_script_sidecars(script_data, output_dir)
+        sidecar_issues = validate_script_sidecars(script_data, output_dir)
+        if sidecar_issues:
+            sync_workflow_contract(
+                output_dir, project_id,
+                stage="agent", status="error",
+                message="脚本 sidecar 一致性校验失败",
+                extra={"issues": sidecar_issues[:8]},
+            )
+            raise click.ClickException(
+                "脚本 sidecar 一致性校验失败: " + "; ".join(sidecar_issues[:8])
+            )
+
         state.scripted = True
-        state.last_error = ""
-        state.save(cfg.output_dir)
+    state.last_error = ""
+    state.save(cfg.output_dir)
+    sync_workflow_contract(
+        output_dir, project_id,
+        stage="agent", status="ok",
+        message="Agent 阶段完成",
+        extra={"scripted": state.scripted, "tts_done": state.tts_done, "slides_done": state.slides_done},
+    )
 
     # ── Phase 2.5: 质量门控（agent 模式不自动重试，仅报告）─────
     from v2g.pipeline import _run_quality_gate

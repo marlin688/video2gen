@@ -93,6 +93,24 @@ class TestValidScript:
         assert data.total_duration_hint == 120.5
         assert data.sources_used == ["src1", "src2"]
 
+    def test_cinematography_tags_valid(self):
+        seg = _make_segment(
+            1,
+            "body",
+            "A",
+            shot_type="data",
+            camera_move="push-in",
+            lighting_tag="accent",
+            camera_intensity=0.8,
+        )
+        data, errors = validate_script(_make_script(segments=[seg]))
+        assert errors == []
+        parsed = data.segments[0]
+        assert parsed.shot_type == "data"
+        assert parsed.camera_move == "push-in"
+        assert parsed.lighting_tag == "accent"
+        assert parsed.camera_intensity == 0.8
+
     def test_code_block_annotations_string_keys(self):
         """annotations 的 key 应为 string（JSON 序列化后的行号）。"""
         seg = _make_segment(1, "body", "B", component="code-block.default",
@@ -230,3 +248,15 @@ class TestInvalidScript:
         seg = _make_segment(1, "body", "A", unknown_field="should be ignored")
         data, errors = validate_script(_make_script(segments=[seg]))
         assert errors == []
+
+    def test_camera_intensity_out_of_range(self):
+        seg = _make_segment(1, "body", "A", camera_move="push-in", camera_intensity=2.0)
+        _, errors = validate_script(_make_script(segments=[seg]))
+        assert errors
+        assert any("camera_intensity" in e for e in errors)
+
+    def test_static_camera_requires_zero_intensity(self):
+        seg = _make_segment(1, "body", "A", camera_move="static", camera_intensity=0.3)
+        _, errors = validate_script(_make_script(segments=[seg]))
+        assert errors
+        assert any("camera_move=static" in e for e in errors)

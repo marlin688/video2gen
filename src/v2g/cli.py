@@ -84,6 +84,8 @@ def script(cfg: Config, video_id, model, profile):
 @click.pass_obj
 def review(cfg: Config, video_id, force):
     """标记脚本审核通过 (确认录屏素材已就绪)"""
+    from v2g.workflow_contract import sync_workflow_contract
+
     state = PipelineState.load(cfg.output_dir, video_id)
     if not state.scripted:
         raise click.ClickException("脚本尚未生成，请先运行 v2g script")
@@ -112,6 +114,12 @@ def review(cfg: Config, video_id, force):
                 click.echo(f"   ... 其余 {len(blockers) - 10} 项省略")
 
             if not force:
+                sync_workflow_contract(
+                    cfg.output_dir / video_id, video_id,
+                    stage="review", status="error",
+                    message="脚本结构校验失败，阻断 review",
+                    extra={"blocker_count": len(blockers)},
+                )
                 raise click.ClickException(
                     "请先修复 script.json 后再运行 review；如需跳过可加 --force"
                 )
@@ -131,6 +139,11 @@ def review(cfg: Config, video_id, force):
     state.script_reviewed = True
     state.last_error = ""
     state.save(cfg.output_dir)
+    sync_workflow_contract(
+        cfg.output_dir / video_id, video_id,
+        stage="review", status="ok",
+        message="脚本审核通过",
+    )
     click.echo(f"✅ 脚本审核通过: {video_id}")
     click.echo(f"   下一步: v2g tts {video_id}")
 
@@ -826,6 +839,33 @@ def scout_all(cfg: Config):
         click.echo(f"⚠️ 创意构思失败: {e}")
 
     click.echo("\n✅ 知识源监控完成")
+
+
+@main.command("intake")
+@click.argument("source", type=str)
+@click.option("--keyword", default="", help="补充关键词（用于 C 类识别）")
+@click.option("--topic", default="", help="目标主题（路由建议会使用）")
+@click.option("--project-id", default=None, help="输出项目 ID（默认自动生成）")
+@click.pass_obj
+def intake_cmd(cfg: Config, source, keyword, topic, project_id):
+    """统一入口识别：A/B/C/D/E 自动判别 + 路由建议。"""
+    from v2g.intake import create_intake_contract
+
+    intake_path, payload = create_intake_contract(
+        cfg=cfg,
+        source=source,
+        keyword=keyword,
+        topic=topic,
+        project_id=project_id,
+    )
+    route = payload.get("route", {})
+
+    click.echo("✅ 入口契约已生成")
+    click.echo(f"   类型: {payload.get('entry_type')} ({payload.get('detected_by')})")
+    click.echo(f"   项目: {payload.get('project_id')}")
+    click.echo(f"   intake: {intake_path}")
+    click.echo(f"   工作流: {route.get('workflow')}")
+    click.echo(f"   建议下一步: {route.get('suggested_command')}")
 
 
 @main.command()

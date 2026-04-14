@@ -208,6 +208,18 @@ class ScriptSegment(BaseModel):
     transition: Literal[
         "fade", "slide", "slide-left", "zoom-in", "wipe", "glitch", "none",
     ] | None = None
+    # 可选电影语言标签（有则覆盖自动推断）
+    shot_type: Literal[
+        "establishing", "medium", "close-up", "detail",
+        "screen", "diagram", "data", "social", "cta", "quote",
+    ] | None = None
+    camera_move: Literal[
+        "static", "push-in", "subtle-zoom", "drift-left", "drift-right",
+    ] | None = None
+    lighting_tag: Literal[
+        "neutral", "bright", "dramatic", "cool", "warm", "accent",
+    ] | None = None
+    camera_intensity: float | None = None
 
     # 素材 A
     slide_content: SlideContent | None = None
@@ -302,6 +314,14 @@ class ScriptSegment(BaseModel):
                         f"material=C 的 source_start ({self.source_start}) "
                         f"必须 < source_end ({self.source_end})"
                     )
+
+        if self.camera_intensity is not None:
+            if not (0.0 <= self.camera_intensity <= 1.2):
+                errors.append(
+                    f"camera_intensity ({self.camera_intensity}) 必须在 0.0-1.2 之间"
+                )
+            if self.camera_move == "static" and self.camera_intensity > 0:
+                errors.append("camera_move=static 时 camera_intensity 必须为 0")
 
         if errors:
             raise ValueError("; ".join(errors))

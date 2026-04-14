@@ -374,15 +374,27 @@ def _find_recording(recordings_dir: Path, seg_id: int) -> Path | None:
 
 def run_assemble(cfg: Config, video_id: str) -> PipelineState:
     """执行 Stage 5b: 三素材合成最终视频。"""
+    from v2g.workflow_contract import sync_workflow_contract
+
     state = PipelineState.load(cfg.output_dir, video_id)
     if not state.slides_done:
         raise click.ClickException("图文卡片尚未生成，请先运行 v2g slides")
 
     if state.assembled:
         click.echo("⏭️  视频已合成，跳过")
+        sync_workflow_contract(
+            cfg.output_dir / video_id, video_id,
+            stage="assemble", status="skip",
+            message="视频已合成，跳过",
+        )
         return state
 
     output_dir = cfg.output_dir / video_id
+    sync_workflow_contract(
+        output_dir, video_id,
+        stage="assemble", status="start",
+        message="开始 FFmpeg 合成",
+    )
     temp_dir = output_dir / "_temp"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -485,6 +497,11 @@ def run_assemble(cfg: Config, video_id: str) -> PipelineState:
                 segment_videos.append(final_seg_path)
 
     if not segment_videos:
+        sync_workflow_contract(
+            output_dir, video_id,
+            stage="assemble", status="error",
+            message="没有成功生成任何视频片段",
+        )
         raise click.ClickException("没有成功生成任何视频片段")
 
     # 拼接所有片段（无字幕、无音频）
@@ -537,10 +554,21 @@ def run_assemble(cfg: Config, video_id: str) -> PipelineState:
         duration = _ffprobe_duration(final_path)
         click.echo(f"   ✅ 完成: {final_path.name} ({size_mb:.1f}MB, {duration:.0f}s)")
     else:
+        sync_workflow_contract(
+            output_dir, video_id,
+            stage="assemble", status="error",
+            message="最终视频合成失败",
+        )
         raise click.ClickException("最终视频合成失败")
 
     state.assembled = True
     state.final_video = str(final_path)
     state.last_error = ""
     state.save(cfg.output_dir)
+    sync_workflow_contract(
+        output_dir, video_id,
+        stage="assemble", status="ok",
+        message="视频合成完成",
+        extra={"final_video": str(final_path)},
+    )
     return state

@@ -250,15 +250,27 @@ def generate_slide_image(slide_content: dict, seg_id: int, output_path: Path,
 
 def run_slides(cfg: Config, video_id: str, model: str) -> PipelineState:
     """执行 Stage 5a: 生成 PPT 图文卡片。"""
+    from v2g.workflow_contract import sync_workflow_contract
+
     state = PipelineState.load(cfg.output_dir, video_id)
     if not state.tts_done:
         raise click.ClickException("TTS 尚未完成，请先运行 v2g tts")
 
     if state.slides_done:
         click.echo("⏭️  图���卡片已生成，跳过")
+        sync_workflow_contract(
+            cfg.output_dir / video_id, video_id,
+            stage="slides", status="skip",
+            message="slides 已存在，跳过",
+        )
         return state
 
     output_dir = cfg.output_dir / video_id
+    sync_workflow_contract(
+        output_dir, video_id,
+        stage="slides", status="start",
+        message="开始生成图文卡片",
+    )
     slides_dir = output_dir / "slides"
     slides_dir.mkdir(parents=True, exist_ok=True)
 
@@ -272,6 +284,12 @@ def run_slides(cfg: Config, video_id: str, model: str) -> PipelineState:
         click.echo("   ℹ️ 无素材 A 段，跳过图文卡片生成")
         state.slides_done = True
         state.save(cfg.output_dir)
+        sync_workflow_contract(
+            output_dir, video_id,
+            stage="slides", status="ok",
+            message="无素材 A，跳过",
+            extra={"slide_count": 0},
+        )
         return state
 
     click.echo(f"📊 生成图文卡片: {len(a_segments)} 张")
@@ -314,4 +332,10 @@ def run_slides(cfg: Config, video_id: str, model: str) -> PipelineState:
     state.slides_done = True
     state.last_error = ""
     state.save(cfg.output_dir)
+    sync_workflow_contract(
+        output_dir, video_id,
+        stage="slides", status="ok",
+        message="slides 生成完成",
+        extra={"slide_count": len(a_segments)},
+    )
     return state

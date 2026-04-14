@@ -49,8 +49,15 @@ def preflight_check(mode: str = "single", model: str = ""):
             warnings.append("ANTHROPIC_API_KEY 未设置")
             blocked = True
 
-    # 3. TTS 引擎依赖
-    tts_engine = os.environ.get("TTS_ENGINE", "").lower()
+    # 3. TTS 引擎依赖（默认 voxcpm）
+    tts_engine = os.environ.get("TTS_ENGINE", "voxcpm").lower()
+    if tts_engine == "voxcpm":
+        try:
+            import voxcpm  # noqa: F401
+            import soundfile  # noqa: F401
+        except ImportError:
+            warnings.append("TTS_ENGINE=voxcpm 但未安装 voxcpm/soundfile (pip install voxcpm soundfile)")
+            blocked = True
     if tts_engine == "minimax" and not os.environ.get("TTS_MINMAX_KEY"):
         warnings.append("TTS_ENGINE=minimax 但 TTS_MINMAX_KEY 未设置")
         blocked = True
@@ -121,6 +128,7 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
 
     # 自动修复脚本结构问题（在 eval 之前）
     from v2g.script_fixer import fix_script
+    from v2g.scriptwriter import sync_script_sidecars, validate_script_sidecars
     project_dir = cfg.output_dir / video_id
     script, fix_logs = fix_script(script, project_dir)
     if fix_logs:
@@ -129,6 +137,14 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
             click.echo(f"   {log}")
         script_path.write_text(
             json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    # sidecar 与 script.json 保持严格同步，避免后续阶段读取到陈旧产物
+    sync_script_sidecars(script, project_dir)
+    sidecar_issues = validate_script_sidecars(script, project_dir)
+    if sidecar_issues:
+        raise click.ClickException(
+            "脚本 sidecar 一致性校验失败:\n- " + "\n- ".join(sidecar_issues[:8])
         )
 
     report = eval_script(
@@ -184,6 +200,14 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
         state = regen_fn(cfg, video_id, model)
 
         script = json.loads(script_path.read_text(encoding="utf-8"))
+        project_dir = cfg.output_dir / video_id
+        sync_script_sidecars(script, project_dir)
+        sidecar_issues = validate_script_sidecars(script, project_dir)
+        if sidecar_issues:
+            raise click.ClickException(
+                "重试后脚本 sidecar 一致性校验失败:\n- "
+                + "\n- ".join(sidecar_issues[:8])
+            )
         report = eval_script(
             script,
             video_id,

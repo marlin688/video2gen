@@ -360,7 +360,11 @@ def _segment_asset_candidates(seg: dict) -> list[str]:
     web_video = seg.get("web_video") or {}
     if isinstance(web_video, dict):
         if web_video.get("source_url"):
-            assets.append(str(web_video["source_url"]))
+            source = str(web_video["source_url"]).strip()
+            if source:
+                assets.append(source)
+                if not source.startswith("http") and not source.startswith("web_videos/"):
+                    assets.append(f"web_videos/{source}")
         if web_video.get("search_query"):
             assets.append(f"web_videos/seg_{seg_id}.mp4")
 
@@ -1364,6 +1368,7 @@ def run_script(
     state.recordings_dir = str(output_dir / "recordings")
 
     state.scripted = True
+    state.assets_resolved = False
     state.last_error = ""
     state.save(cfg.output_dir)
     sync_workflow_contract(
@@ -1542,6 +1547,7 @@ def run_multi_script(
     state.recordings_dir = str(output_dir / "recordings")
 
     state.scripted = True
+    state.assets_resolved = False
     state.last_error = ""
     state.save(cfg.output_dir)
     sync_workflow_contract(

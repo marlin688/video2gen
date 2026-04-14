@@ -131,6 +131,90 @@ def register_asset_commands(main: click.Group) -> None:
             total = store.count()
             click.echo(f"✅ 入库 {count} 个片段，素材库总量: {total}")
 
+    @assets.command("resolve")
+    @click.argument("project_id")
+    @click.option(
+        "--strict-rights",
+        is_flag=True,
+        help="仅允许 rights_status=cleared 的本地素材",
+    )
+    @click.pass_obj
+    def assets_resolve(cfg: Config, project_id, strict_rights):
+        """素材解析：优先本地库命中，缺失时在线补图并回灌素材库"""
+        from v2g.asset_resolver import resolve_project_assets
+
+        click.echo(f"🧩 素材解析: {project_id} (strict_rights={strict_rights})")
+        report = resolve_project_assets(
+            cfg,
+            project_id,
+            require_cleared_rights=strict_rights,
+        )
+        click.echo(
+            "   ✅ 完成: "
+            f"检查 {report['checked_segments']} 段, "
+            f"本地命中 {report['resolved_local']}, "
+            f"在线补图 {report['resolved_remote']}, "
+            f"未解决 {report['unresolved']}"
+        )
+        click.echo(
+            "   细分: "
+            f"图片本地/远程 {report.get('resolved_local_image', 0)}/{report.get('resolved_remote_image', 0)}, "
+            f"视频本地/远程 {report.get('resolved_local_web_video', 0)}/{report.get('resolved_remote_web_video', 0)}"
+        )
+        if report["unknown_rights_local_hits"] > 0:
+            click.echo(
+                f"   ⚠️ 本地命中中有 {report['unknown_rights_local_hits']} 条版权状态未知"
+            )
+
+    @assets.command("metrics")
+    @click.option("--days", default=30, type=int, help="统计窗口天数 (默认 30)")
+    @click.option("--no-write", is_flag=True, help="不写文件，仅在终端输出")
+    @click.pass_obj
+    def assets_metrics(cfg: Config, days, no_write):
+        """生成素材库运营指标（命中率/复用率/成本）"""
+        from v2g.asset_metrics import build_asset_metrics
+
+        metrics = build_asset_metrics(cfg, days=days, write_files=not no_write)
+        resolve = metrics["resolve"]
+        reuse = metrics["reuse"]
+        lib = metrics["library"]
+        cost = metrics["cost"]
+
+        click.echo("📈 素材库指标:")
+        click.echo(
+            f"   命中率: 本地 {resolve['local_hit_rate']:.1%} | 远程 {resolve['remote_fetch_rate']:.1%} | 未解决 {resolve['unresolved_rate']:.1%}"
+        )
+        click.echo(
+            f"   细分命中: 图片 {resolve['image_local_hit_rate']:.1%} | web_video {resolve['web_video_local_hit_rate']:.1%}"
+        )
+        click.echo(
+            f"   复用: 使用 {reuse['total_usage']} 次，跨项目复用资产 {reuse['reused_assets']} 个"
+        )
+        click.echo(
+            f"   风控: 资产总量 {lib['total_assets']}，受限资产 {lib['blocked_assets']}，版权未知占比 {lib['unknown_rate']:.1%}"
+        )
+        click.echo(
+            f"   成本: 外采 {cost['external_fetch_count']} 次，估算成本 {cost['external_estimated_cost']}"
+        )
+        if not no_write:
+            click.echo(f"   报告: {cfg.output_dir / 'asset_library' / 'metrics' / 'latest.json'}")
+
+    @assets.command("review-ui")
+    @click.option("--host", default="127.0.0.1", help="监听地址")
+    @click.option("--port", default=8877, type=int, help="监听端口")
+    @click.option("--open-browser", is_flag=True, help="启动后自动打开浏览器")
+    @click.pass_obj
+    def assets_review_ui(cfg: Config, host, port, open_browser):
+        """启动素材审核台 Web UI（批量 approve/block/set tags）"""
+        from v2g.asset_review_ui import run_asset_review_ui
+
+        run_asset_review_ui(
+            cfg,
+            host=host,
+            port=port,
+            open_browser=open_browser,
+        )
+
     @assets.command("extract")
     @click.argument("project_id")
     @click.pass_obj
@@ -199,6 +283,248 @@ def register_asset_commands(main: click.Group) -> None:
                 for combo, score in engagement.items():
                     emoji = "↑" if score > 0 else "↓" if score < 0 else "→"
                     click.echo(f"      {emoji} {combo}: {score:+.2f}")
+
+    @assets.command("list")
+    @click.option("--query", default="", help="按关键词搜索（命中 notes/tags 等）")
+    @click.option("--type", "visual_type", default="", help="按 visual_type 过滤")
+    @click.option("--status", "rights_status", default="", help="按版权状态过滤")
+    @click.option("--all", "show_all", is_flag=True, help="包含 reusable=0 素材")
+    @click.option("--limit", default=30, type=int, help="最多展示数量")
+    @click.pass_obj
+    def assets_list(cfg: Config, query, visual_type, rights_status, show_all, limit):
+        """列出素材（支持筛选和关键词检索）"""
+        from v2g.asset_store import AssetStore
+
+        db_path = cfg.output_dir / "assets.db"
+        if not db_path.exists():
+            click.echo("❌ 素材库不存在，请先运行 v2g assets ingest/resolve")
+            return
+
+        with AssetStore(db_path) as store:
+            if query.strip():
+                assets = store.search_text(query, limit=limit, reusable_only=not show_all)
+                if visual_type:
+                    assets = [a for a in assets if a.visual_type == visual_type]
+                if rights_status:
+                    assets = [a for a in assets if a.rights_status == rights_status]
+            else:
+                assets = store.list_assets(
+                    reusable_only=not show_all,
+                    visual_type=visual_type or None,
+                    rights_status=rights_status or None,
+                    limit=limit,
+                )
+
+        if not assets:
+            click.echo("未找到匹配素材")
+            return
+
+        click.echo(f"📦 素材列表 ({len(assets)} 条):")
+        for a in assets:
+            click.echo(
+                f"  [{a.clip_id}] {a.visual_type}/{a.mood} | rights={a.rights_status} "
+                f"| reusable={int(a.reusable)} | {Path(a.file_path).name}"
+            )
+            if a.tags:
+                click.echo(f"     tags: {', '.join(a.tags[:6])}")
+
+    @assets.command("show")
+    @click.argument("asset_id")
+    @click.pass_obj
+    def assets_show(cfg: Config, asset_id):
+        """查看单个素材详情（含最近使用记录）"""
+        from v2g.asset_store import AssetStore
+
+        db_path = cfg.output_dir / "assets.db"
+        with AssetStore(db_path) as store:
+            asset = store.get(asset_id)
+            if not asset:
+                click.echo(f"❌ 素材不存在: {asset_id}")
+                return
+            usage = store.list_recent_usage(asset_id=asset_id, limit=10)
+
+        click.echo(f"🧾 素材详情: {asset.clip_id}")
+        click.echo(f"   file: {asset.file_path}")
+        click.echo(f"   visual_type: {asset.visual_type}")
+        click.echo(f"   mood: {asset.mood}")
+        click.echo(f"   rights: {asset.rights_status}")
+        click.echo(f"   license: {asset.license_type or '-'} / {asset.license_scope or '-'}")
+        click.echo(f"   source: {asset.source_kind} | {asset.source_url or '-'}")
+        click.echo(f"   reusable: {asset.reusable} | freshness: {asset.freshness}")
+        click.echo(f"   expires_at: {asset.expires_at or '-'}")
+        click.echo(f"   tags: {', '.join(asset.tags) if asset.tags else '-'}")
+        click.echo(f"   products: {', '.join(asset.product) if asset.product else '-'}")
+        click.echo(f"   notes: {asset.notes or '-'}")
+
+        if usage:
+            click.echo("\n   最近使用:")
+            for row in usage:
+                click.echo(
+                    f"    - [{row.get('used_at', '')}] {row.get('project_id', '')} "
+                    f"seg_{row.get('segment_id', 0)} role={row.get('asset_role', '')}"
+                )
+        else:
+            click.echo("\n   最近使用: 暂无")
+
+    @assets.command("set")
+    @click.argument("asset_id")
+    @click.option("--status", "rights_status", default=None, help="rights_status: cleared/unknown/restricted/expired")
+    @click.option("--license-type", default=None, help="license_type")
+    @click.option("--license-scope", default=None, help="license_scope")
+    @click.option("--expires-at", default=None, help="到期日期 YYYY-MM-DD")
+    @click.option("--reusable", default=None, type=click.Choice(["true", "false"]), help="是否可复用")
+    @click.option("--mood", default=None, help="mood 标签")
+    @click.option("--tags", default=None, help="逗号分隔标签")
+    @click.option("--products", default=None, help="逗号分隔产品标签")
+    @click.option("--note", default=None, help="更新备注")
+    @click.option("--source-url", default=None, help="来源 URL")
+    @click.option("--source-kind", default=None, help="source_kind")
+    @click.option("--file-path", default=None, help="更新文件路径")
+    @click.pass_obj
+    def assets_set(
+        cfg: Config,
+        asset_id,
+        rights_status,
+        license_type,
+        license_scope,
+        expires_at,
+        reusable,
+        mood,
+        tags,
+        products,
+        note,
+        source_url,
+        source_kind,
+        file_path,
+    ):
+        """更新素材字段（版权/标签/可复用性）"""
+        from v2g.asset_store import AssetStore
+
+        updates = {
+            "rights_status": rights_status,
+            "license_type": license_type,
+            "license_scope": license_scope,
+            "expires_at": expires_at,
+            "reusable": None if reusable is None else (reusable == "true"),
+            "mood": mood,
+            "tags": _split_csv(tags),
+            "product": _split_csv(products),
+            "notes": note,
+            "source_url": source_url,
+            "source_kind": source_kind,
+            "file_path": file_path,
+        }
+        if all(v is None for v in updates.values()):
+            raise click.ClickException("没有可更新字段，请至少传一个 --option")
+
+        db_path = cfg.output_dir / "assets.db"
+        with AssetStore(db_path) as store:
+            updated = store.update_asset(asset_id, **updates)
+            if not updated:
+                raise click.ClickException(f"素材不存在: {asset_id}")
+
+        click.echo(f"✅ 已更新: {asset_id}")
+        click.echo(
+            f"   rights={updated.rights_status}, reusable={updated.reusable}, "
+            f"expires_at={updated.expires_at or '-'}"
+        )
+
+    @assets.command("approve")
+    @click.argument("asset_id")
+    @click.option("--scope", default="commercial", help="license_scope")
+    @click.option("--license-type", default="manual_approved", help="license_type")
+    @click.pass_obj
+    def assets_approve(cfg: Config, asset_id, scope, license_type):
+        """审批素材为可商用（cleared）"""
+        from v2g.asset_store import AssetStore
+
+        db_path = cfg.output_dir / "assets.db"
+        with AssetStore(db_path) as store:
+            updated = store.update_asset(
+                asset_id,
+                rights_status="cleared",
+                license_scope=scope,
+                license_type=license_type,
+                reusable=True,
+            )
+            if not updated:
+                raise click.ClickException(f"素材不存在: {asset_id}")
+        click.echo(f"✅ 已审批: {asset_id} (scope={scope})")
+
+    @assets.command("block")
+    @click.argument("asset_id")
+    @click.option("--reason", default="rights blocked", help="封禁原因")
+    @click.pass_obj
+    def assets_block(cfg: Config, asset_id, reason):
+        """封禁素材（restricted + reusable=0）"""
+        from v2g.asset_store import AssetStore
+
+        db_path = cfg.output_dir / "assets.db"
+        with AssetStore(db_path) as store:
+            updated = store.update_asset(
+                asset_id,
+                rights_status="restricted",
+                reusable=False,
+                notes=reason,
+            )
+            if not updated:
+                raise click.ClickException(f"素材不存在: {asset_id}")
+        click.echo(f"⛔ 已封禁: {asset_id}")
+
+    @assets.command("remove")
+    @click.argument("asset_id")
+    @click.option("--delete-file", is_flag=True, help="同时删除磁盘文件（谨慎）")
+    @click.pass_obj
+    def assets_remove(cfg: Config, asset_id, delete_file):
+        """移除素材（可选删除文件）"""
+        from v2g.asset_store import AssetStore
+
+        db_path = cfg.output_dir / "assets.db"
+        with AssetStore(db_path) as store:
+            asset = store.get(asset_id)
+            if not asset:
+                raise click.ClickException(f"素材不存在: {asset_id}")
+
+            removed = store.delete(asset_id)
+            if not removed:
+                raise click.ClickException(f"移除失败: {asset_id}")
+
+        click.echo(f"🗑️ 已移除素材记录: {asset_id}")
+        if delete_file:
+            p = Path(asset.file_path)
+            if p.exists():
+                p.unlink()
+                click.echo(f"   已删除文件: {p}")
+            else:
+                click.echo(f"   文件不存在，跳过: {p}")
+
+    @assets.command("usage")
+    @click.option("--asset-id", default=None, help="按 asset_id 过滤")
+    @click.option("--project-id", default=None, help="按 project_id 过滤")
+    @click.option("--limit", default=50, type=int, help="最多展示数量")
+    @click.pass_obj
+    def assets_usage(cfg: Config, asset_id, project_id, limit):
+        """查看素材使用记录（asset_usage）"""
+        from v2g.asset_store import AssetStore
+
+        db_path = cfg.output_dir / "assets.db"
+        with AssetStore(db_path) as store:
+            rows = store.list_recent_usage(
+                asset_id=asset_id,
+                project_id=project_id,
+                limit=limit,
+            )
+        if not rows:
+            click.echo("暂无使用记录")
+            return
+
+        click.echo(f"📚 使用记录 ({len(rows)} 条):")
+        for row in rows:
+            click.echo(
+                f"  - [{row.get('used_at', '')}] asset={row.get('asset_id', '')} "
+                f"project={row.get('project_id', '')} seg_{row.get('segment_id', 0)} "
+                f"role={row.get('asset_role', '')}"
+            )
 
     @assets.command("annotate")
     @click.argument("project_id")
@@ -397,3 +723,11 @@ def _scan_bvids_from_checkpoints(cfg: Config) -> list[tuple[str, str]]:
         except Exception:
             continue
     return pairs
+
+
+def _split_csv(raw: str | None) -> list[str] | None:
+    """Split comma separated values; None means 'not provided'."""
+    if raw is None:
+        return None
+    vals = [v.strip() for v in raw.split(",") if v.strip()]
+    return vals

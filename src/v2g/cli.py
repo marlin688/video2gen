@@ -846,10 +846,12 @@ def scout_all(cfg: Config):
 @click.option("--keyword", default="", help="补充关键词（用于 C 类识别）")
 @click.option("--topic", default="", help="目标主题（路由建议会使用）")
 @click.option("--project-id", default=None, help="输出项目 ID（默认自动生成）")
+@click.option("--run", "run_now", is_flag=True, help="生成 intake 后立即执行路由")
+@click.option("--dry-run", is_flag=True, help="仅展示将执行的路由命令，不实际运行")
 @click.pass_obj
-def intake_cmd(cfg: Config, source, keyword, topic, project_id):
+def intake_cmd(cfg: Config, source, keyword, topic, project_id, run_now, dry_run):
     """统一入口识别：A/B/C/D/E 自动判别 + 路由建议。"""
-    from v2g.intake import create_intake_contract
+    from v2g.intake import create_intake_contract, execute_intake_route
 
     intake_path, payload = create_intake_contract(
         cfg=cfg,
@@ -864,8 +866,46 @@ def intake_cmd(cfg: Config, source, keyword, topic, project_id):
     click.echo(f"   类型: {payload.get('entry_type')} ({payload.get('detected_by')})")
     click.echo(f"   项目: {payload.get('project_id')}")
     click.echo(f"   intake: {intake_path}")
+    click.echo(f"   规范化输入: {payload.get('normalized_source')}")
     click.echo(f"   工作流: {route.get('workflow')}")
     click.echo(f"   建议下一步: {route.get('suggested_command')}")
+
+    if route.get("run_argv"):
+        click.echo(f"   路由参数: {route.get('run_argv')}")
+
+    if dry_run or run_now:
+        click.echo("\n🚦 执行 intake 路由..." + (" [dry-run]" if dry_run else ""))
+        rc = execute_intake_route(cfg, payload, dry_run=dry_run)
+        if dry_run:
+            click.echo("   ✅ dry-run 完成（未执行实际任务）")
+        elif rc != 0:
+            raise click.ClickException(f"intake 路由执行失败，退出码 {rc}")
+        else:
+            click.echo("   ✅ intake 路由执行成功")
+
+
+@main.command("intake-run")
+@click.argument("project_id", type=str)
+@click.option("--dry-run", is_flag=True, help="仅展示将执行的路由命令，不实际运行")
+@click.pass_obj
+def intake_run_cmd(cfg: Config, project_id, dry_run):
+    """执行已存在的 intake.json 路由。"""
+    from v2g.intake import execute_intake_route, load_intake_contract
+
+    intake_path, payload = load_intake_contract(cfg, project_id)
+    route = payload.get("route", {})
+    click.echo(f"✅ 读取 intake: {intake_path}")
+    click.echo(f"   类型: {payload.get('entry_type')} ({payload.get('detected_by')})")
+    click.echo(f"   工作流: {route.get('workflow')}")
+    click.echo(f"   执行命令: {route.get('suggested_command')}")
+
+    rc = execute_intake_route(cfg, payload, dry_run=dry_run)
+    if dry_run:
+        click.echo("   ✅ dry-run 完成（未执行实际任务）")
+        return
+    if rc != 0:
+        raise click.ClickException(f"intake 路由执行失败，退出码 {rc}")
+    click.echo("   ✅ intake 路由执行成功")
 
 
 @main.command()

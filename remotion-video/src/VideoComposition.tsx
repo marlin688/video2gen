@@ -427,11 +427,13 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
 
       case "web-video": {
         const ttsDur = t ? t.duration : 10;
+        const src = (seg.web_video?.source_url || "").trim();
+        const normalizedSrc = src
+          ? (src.startsWith("web_videos/") ? src : `web_videos/${src}`)
+          : "";
         data = {
           schema: "web-video",
-          videoFile: seg.web_video?.source_url
-            ? `web_videos/${seg.web_video.source_url}`
-            : "",
+          videoFile: normalizedSrc,
           overlayText: seg.web_video?.overlay_text,
           overlayPosition: seg.web_video?.overlay_position,
           filter: (seg.web_video?.filter || "none") as "none" | "desaturate" | "tint",

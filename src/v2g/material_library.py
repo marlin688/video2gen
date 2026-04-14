@@ -16,7 +16,7 @@ from pathlib import Path
 from v2g.asset_store import AssetMeta, AssetStore
 
 
-LIBRARY_DIR = Path("materials")
+LIBRARY_DIR = Path("output") / "asset_library"
 DEFAULT_DB_PATH = Path("output") / "assets.db"
 _LEGACY_MIGRATION_KEY = "legacy_material_index_migrated"
 

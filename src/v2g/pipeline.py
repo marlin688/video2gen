@@ -305,6 +305,33 @@ def run_pipeline(cfg: Config, video_id_or_url: str, model: str,
 
     # Stage 4: TTS 配音
     if not state.tts_done:
+        if not state.assets_resolved:
+            click.echo("\n" + "=" * 50)
+            click.echo("🧩 Stage 3.8: 素材解析（本地优先）")
+            click.echo("=" * 50)
+            try:
+                from v2g.asset_resolver import resolve_project_assets
+
+                strict_rights = os.environ.get("V2G_STRICT_RIGHTS", "").strip().lower() in {
+                    "1", "true", "yes", "on",
+                }
+                report = resolve_project_assets(
+                    cfg,
+                    video_id,
+                    require_cleared_rights=strict_rights,
+                )
+                state.assets_resolved = True
+                state.save(cfg.output_dir)
+                if report.get("checked_segments", 0) > 0:
+                    click.echo(
+                        "   结果: "
+                        f"本地命中 {report['resolved_local']}, "
+                        f"在线补图 {report['resolved_remote']}, "
+                        f"未解决 {report['unresolved']}"
+                    )
+            except Exception as e:
+                click.echo(f"   ⚠️ 素材解析失败 (非致命): {e}")
+
         click.echo("\n" + "=" * 50)
         click.echo("🎙️ Stage 4: TTS 配音")
         click.echo("=" * 50)

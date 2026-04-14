@@ -45,6 +45,7 @@ class PipelineState:
     subtitled: bool = False
     scripted: bool = False
     script_reviewed: bool = False
+    assets_resolved: bool = False
     tts_done: bool = False
     slides_done: bool = False
     assembled: bool = False
@@ -139,6 +140,7 @@ class PipelineState:
             ("subtitled", "subtitle"),
             ("scripted", "script"),
             ("script_reviewed", "review"),
+            ("assets_resolved", "assets_resolve"),
             ("tts_done", "tts"),
             ("slides_done", "slides"),
             ("assembled", "assemble"),

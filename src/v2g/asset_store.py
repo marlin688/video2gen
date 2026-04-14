@@ -11,7 +11,7 @@ import json
 import math
 import re
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,6 +34,11 @@ MOODS = frozenset({
 })
 
 FRESHNESS_VALUES = frozenset({"current", "possibly_outdated", "evergreen"})
+RIGHTS_STATUS_VALUES = frozenset({"unknown", "cleared", "restricted", "expired"})
+SOURCE_KIND_VALUES = frozenset({
+    "project_generated", "manual_upload", "library_reuse",
+    "search_download", "screenshot", "ai_generated", "external",
+})
 
 # 保鲜阈值（月）
 _FRESHNESS_THRESHOLDS = {
@@ -68,6 +73,13 @@ class AssetMeta:
     engagement_score: int | None = None  # -1/0/1
     file_path: str = ""
     notes: str = ""
+    source_kind: str = "project_generated"
+    source_url: str = ""
+    asset_hash: str = ""
+    rights_status: str = "unknown"
+    license_type: str = ""
+    license_scope: str = ""
+    expires_at: str = ""  # ISO date YYYY-MM-DD
 
     def validate(self) -> list[str]:
         """校验枚举值，返回错误列表。"""
@@ -81,6 +93,10 @@ class AssetMeta:
                 errors.append(f"Invalid product: '{p}', must be one of {sorted(PRODUCTS)}")
         if self.freshness not in FRESHNESS_VALUES:
             errors.append(f"Invalid freshness: '{self.freshness}', must be one of {sorted(FRESHNESS_VALUES)}")
+        if self.rights_status not in RIGHTS_STATUS_VALUES:
+            errors.append(f"Invalid rights_status: '{self.rights_status}', must be one of {sorted(RIGHTS_STATUS_VALUES)}")
+        if self.source_kind not in SOURCE_KIND_VALUES:
+            errors.append(f"Invalid source_kind: '{self.source_kind}', must be one of {sorted(SOURCE_KIND_VALUES)}")
         if self.engagement_score is not None and self.engagement_score not in (-1, 0, 1):
             errors.append(f"Invalid engagement_score: {self.engagement_score}, must be -1/0/1")
         return errors
@@ -175,7 +191,66 @@ class AssetStore:
                 engagement_score INTEGER,
                 file_path TEXT DEFAULT '',
                 notes TEXT DEFAULT '',
+                source_kind TEXT DEFAULT 'project_generated',
+                source_url TEXT DEFAULT '',
+                asset_hash TEXT DEFAULT '',
+                rights_status TEXT DEFAULT 'unknown',
+                license_type TEXT DEFAULT '',
+                license_scope TEXT DEFAULT '',
+                expires_at TEXT DEFAULT '',
                 created_at TEXT
+            )
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS asset_tags (
+                asset_id TEXT NOT NULL,
+                tag_type TEXT NOT NULL,
+                tag_value TEXT NOT NULL,
+                score REAL DEFAULT 1.0,
+                source TEXT DEFAULT '',
+                created_at TEXT,
+                PRIMARY KEY (asset_id, tag_type, tag_value)
+            )
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS asset_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                video_id TEXT DEFAULT '',
+                segment_id INTEGER DEFAULT 0,
+                asset_role TEXT DEFAULT '',
+                used_at TEXT,
+                render_version TEXT DEFAULT '',
+                resolver_stage TEXT DEFAULT '',
+                note TEXT DEFAULT ''
+            )
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS asset_rights (
+                asset_id TEXT PRIMARY KEY,
+                owner TEXT DEFAULT '',
+                rights_status TEXT DEFAULT 'unknown',
+                license_type TEXT DEFAULT '',
+                license_scope TEXT DEFAULT '',
+                platform_allowlist TEXT DEFAULT '[]',
+                proof_url TEXT DEFAULT '',
+                proof_note TEXT DEFAULT '',
+                valid_from TEXT DEFAULT '',
+                expires_at TEXT DEFAULT '',
+                updated_at TEXT
+            )
+        """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS asset_versions (
+                version_id TEXT PRIMARY KEY,
+                asset_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                transform_type TEXT DEFAULT '',
+                parent_version_id TEXT DEFAULT '',
+                checksum TEXT DEFAULT '',
+                created_at TEXT,
+                meta_json TEXT DEFAULT '{}'
             )
         """)
         self._conn.execute(
@@ -193,13 +268,39 @@ class AssetStore:
     def _ensure_asset_columns(self) -> None:
         """Perform lightweight schema migrations for existing databases."""
         columns = {
-            row["name"]
-            for row in self._conn.execute("PRAGMA table_info(assets)").fetchall()
+            row["name"] for row in self._conn.execute("PRAGMA table_info(assets)").fetchall()
         }
-        if "notes" not in columns:
-            self._conn.execute(
-                "ALTER TABLE assets ADD COLUMN notes TEXT DEFAULT ''"
-            )
+        migrations = {
+            "notes": "ALTER TABLE assets ADD COLUMN notes TEXT DEFAULT ''",
+            "source_kind": "ALTER TABLE assets ADD COLUMN source_kind TEXT DEFAULT 'project_generated'",
+            "source_url": "ALTER TABLE assets ADD COLUMN source_url TEXT DEFAULT ''",
+            "asset_hash": "ALTER TABLE assets ADD COLUMN asset_hash TEXT DEFAULT ''",
+            "rights_status": "ALTER TABLE assets ADD COLUMN rights_status TEXT DEFAULT 'unknown'",
+            "license_type": "ALTER TABLE assets ADD COLUMN license_type TEXT DEFAULT ''",
+            "license_scope": "ALTER TABLE assets ADD COLUMN license_scope TEXT DEFAULT ''",
+            "expires_at": "ALTER TABLE assets ADD COLUMN expires_at TEXT DEFAULT ''",
+        }
+        for col, sql in migrations.items():
+            if col not in columns:
+                self._conn.execute(sql)
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assets_asset_hash ON assets(asset_hash)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assets_rights_status ON assets(rights_status)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_asset_tags_type_value ON asset_tags(tag_type, tag_value)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_asset_usage_asset_project ON asset_usage(asset_id, project_id)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_asset_usage_project ON asset_usage(project_id, used_at)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_asset_versions_asset ON asset_versions(asset_id, created_at)"
+        )
 
     def insert(self, meta: AssetMeta) -> None:
         """插入素材，校验枚举值。"""
@@ -213,8 +314,10 @@ class AssetStore:
                (clip_id, source_video, time_range_start, time_range_end,
                 duration, captured_date, visual_type, tags, product, mood,
                 has_text_overlay, has_useful_audio, reusable, freshness,
-                engagement_score, file_path, notes, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                engagement_score, file_path, notes, source_kind, source_url,
+                asset_hash, rights_status, license_type, license_scope,
+                expires_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 meta.clip_id, meta.source_video,
                 meta.time_range_start, meta.time_range_end,
@@ -225,9 +328,15 @@ class AssetStore:
                 meta.mood,
                 int(meta.has_text_overlay), int(meta.has_useful_audio),
                 int(meta.reusable), meta.freshness,
-                meta.engagement_score, meta.file_path, meta.notes, now,
+                meta.engagement_score, meta.file_path, meta.notes,
+                meta.source_kind, meta.source_url, meta.asset_hash,
+                meta.rights_status, meta.license_type, meta.license_scope,
+                meta.expires_at, now,
             ),
         )
+        self._sync_asset_tags(meta, now)
+        self._upsert_asset_rights(meta, now)
+        self._register_asset_version(meta, now)
         self._conn.commit()
 
     def insert_batch(self, metas: list[AssetMeta]) -> int:
@@ -254,6 +363,8 @@ class AssetStore:
         mood: str | None = None,
         freshness: str | None = None,
         reusable_only: bool = True,
+        commercial_only: bool = False,
+        allow_unknown_rights: bool = True,
         limit: int = 20,
     ) -> list[AssetMeta]:
         """标签硬过滤检索。"""
@@ -271,6 +382,11 @@ class AssetStore:
             params.append(freshness)
         if reusable_only:
             conditions.append("reusable = 1")
+        if commercial_only:
+            if allow_unknown_rights:
+                conditions.append("rights_status IN ('cleared', 'unknown')")
+            else:
+                conditions.append("rights_status = 'cleared'")
         if product:
             # JSON array 包含检查
             conditions.append("product LIKE ?")
@@ -283,6 +399,87 @@ class AssetStore:
 
         rows = self._conn.execute(query, params).fetchall()
         return [self._row_to_meta(r) for r in rows]
+
+    def is_asset_usable(
+        self,
+        asset: AssetMeta,
+        *,
+        require_cleared_rights: bool = False,
+        allow_possibly_outdated: bool = True,
+    ) -> bool:
+        """判断素材是否可直接复用（本地素材库检索时的安全门）。"""
+        if not asset.reusable:
+            return False
+        if asset.rights_status in {"restricted", "expired"}:
+            return False
+        if require_cleared_rights and asset.rights_status != "cleared":
+            return False
+        if not allow_possibly_outdated and asset.freshness == "possibly_outdated":
+            return False
+        if asset.expires_at:
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if asset.expires_at <= today:
+                return False
+        return True
+
+    def search_local_first(
+        self,
+        query: str,
+        *,
+        visual_type: str | None = None,
+        mood: str | None = None,
+        require_cleared_rights: bool = False,
+        allow_possibly_outdated: bool = False,
+        limit: int = 8,
+    ) -> list[AssetMeta]:
+        """本地库优先检索：先按语义检索，再按标签补齐。"""
+        query = (query or "").strip()
+        candidates: list[AssetMeta] = []
+        if query:
+            candidates.extend(
+                self.search_text(
+                    query,
+                    limit=max(limit * 4, 24),
+                    reusable_only=True,
+                )
+            )
+
+        if len(candidates) < limit:
+            # 语义检索不足时，按标签拉一批候选补齐。
+            candidates.extend(
+                self.search(
+                    visual_type=visual_type,
+                    mood=mood,
+                    reusable_only=True,
+                    commercial_only=require_cleared_rights,
+                    allow_unknown_rights=not require_cleared_rights,
+                    limit=max(limit * 4, 24),
+                )
+            )
+
+        seen: set[str] = set()
+        filtered: list[AssetMeta] = []
+        for asset in candidates:
+            if asset.clip_id in seen:
+                continue
+            seen.add(asset.clip_id)
+            if visual_type and asset.visual_type != visual_type:
+                continue
+            if mood and asset.mood != mood:
+                continue
+            if not self.is_asset_usable(
+                asset,
+                require_cleared_rights=require_cleared_rights,
+                allow_possibly_outdated=allow_possibly_outdated,
+            ):
+                continue
+            if asset.file_path and not Path(asset.file_path).exists():
+                continue
+            filtered.append(asset)
+            if len(filtered) >= limit:
+                break
+
+        return filtered
 
     def count(self) -> int:
         """素材总数。"""
@@ -306,17 +503,46 @@ class AssetStore:
         )
         self._conn.commit()
 
+    def get_by_hash(self, asset_hash: str) -> AssetMeta | None:
+        """按文件 hash 查找素材。"""
+        if not asset_hash:
+            return None
+        row = self._conn.execute(
+            "SELECT * FROM assets WHERE asset_hash = ? ORDER BY created_at DESC LIMIT 1",
+            (asset_hash,),
+        ).fetchone()
+        return self._row_to_meta(row) if row else None
+
+    def get_by_file_path(self, file_path: str) -> AssetMeta | None:
+        """按 file_path 精确查找素材。"""
+        row = self._conn.execute(
+            "SELECT * FROM assets WHERE file_path = ? ORDER BY created_at DESC LIMIT 1",
+            (str(Path(file_path)),),
+        ).fetchone()
+        return self._row_to_meta(row) if row else None
+
     def list_assets(
         self,
         *,
         reusable_only: bool = False,
+        visual_type: str | None = None,
+        rights_status: str | None = None,
         limit: int | None = None,
     ) -> list[AssetMeta]:
         """List assets ordered by recency."""
         query = "SELECT * FROM assets"
         params: list = []
+        conditions: list[str] = []
         if reusable_only:
-            query += " WHERE reusable = 1"
+            conditions.append("reusable = 1")
+        if visual_type:
+            conditions.append("visual_type = ?")
+            params.append(visual_type)
+        if rights_status:
+            conditions.append("rights_status = ?")
+            params.append(rights_status)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY captured_date DESC, created_at DESC"
         if limit is not None:
             query += " LIMIT ?"
@@ -369,8 +595,175 @@ class AssetStore:
             "DELETE FROM assets WHERE clip_id = ?",
             (clip_id,),
         )
+        self._conn.execute("DELETE FROM asset_tags WHERE asset_id = ?", (clip_id,))
+        self._conn.execute("DELETE FROM asset_rights WHERE asset_id = ?", (clip_id,))
+        self._conn.execute("DELETE FROM asset_versions WHERE asset_id = ?", (clip_id,))
         self._conn.commit()
         return cur.rowcount > 0
+
+    def record_usage(
+        self,
+        *,
+        asset_id: str,
+        project_id: str,
+        segment_id: int = 0,
+        asset_role: str = "",
+        video_id: str = "",
+        render_version: str = "",
+        resolver_stage: str = "assets_resolve",
+        note: str = "",
+    ) -> None:
+        """记录素材在项目中的使用事件。"""
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            """INSERT INTO asset_usage
+               (asset_id, project_id, video_id, segment_id, asset_role, used_at,
+                render_version, resolver_stage, note)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                asset_id,
+                project_id,
+                video_id,
+                int(segment_id),
+                asset_role,
+                now,
+                render_version,
+                resolver_stage,
+                note,
+            ),
+        )
+        self._conn.commit()
+
+    def list_recent_usage(
+        self,
+        *,
+        asset_id: str | None = None,
+        project_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """列出素材使用记录。"""
+        conditions: list[str] = []
+        params: list = []
+        if asset_id:
+            conditions.append("asset_id = ?")
+            params.append(asset_id)
+        if project_id:
+            conditions.append("project_id = ?")
+            params.append(project_id)
+
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.append(max(1, int(limit)))
+        rows = self._conn.execute(
+            f"""SELECT id, asset_id, project_id, video_id, segment_id, asset_role,
+                       used_at, render_version, resolver_stage, note
+                FROM asset_usage
+                {where}
+                ORDER BY used_at DESC, id DESC
+                LIMIT ?""",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_asset(
+        self,
+        clip_id: str,
+        *,
+        rights_status: str | None = None,
+        license_type: str | None = None,
+        license_scope: str | None = None,
+        expires_at: str | None = None,
+        reusable: bool | None = None,
+        notes: str | None = None,
+        tags: list[str] | None = None,
+        product: list[str] | None = None,
+        mood: str | None = None,
+        source_url: str | None = None,
+        source_kind: str | None = None,
+        file_path: str | None = None,
+    ) -> AssetMeta | None:
+        """更新素材核心字段（含版权字段），并同步 tags/rights/version。"""
+        existing = self.get(clip_id)
+        if existing is None:
+            return None
+
+        updated = replace(
+            existing,
+            rights_status=rights_status if rights_status is not None else existing.rights_status,
+            license_type=license_type if license_type is not None else existing.license_type,
+            license_scope=license_scope if license_scope is not None else existing.license_scope,
+            expires_at=expires_at if expires_at is not None else existing.expires_at,
+            reusable=reusable if reusable is not None else existing.reusable,
+            notes=notes if notes is not None else existing.notes,
+            tags=_dedupe_preserve_order(tags) if tags is not None else existing.tags,
+            product=_dedupe_preserve_order(product) if product is not None else existing.product,
+            mood=mood if mood is not None else existing.mood,
+            source_url=source_url if source_url is not None else existing.source_url,
+            source_kind=source_kind if source_kind is not None else existing.source_kind,
+            file_path=str(Path(file_path)) if file_path is not None else existing.file_path,
+        )
+        if file_path is not None:
+            updated.asset_hash = _compute_file_hash(Path(updated.file_path))
+
+        self.insert(updated)
+        return updated
+
+    def usage_stats(self) -> dict:
+        """聚合素材复用统计，供运营/商业化指标看板使用。"""
+        total_usage = self._conn.execute(
+            "SELECT COUNT(*) AS cnt FROM asset_usage"
+        ).fetchone()["cnt"]
+        usage_projects = self._conn.execute(
+            "SELECT COUNT(DISTINCT project_id) AS cnt FROM asset_usage"
+        ).fetchone()["cnt"]
+        reused_assets = self._conn.execute(
+            """SELECT COUNT(*) AS cnt FROM (
+                   SELECT asset_id
+                   FROM asset_usage
+                   GROUP BY asset_id
+                   HAVING COUNT(DISTINCT project_id) >= 2
+               )"""
+        ).fetchone()["cnt"]
+        top_rows = self._conn.execute(
+            """SELECT asset_id,
+                      COUNT(*) AS use_count,
+                      COUNT(DISTINCT project_id) AS project_count
+               FROM asset_usage
+               GROUP BY asset_id
+               ORDER BY use_count DESC, project_count DESC
+               LIMIT 10"""
+        ).fetchall()
+        return {
+            "total_usage": int(total_usage or 0),
+            "usage_projects": int(usage_projects or 0),
+            "reused_assets": int(reused_assets or 0),
+            "top_assets": [
+                {
+                    "asset_id": row["asset_id"],
+                    "use_count": int(row["use_count"] or 0),
+                    "project_count": int(row["project_count"] or 0),
+                }
+                for row in top_rows
+            ],
+        }
+
+    def list_source_projects(self, limit: int = 200) -> list[dict]:
+        """Return grouped project/source stats for review UI filters."""
+        rows = self._conn.execute(
+            """SELECT source_video, COUNT(*) AS asset_count
+               FROM assets
+               WHERE source_video != ''
+               GROUP BY source_video
+               ORDER BY asset_count DESC, source_video ASC
+               LIMIT ?""",
+            (max(1, int(limit)),),
+        ).fetchall()
+        return [
+            {
+                "project_id": row["source_video"],
+                "asset_count": int(row["asset_count"] or 0),
+            }
+            for row in rows
+        ]
 
     def upsert_manual_asset(
         self,
@@ -383,6 +776,12 @@ class AssetStore:
         duration: float = 0.0,
         clip_id: str = "",
         created_at: str = "",
+        rights_status: str = "cleared",
+        license_type: str = "manual",
+        license_scope: str = "commercial",
+        source_url: str = "",
+        source_kind: str = "manual_upload",
+        expires_at: str = "",
     ) -> AssetMeta:
         """Insert or update a manually curated asset in the unified store."""
         existing = self._conn.execute(
@@ -413,6 +812,13 @@ class AssetStore:
             freshness="current",
             file_path=normalized_path,
             notes=description.strip(),
+            source_kind=source_kind,
+            source_url=source_url.strip(),
+            asset_hash=_compute_file_hash(Path(normalized_path)),
+            rights_status=rights_status,
+            license_type=license_type,
+            license_scope=license_scope,
+            expires_at=expires_at,
         )
         self.insert(meta)
         return meta
@@ -663,6 +1069,70 @@ class AssetStore:
     def close(self):
         self._conn.close()
 
+    def _sync_asset_tags(self, meta: AssetMeta, now: str) -> None:
+        """同步 asset_tags，确保 tags/产品/情绪字段可结构化检索。"""
+        self._conn.execute("DELETE FROM asset_tags WHERE asset_id = ?", (meta.clip_id,))
+        rows: list[tuple[str, str, str, float, str, str]] = []
+        for t in _dedupe_preserve_order(meta.tags):
+            rows.append((meta.clip_id, "topic", t, 1.0, "asset_insert", now))
+        for p in _dedupe_preserve_order(meta.product):
+            rows.append((meta.clip_id, "product", p, 1.0, "asset_insert", now))
+        rows.append((meta.clip_id, "mood", meta.mood, 1.0, "asset_insert", now))
+        rows.append((meta.clip_id, "visual_type", meta.visual_type, 1.0, "asset_insert", now))
+        rows.append((meta.clip_id, "source_kind", meta.source_kind, 1.0, "asset_insert", now))
+        self._conn.executemany(
+            """INSERT OR REPLACE INTO asset_tags
+               (asset_id, tag_type, tag_value, score, source, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+
+    def _upsert_asset_rights(self, meta: AssetMeta, now: str) -> None:
+        """同步 asset_rights，形成独立版权审计记录。"""
+        self._conn.execute(
+            """INSERT OR REPLACE INTO asset_rights
+               (asset_id, owner, rights_status, license_type, license_scope,
+                platform_allowlist, proof_url, proof_note, valid_from, expires_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                meta.clip_id,
+                meta.source_video,
+                meta.rights_status,
+                meta.license_type,
+                meta.license_scope,
+                json.dumps([], ensure_ascii=False),
+                meta.source_url,
+                meta.notes[:240],
+                "",
+                meta.expires_at,
+                now,
+            ),
+        )
+
+    def _register_asset_version(self, meta: AssetMeta, now: str) -> None:
+        """注册资产版本，记录派生链路。"""
+        if not meta.file_path:
+            return
+        checksum = meta.asset_hash or _compute_file_hash(Path(meta.file_path))
+        version_seed = f"{meta.clip_id}|{meta.file_path}|{checksum}"
+        version_id = f"ver-{hashlib.sha1(version_seed.encode('utf-8')).hexdigest()[:14]}"
+        self._conn.execute(
+            """INSERT OR REPLACE INTO asset_versions
+               (version_id, asset_id, file_path, transform_type, parent_version_id,
+                checksum, created_at, meta_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                version_id,
+                meta.clip_id,
+                meta.file_path,
+                meta.source_kind,
+                "",
+                checksum,
+                now,
+                json.dumps({"license_type": meta.license_type}, ensure_ascii=False),
+            ),
+        )
+
     @staticmethod
     def _row_to_meta(row: sqlite3.Row) -> AssetMeta:
         return AssetMeta(
@@ -683,6 +1153,13 @@ class AssetStore:
             engagement_score=row["engagement_score"],
             file_path=row["file_path"] or "",
             notes=row["notes"] or "",
+            source_kind=row["source_kind"] or "project_generated",
+            source_url=row["source_url"] or "",
+            asset_hash=row["asset_hash"] or "",
+            rights_status=row["rights_status"] or "unknown",
+            license_type=row["license_type"] or "",
+            license_scope=row["license_scope"] or "",
+            expires_at=row["expires_at"] or "",
         )
 
 
@@ -708,6 +1185,17 @@ def _manual_clip_id(file_path: str) -> str:
     safe_stem = re.sub(r"[^a-z0-9]+", "-", stem.lower()).strip("-") or "asset"
     digest = hashlib.sha1(file_path.encode("utf-8")).hexdigest()[:8]
     return f"manual-{safe_stem}-{digest}"
+
+
+def _compute_file_hash(path: Path) -> str:
+    try:
+        hasher = hashlib.sha1()
+        with path.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+    except Exception:
+        return ""
 
 
 def _asset_tokens(asset: AssetMeta) -> set[str]:

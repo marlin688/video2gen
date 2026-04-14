@@ -205,6 +205,19 @@ v2g intake "<source>"           # 统一入口识别（A/B/C/D/E）并生成 int
 v2g config                      # 列出所有配置项及当前值
 ```
 
+### 素材审核台（Web）
+
+```bash
+# 启动素材审核台（默认 http://127.0.0.1:8877）
+v2g assets review-ui --open-browser
+```
+
+支持能力：
+- 素材筛选：关键词 / `visual_type` / `rights_status` / 项目 / 时间区间 / 审核队列
+- 批量操作：`approve` / `block` / `set tags` / `remove`
+- 预览：图片 / 视频片段在线预览
+- 结果回写：所有操作直接写入 `output/assets.db`
+
 每个项目目录会自动维护三个 workflow 契约文件：
 - `workflow.md`：输入/输出约定与阶段说明
 - `artifacts_manifest.json`：产物索引与存在性

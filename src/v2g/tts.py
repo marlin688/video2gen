@@ -418,6 +418,30 @@ def run_tts(cfg: Config, video_id: str, voice: str, rate: str, force: bool = Fal
                 get_tracker().record_degradation("subtitle", "mlx-whisper", "char-split", str(e))
         return state
 
+    if not state.assets_resolved:
+        click.echo("🧩 预处理: 素材解析（图片 + 网络视频）")
+        try:
+            from v2g.asset_resolver import resolve_project_assets
+
+            strict_rights = os.environ.get("V2G_STRICT_RIGHTS", "").strip().lower() in {
+                "1", "true", "yes", "on",
+            }
+            report = resolve_project_assets(
+                cfg,
+                video_id,
+                require_cleared_rights=strict_rights,
+            )
+            click.echo(
+                "   ✅ 素材解析: "
+                f"本地命中 {report.get('resolved_local', 0)}, "
+                f"在线补齐 {report.get('resolved_remote', 0)}, "
+                f"未解决 {report.get('unresolved', 0)}"
+            )
+            state.assets_resolved = True
+            state.save(cfg.output_dir)
+        except Exception as e:
+            click.echo(f"   ⚠️ 素材解析失败 (非致命): {e}")
+
     segments_dir = voiceover_dir / "segments"
     segments_dir.mkdir(parents=True, exist_ok=True)
 

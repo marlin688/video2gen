@@ -1079,6 +1079,7 @@ def run_agent(
             )
 
         state.scripted = True
+        state.assets_resolved = False
     state.last_error = ""
     state.save(cfg.output_dir)
     sync_workflow_contract(

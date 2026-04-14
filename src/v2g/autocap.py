@@ -36,7 +36,7 @@ def run_capture(cfg: Config, project_id: str) -> int:
         click.echo("ℹ️ 脚本中无 B 类素材段")
         return 0
 
-    library = MaterialLibrary()
+    library = MaterialLibrary(db_path=cfg.output_dir / "assets.db")
     recordings_dir = output_dir / "recordings"
     recordings_dir.mkdir(exist_ok=True)
 

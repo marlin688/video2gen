@@ -17,6 +17,7 @@ from v2g.config import Config
 from v2g.checkpoint import PipelineState
 from v2g.quality_profile import resolve_quality_profile, load_profile_prompt
 from v2g.asset_context import build_asset_context
+from v2g.services.input_adapters import SourceInput, resolve_source_input
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -845,6 +846,18 @@ def run_agent(
     except ValueError as e:
         raise click.ClickException(str(e))
     profile_prompt = load_profile_prompt(profile["name"])
+    resolved_sources = [resolve_source_input(source) for source in sources]
+    unreadable_videos = [
+        source.path
+        for source in resolved_sources
+        if source.kind == "local_video" and source.readable_path is None
+    ]
+    if unreadable_videos:
+        files = ", ".join(str(path) for path in unreadable_videos if path)
+        raise click.ClickException(
+            "以下本地视频缺少可读 companion 文件（需要同目录 .srt/.md/.txt）: "
+            + files
+        )
 
     output_dir = cfg.output_dir / project_id
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -896,7 +909,7 @@ def run_agent(
         click.echo(f"   素材: {len(sources)} 个\n")
 
         # Classify sources and build description
-        source_desc = _describe_sources(sources)
+        source_desc = _describe_sources(resolved_sources)
 
         system_prompt = _read_prompt("agent_system.md")
         outline_prompt = _read_prompt("agent_outline.md")
@@ -917,7 +930,7 @@ def run_agent(
             raise click.ClickException("Agent 未生成大纲。请检查素材内容后重试。")
 
         state.agent_outline_done = True
-        state.agent_sources = _build_source_records(sources)
+        state.agent_sources = _build_source_records(resolved_sources)
         state.save(cfg.output_dir)
 
     # ── 大纲预览 + 自动/人工确认 ─────────────────────────────
@@ -1173,58 +1186,67 @@ def _safe_parse_json(text: str) -> dict:
     return json.loads(fixed)
 
 
-def _describe_sources(sources: tuple[str, ...]) -> str:
-    """生成素材列表描述，区分 URL 和本地文件。"""
+def _describe_sources(sources: list[SourceInput]) -> str:
+    """生成素材列表描述，区分 URL、本地文本和本地视频 sidecar。"""
     lines = []
-    for i, src in enumerate(sources):
-        src = src.strip()
-        if src.startswith("http://") or src.startswith("https://"):
-            lines.append(f"[{i}] 🌐 网页文章: {src}")
-            lines.append(f"    → 请用 `fetch_url` 抓取")
-        else:
-            p = Path(src)
-            suffix = p.suffix.lower()
+    for i, source in enumerate(sources):
+        if source.kind in {"url", "youtube"} and source.url:
+            label = "YouTube 视频页" if source.kind == "youtube" else "网页文章"
+            lines.append(f"[{i}] 🌐 {label}: {source.url}")
+            lines.append("    → 请用 `fetch_url` 抓取")
+            continue
+
+        readable = source.readable_path
+        if readable:
+            suffix = readable.suffix.lower()
             type_map = {".srt": "字幕文件", ".md": "Markdown 笔记", ".txt": "文本文件"}
             ftype = type_map.get(suffix, f"{suffix} 文件")
-            abs_path = p.resolve()
-            lines.append(f"[{i}] 📄 {ftype}: {p.name}")
-            lines.append(f"    → 请用 `read_source_file` 读取，路径: {abs_path}")
+            prefix = "🎬 本地视频" if source.kind == "local_video" else "📄"
+            lines.append(f"[{i}] {prefix} {source.display_name}")
+            lines.append(f"    → 请用 `read_source_file` 读取 {ftype}: {readable}")
+            continue
+
+        if source.path:
+            lines.append(f"[{i}] 📄 本地文件: {source.path.name}")
+            lines.append(f"    → 路径无法识别，请人工检查: {source.path}")
+        else:
+            lines.append(f"[{i}] ❓ 未知素材: {source.raw}")
     return "\n".join(lines)
 
 
-def _build_source_records(sources: tuple[str, ...]) -> list[dict]:
+def _build_source_records(sources: list[SourceInput]) -> list[dict]:
     """构建素材记录列表，存入 checkpoint。"""
     records = []
-    for i, src in enumerate(sources):
-        src = src.strip()
-        if src.startswith("http://") or src.startswith("https://"):
-            records.append({"id": i, "type": "url", "path": src})
+    for i, source in enumerate(sources):
+        if source.url:
+            records.append({"id": i, "type": source.kind, "path": source.url})
+        elif source.path:
+            records.append({"id": i, "type": source.kind, "path": str(source.path)})
         else:
-            records.append({"id": i, "type": Path(src).suffix.lstrip("."), "path": str(Path(src).resolve())})
+            records.append({"id": i, "type": source.kind, "path": source.raw})
     return records
 
 
-def _load_cached_sources(output_dir: Path, sources: tuple[str, ...]) -> str:
+def _load_cached_sources(output_dir: Path, sources: list[SourceInput]) -> str:
     """加载素材内容摘要，供阶段二参考。"""
     parts = []
-    for i, src in enumerate(sources):
-        src = src.strip()
-        if src.startswith("http://") or src.startswith("https://"):
-            parts.append(f"### 素材 [{i}]: 网页文章 ({src})")
+    for i, source in enumerate(sources):
+        if source.url:
+            parts.append(f"### 素材 [{i}]: 网页文章 ({source.url})")
             parts.append("（已在阶段一分析，请参考大纲中的 source_summary）\n")
         else:
-            p = Path(src)
-            if p.exists():
-                content = p.read_text(encoding="utf-8")
-                if p.suffix.lower() == ".srt":
+            readable = source.readable_path or source.path
+            if readable and readable.exists():
+                content = readable.read_text(encoding="utf-8")
+                if readable.suffix.lower() == ".srt":
                     content = _parse_srt_to_text(content)
                 # 截断过长内容
                 if len(content) > 6000:
                     content = content[:6000] + "\n...(已截断)"
-                parts.append(f"### 素材 [{i}]: {p.name}")
+                parts.append(f"### 素材 [{i}]: {readable.name}")
                 parts.append(content + "\n")
             else:
-                parts.append(f"### 素材 [{i}]: {p.name} (文件不存在)")
+                parts.append(f"### 素材 [{i}]: {source.display_name} (文件不存在)")
     return "\n".join(parts)
 
 

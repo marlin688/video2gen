@@ -12,7 +12,7 @@ import math
 import re
 import sqlite3
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # ── 枚举值定义（强制从中选择） ────────────────────────────
@@ -80,6 +80,11 @@ class AssetMeta:
     license_type: str = ""
     license_scope: str = ""
     expires_at: str = ""  # ISO date YYYY-MM-DD
+    quality_score: int | None = None  # 1-5, None 表示未评级
+    semantic_type: str = ""
+    entities: list[str] = field(default_factory=list)
+    scene_tags: list[str] = field(default_factory=list)
+    library_category: str = ""
 
     def validate(self) -> list[str]:
         """校验枚举值，返回错误列表。"""
@@ -99,6 +104,8 @@ class AssetMeta:
             errors.append(f"Invalid source_kind: '{self.source_kind}', must be one of {sorted(SOURCE_KIND_VALUES)}")
         if self.engagement_score is not None and self.engagement_score not in (-1, 0, 1):
             errors.append(f"Invalid engagement_score: {self.engagement_score}, must be -1/0/1")
+        if self.quality_score is not None and self.quality_score not in (1, 2, 3, 4, 5):
+            errors.append(f"Invalid quality_score: {self.quality_score}, must be 1-5")
         return errors
 
 
@@ -198,6 +205,10 @@ class AssetStore:
                 license_type TEXT DEFAULT '',
                 license_scope TEXT DEFAULT '',
                 expires_at TEXT DEFAULT '',
+                quality_score INTEGER,
+                semantic_type TEXT DEFAULT '',
+                entities TEXT DEFAULT '[]',
+                scene_tags TEXT DEFAULT '[]',
                 created_at TEXT
             )
         """)
@@ -279,6 +290,11 @@ class AssetStore:
             "license_type": "ALTER TABLE assets ADD COLUMN license_type TEXT DEFAULT ''",
             "license_scope": "ALTER TABLE assets ADD COLUMN license_scope TEXT DEFAULT ''",
             "expires_at": "ALTER TABLE assets ADD COLUMN expires_at TEXT DEFAULT ''",
+            "quality_score": "ALTER TABLE assets ADD COLUMN quality_score INTEGER",
+            "semantic_type": "ALTER TABLE assets ADD COLUMN semantic_type TEXT DEFAULT ''",
+            "entities": "ALTER TABLE assets ADD COLUMN entities TEXT DEFAULT '[]'",
+            "scene_tags": "ALTER TABLE assets ADD COLUMN scene_tags TEXT DEFAULT '[]'",
+            "library_category": "ALTER TABLE assets ADD COLUMN library_category TEXT DEFAULT ''",
         }
         for col, sql in migrations.items():
             if col not in columns:
@@ -288,6 +304,15 @@ class AssetStore:
         )
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_assets_rights_status ON assets(rights_status)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assets_semantic_type ON assets(semantic_type)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assets_library_category ON assets(library_category)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assets_quality_score ON assets(quality_score)"
         )
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_asset_tags_type_value ON asset_tags(tag_type, tag_value)"
@@ -313,11 +338,12 @@ class AssetStore:
             """INSERT OR REPLACE INTO assets
                (clip_id, source_video, time_range_start, time_range_end,
                 duration, captured_date, visual_type, tags, product, mood,
-                has_text_overlay, has_useful_audio, reusable, freshness,
+               has_text_overlay, has_useful_audio, reusable, freshness,
                 engagement_score, file_path, notes, source_kind, source_url,
                 asset_hash, rights_status, license_type, license_scope,
-                expires_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                expires_at, quality_score, semantic_type, entities, scene_tags,
+                library_category, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 meta.clip_id, meta.source_video,
                 meta.time_range_start, meta.time_range_end,
@@ -331,7 +357,13 @@ class AssetStore:
                 meta.engagement_score, meta.file_path, meta.notes,
                 meta.source_kind, meta.source_url, meta.asset_hash,
                 meta.rights_status, meta.license_type, meta.license_scope,
-                meta.expires_at, now,
+                meta.expires_at,
+                meta.quality_score,
+                meta.semantic_type,
+                json.dumps(meta.entities, ensure_ascii=False),
+                json.dumps(meta.scene_tags, ensure_ascii=False),
+                meta.library_category,
+                now,
             ),
         )
         self._sync_asset_tags(meta, now)
@@ -394,7 +426,10 @@ class AssetStore:
 
         where = " AND ".join(conditions) if conditions else "1=1"
         # 新素材优先
-        query = f"SELECT * FROM assets WHERE {where} ORDER BY captured_date DESC LIMIT ?"
+        query = (
+            f"SELECT * FROM assets WHERE {where} "
+            "ORDER BY COALESCE(quality_score, 0) DESC, captured_date DESC LIMIT ?"
+        )
         params.append(limit)
 
         rows = self._conn.execute(query, params).fetchall()
@@ -422,18 +457,26 @@ class AssetStore:
                 return False
         return True
 
-    def search_local_first(
+    def search_local_ranked(
         self,
         query: str,
         *,
         visual_type: str | None = None,
         mood: str | None = None,
+        semantic_type: str | None = None,
+        entities: list[str] | None = None,
+        required_tags: list[str] | None = None,
+        excluded_tags: list[str] | None = None,
+        project_id: str | None = None,
         require_cleared_rights: bool = False,
         allow_possibly_outdated: bool = False,
         limit: int = 8,
-    ) -> list[AssetMeta]:
-        """本地库优先检索：先按语义检索，再按标签补齐。"""
+    ) -> list[tuple[AssetMeta, dict]]:
+        """本地库优先检索：先做语义门控，再按文本与新鲜度重排。"""
         query = (query or "").strip()
+        query_tokens = _tokenize_text(query)
+        if not query_tokens and not (semantic_type or entities or required_tags):
+            return []
         candidates: list[AssetMeta] = []
         if query:
             candidates.extend(
@@ -444,18 +487,17 @@ class AssetStore:
                 )
             )
 
-        if len(candidates) < limit:
-            # 语义检索不足时，按标签拉一批候选补齐。
-            candidates.extend(
-                self.search(
-                    visual_type=visual_type,
-                    mood=mood,
-                    reusable_only=True,
-                    commercial_only=require_cleared_rights,
-                    allow_unknown_rights=not require_cleared_rights,
-                    limit=max(limit * 4, 24),
-                )
+        # 文本命中不足时，再按标签拉一批候选补齐。
+        candidates.extend(
+            self.search(
+                visual_type=visual_type,
+                mood=mood,
+                reusable_only=True,
+                commercial_only=require_cleared_rights,
+                allow_unknown_rights=not require_cleared_rights,
+                limit=max(limit * 4, 24),
             )
+        )
 
         seen: set[str] = set()
         filtered: list[AssetMeta] = []
@@ -476,10 +518,69 @@ class AssetStore:
             if asset.file_path and not Path(asset.file_path).exists():
                 continue
             filtered.append(asset)
-            if len(filtered) >= limit:
-                break
 
-        return filtered
+        usage_map = self.get_usage_summary_map(
+            [asset.clip_id for asset in filtered],
+            recent_days=7,
+            project_id=project_id or "",
+        )
+        scored: list[tuple[float, AssetMeta, dict]] = []
+        for asset in filtered:
+            details = _local_asset_match_details(
+                asset,
+                query_tokens=query_tokens,
+                semantic_type=semantic_type,
+                entities=entities,
+                required_tags=required_tags,
+                excluded_tags=excluded_tags,
+                usage_stats=usage_map.get(asset.clip_id, {}),
+            )
+            if details is None:
+                continue
+            scored.append((float(details["final_score"]), asset, details))
+
+        scored.sort(
+            key=lambda item: (
+                item[0],
+                item[1].quality_score or 0,
+                item[1].captured_date,
+                item[1].clip_id,
+            ),
+            reverse=True,
+        )
+        return [(asset, details) for _, asset, details in scored[:limit]]
+
+    def search_local_first(
+        self,
+        query: str,
+        *,
+        visual_type: str | None = None,
+        mood: str | None = None,
+        semantic_type: str | None = None,
+        entities: list[str] | None = None,
+        required_tags: list[str] | None = None,
+        excluded_tags: list[str] | None = None,
+        project_id: str | None = None,
+        require_cleared_rights: bool = False,
+        allow_possibly_outdated: bool = False,
+        limit: int = 8,
+    ) -> list[AssetMeta]:
+        return [
+            asset
+            for asset, _ in self.search_local_ranked(
+                query,
+                visual_type=visual_type,
+                mood=mood,
+                semantic_type=semantic_type,
+                entities=entities,
+                required_tags=required_tags,
+                excluded_tags=excluded_tags,
+                project_id=project_id,
+                require_cleared_rights=require_cleared_rights,
+                allow_possibly_outdated=allow_possibly_outdated,
+                limit=limit,
+            )
+        ]
 
     def count(self) -> int:
         """素材总数。"""
@@ -576,7 +677,8 @@ class AssetStore:
 
             freshness_bonus = 0.05 if asset.freshness == "current" else 0.0
             audio_bonus = 0.03 if asset.has_useful_audio else 0.0
-            score = len(overlap) / len(query_tokens) + freshness_bonus + audio_bonus
+            quality_bonus = min((asset.quality_score or 0) * 0.02, 0.1)
+            score = len(overlap) / len(query_tokens) + freshness_bonus + audio_bonus + quality_bonus
             scored.append((score, asset))
 
         scored.sort(
@@ -598,6 +700,7 @@ class AssetStore:
         self._conn.execute("DELETE FROM asset_tags WHERE asset_id = ?", (clip_id,))
         self._conn.execute("DELETE FROM asset_rights WHERE asset_id = ?", (clip_id,))
         self._conn.execute("DELETE FROM asset_versions WHERE asset_id = ?", (clip_id,))
+        self._conn.execute("DELETE FROM asset_usage WHERE asset_id = ?", (clip_id,))
         self._conn.commit()
         return cur.rowcount > 0
 
@@ -680,6 +783,11 @@ class AssetStore:
         source_url: str | None = None,
         source_kind: str | None = None,
         file_path: str | None = None,
+        quality_score: int | None = None,
+        semantic_type: str | None = None,
+        entities: list[str] | None = None,
+        scene_tags: list[str] | None = None,
+        library_category: str | None = None,
     ) -> AssetMeta | None:
         """更新素材核心字段（含版权字段），并同步 tags/rights/version。"""
         existing = self.get(clip_id)
@@ -700,6 +808,11 @@ class AssetStore:
             source_url=source_url if source_url is not None else existing.source_url,
             source_kind=source_kind if source_kind is not None else existing.source_kind,
             file_path=str(Path(file_path)) if file_path is not None else existing.file_path,
+            quality_score=quality_score if quality_score is not None else existing.quality_score,
+            semantic_type=semantic_type if semantic_type is not None else existing.semantic_type,
+            entities=_dedupe_preserve_order(entities) if entities is not None else existing.entities,
+            scene_tags=_dedupe_preserve_order(scene_tags) if scene_tags is not None else existing.scene_tags,
+            library_category=library_category if library_category is not None else existing.library_category,
         )
         if file_path is not None:
             updated.asset_hash = _compute_file_hash(Path(updated.file_path))
@@ -782,6 +895,7 @@ class AssetStore:
         source_url: str = "",
         source_kind: str = "manual_upload",
         expires_at: str = "",
+        library_category: str = "",
     ) -> AssetMeta:
         """Insert or update a manually curated asset in the unified store."""
         existing = self._conn.execute(
@@ -819,6 +933,9 @@ class AssetStore:
             license_type=license_type,
             license_scope=license_scope,
             expires_at=expires_at,
+            quality_score=3,
+            scene_tags=_dedupe_preserve_order(keywords),
+            library_category=library_category.strip(),
         )
         self.insert(meta)
         return meta
@@ -893,13 +1010,77 @@ class AssetStore:
         lines = ["## 可用素材库（可选复用）\n"]
         for a in assets:
             tags_str = ", ".join(a.tags[:3]) if a.tags else ""
+            semantic_bits = ", ".join(
+                bit
+                for bit in [
+                    a.semantic_type.strip(),
+                    "/".join(a.entities[:2]) if a.entities else "",
+                    "/".join(a.scene_tags[:2]) if a.scene_tags else "",
+                ]
+                if bit
+            )
+            semantic_str = f", semantic={semantic_bits}" if semantic_bits else ""
             note_str = f", note={a.notes[:24]}" if a.notes else ""
+            quality_str = f", quality={a.quality_score}" if a.quality_score is not None else ""
             lines.append(
                 f"- `{a.clip_id}`: {a.visual_type}/{a.mood}, "
                 f"tags=[{tags_str}], {a.duration:.1f}s, "
-                f"freshness={a.freshness}{note_str}"
+                f"freshness={a.freshness}{quality_str}{semantic_str}{note_str}"
             )
         return "\n".join(lines)
+
+    def get_usage_summary_map(
+        self,
+        asset_ids: list[str],
+        *,
+        recent_days: int = 7,
+        project_id: str = "",
+    ) -> dict[str, dict]:
+        """汇总素材使用频次，供检索排序和审核台展示。"""
+        selected = [aid for aid in dict.fromkeys(asset_ids) if aid]
+        if not selected:
+            return {}
+        placeholders = ",".join("?" for _ in selected)
+        since_ts = (
+            datetime.now(timezone.utc) - timedelta(days=max(1, int(recent_days)))
+        ).isoformat()
+        same_project_sql = ""
+        query_params: list[object] = [since_ts, since_ts]
+        if project_id:
+            same_project_sql = ", SUM(CASE WHEN project_id = ? AND used_at >= ? THEN 1 ELSE 0 END) AS same_project_recent"
+            query_params.extend([project_id, since_ts])
+        query_params.extend(selected)
+        rows = self._conn.execute(
+            f"""SELECT asset_id,
+                       COUNT(*) AS total_use_count,
+                       MAX(used_at) AS last_used_at,
+                       SUM(CASE WHEN used_at >= ? THEN 1 ELSE 0 END) AS recent_use_count,
+                       COUNT(DISTINCT CASE WHEN used_at >= ? THEN project_id END) AS recent_project_count
+                       {same_project_sql}
+                FROM asset_usage
+                WHERE asset_id IN ({placeholders})
+                GROUP BY asset_id""",
+            query_params,
+        ).fetchall()
+        summary: dict[str, dict] = {
+            asset_id: {
+                "total_use_count": 0,
+                "recent_use_count": 0,
+                "recent_project_count": 0,
+                "same_project_recent": 0,
+                "last_used_at": "",
+            }
+            for asset_id in selected
+        }
+        for row in rows:
+            summary[row["asset_id"]] = {
+                "total_use_count": int(row["total_use_count"] or 0),
+                "recent_use_count": int(row["recent_use_count"] or 0),
+                "recent_project_count": int(row["recent_project_count"] or 0),
+                "same_project_recent": int(row["same_project_recent"] or 0) if "same_project_recent" in row.keys() else 0,
+                "last_used_at": row["last_used_at"] or "",
+            }
+        return summary
 
     # ── video_stats 方法 ──────────────────────────────────
 
@@ -1077,9 +1258,19 @@ class AssetStore:
             rows.append((meta.clip_id, "topic", t, 1.0, "asset_insert", now))
         for p in _dedupe_preserve_order(meta.product):
             rows.append((meta.clip_id, "product", p, 1.0, "asset_insert", now))
+        if meta.semantic_type:
+            rows.append((meta.clip_id, "semantic_type", meta.semantic_type, 1.0, "asset_insert", now))
+        for entity in _dedupe_preserve_order(meta.entities):
+            rows.append((meta.clip_id, "entity", entity, 1.0, "asset_insert", now))
+        for scene in _dedupe_preserve_order(meta.scene_tags):
+            rows.append((meta.clip_id, "scene", scene, 1.0, "asset_insert", now))
         rows.append((meta.clip_id, "mood", meta.mood, 1.0, "asset_insert", now))
         rows.append((meta.clip_id, "visual_type", meta.visual_type, 1.0, "asset_insert", now))
         rows.append((meta.clip_id, "source_kind", meta.source_kind, 1.0, "asset_insert", now))
+        if meta.library_category:
+            rows.append((meta.clip_id, "library_category", meta.library_category, 1.0, "asset_insert", now))
+        if meta.quality_score is not None:
+            rows.append((meta.clip_id, "quality_score", str(meta.quality_score), 1.0, "asset_insert", now))
         self._conn.executemany(
             """INSERT OR REPLACE INTO asset_tags
                (asset_id, tag_type, tag_value, score, source, created_at)
@@ -1160,6 +1351,11 @@ class AssetStore:
             license_type=row["license_type"] or "",
             license_scope=row["license_scope"] or "",
             expires_at=row["expires_at"] or "",
+            quality_score=row["quality_score"],
+            semantic_type=row["semantic_type"] or "",
+            entities=json.loads(row["entities"]) if row["entities"] else [],
+            scene_tags=json.loads(row["scene_tags"]) if row["scene_tags"] else [],
+            library_category=row["library_category"] or "",
         )
 
 
@@ -1207,9 +1403,11 @@ def _asset_tokens(asset: AssetMeta) -> set[str]:
         asset.mood,
         asset.file_path,
         asset.notes,
+        asset.semantic_type,
+        asset.library_category,
     ):
         tokens.update(_tokenize_text(value))
-    for group in (asset.tags, asset.product):
+    for group in (asset.tags, asset.product, asset.entities, asset.scene_tags):
         for value in group:
             tokens.update(_tokenize_text(value))
     return tokens
@@ -1218,12 +1416,186 @@ def _asset_tokens(asset: AssetMeta) -> set[str]:
 def _tokenize_text(text: str) -> set[str]:
     if not text:
         return set()
-    tokens = set(re.findall(r"[a-zA-Z0-9_\-\.]+", text.lower()))
+    tokens: set[str] = set()
+    for token in re.findall(r"[a-zA-Z0-9_\-\.]+", text.lower()):
+        tokens.add(token)
+        for part in re.split(r"[_\-.]+", token):
+            cleaned = part.strip()
+            if len(cleaned) >= 2:
+                tokens.add(cleaned)
     for seg in re.findall(r"[\u4e00-\u9fff]+", text):
         tokens.add(seg)
         for i in range(len(seg) - 1):
             tokens.add(seg[i : i + 2])
     return tokens
+
+
+def _flatten_token_groups(values: list[str] | None) -> set[str]:
+    tokens: set[str] = set()
+    for value in values or []:
+        tokens.update(_tokenize_text(value))
+    return tokens
+
+
+def _token_overlap_score(query_tokens: set[str], asset_tokens: set[str]) -> float:
+    if not query_tokens:
+        return 0.0
+    overlap = query_tokens & asset_tokens
+    if not overlap:
+        return 0.0
+    return len(overlap) / len(query_tokens)
+
+
+def _semantic_match_details(
+    asset: AssetMeta,
+    *,
+    semantic_type: str | None = None,
+    entities: list[str] | None = None,
+    required_tags: list[str] | None = None,
+    excluded_tags: list[str] | None = None,
+) -> dict | None:
+    asset_tokens = _asset_tokens(asset)
+    explicit_semantic_tokens = _tokenize_text(asset.semantic_type)
+    explicit_entity_tokens = _flatten_token_groups(asset.entities)
+    explicit_scene_tokens = _flatten_token_groups(asset.scene_tags)
+    excluded_tokens = _flatten_token_groups(excluded_tags)
+    excluded_hits = sorted(excluded_tokens & asset_tokens)
+    if excluded_hits:
+        return None
+
+    score = 0.0
+    matched_semantic_tokens: list[str] = []
+    matched_entities: list[str] = []
+    matched_required_tags: list[str] = []
+
+    if semantic_type:
+        request_tokens = _tokenize_text(semantic_type)
+        semantic_hits = sorted(request_tokens & explicit_semantic_tokens)
+        if explicit_semantic_tokens and semantic_hits:
+            score += 0.45
+            matched_semantic_tokens = semantic_hits
+        elif explicit_semantic_tokens:
+            return None
+        else:
+            semantic_hits = sorted(request_tokens & asset_tokens)
+            if semantic_hits:
+                score += 0.2
+                matched_semantic_tokens = semantic_hits
+
+    if entities:
+        request_tokens = _flatten_token_groups(entities)
+        entity_pool = explicit_entity_tokens | _flatten_token_groups(asset.product)
+        overlap = sorted(request_tokens & (entity_pool or asset_tokens))
+        if overlap:
+            score += 0.25 * min(1.0, len(overlap) / max(1, len(request_tokens)))
+            matched_entities = overlap
+        elif explicit_entity_tokens:
+            return None
+
+    if required_tags:
+        request_tokens = _flatten_token_groups(required_tags)
+        scene_pool = explicit_scene_tokens | _flatten_token_groups(asset.tags)
+        overlap = sorted(request_tokens & (scene_pool or asset_tokens))
+        if overlap:
+            score += 0.25 * min(1.0, len(overlap) / max(1, len(request_tokens)))
+            matched_required_tags = overlap
+        elif explicit_scene_tokens:
+            return None
+
+    return {
+        "semantic_score": round(score, 4),
+        "matched_semantic_tokens": matched_semantic_tokens,
+        "matched_entities": matched_entities,
+        "matched_required_tags": matched_required_tags,
+        "excluded_hits": excluded_hits,
+    }
+
+
+def _quality_bonus(quality_score: int | None) -> float:
+    if quality_score is None:
+        return 0.0
+    return round((int(quality_score) - 3) * 0.06, 4)
+
+
+def _usage_penalty(usage_stats: dict | None) -> float:
+    usage_stats = usage_stats or {}
+    recent_use_count = int(usage_stats.get("recent_use_count") or 0)
+    recent_project_count = int(usage_stats.get("recent_project_count") or 0)
+    same_project_recent = int(usage_stats.get("same_project_recent") or 0)
+    penalty = (
+        min(recent_use_count, 3) * 0.04
+        + max(0, recent_project_count - 1) * 0.03
+        + min(same_project_recent, 2) * 0.05
+    )
+    return round(min(penalty, 0.26), 4)
+
+
+def _local_asset_match_details(
+    asset: AssetMeta,
+    *,
+    query_tokens: set[str],
+    semantic_type: str | None = None,
+    entities: list[str] | None = None,
+    required_tags: list[str] | None = None,
+    excluded_tags: list[str] | None = None,
+    usage_stats: dict | None = None,
+) -> dict | None:
+    semantic_requested = bool(semantic_type or entities or required_tags or excluded_tags)
+    semantic = _semantic_match_details(
+        asset,
+        semantic_type=semantic_type,
+        entities=entities,
+        required_tags=required_tags,
+        excluded_tags=excluded_tags,
+    )
+    if semantic is None:
+        return None
+
+    asset_tokens = _asset_tokens(asset)
+    matched_query_tokens = sorted(query_tokens & asset_tokens)
+    text_score = _token_overlap_score(query_tokens, asset_tokens)
+    freshness_bonus = 0.05 if asset.freshness == "current" else 0.0
+    audio_bonus = 0.03 if asset.has_useful_audio else 0.0
+    quality_bonus = _quality_bonus(asset.quality_score)
+    usage_penalty = _usage_penalty(usage_stats)
+    score = (
+        float(semantic["semantic_score"])
+        + text_score
+        + freshness_bonus
+        + audio_bonus
+        + quality_bonus
+        - usage_penalty
+    )
+
+    if semantic_requested:
+        if float(semantic["semantic_score"]) <= 0 and text_score < 0.45:
+            return None
+        if score < 0.55:
+            return None
+    elif query_tokens:
+        min_text_score = 0.2 if len(query_tokens) <= 2 else 0.34
+        if text_score < min_text_score:
+            return None
+
+    return {
+        "semantic_requested": semantic_requested,
+        "semantic_score": round(float(semantic["semantic_score"]), 4),
+        "text_score": round(text_score, 4),
+        "freshness_bonus": round(freshness_bonus, 4),
+        "audio_bonus": round(audio_bonus, 4),
+        "quality_score": asset.quality_score,
+        "quality_bonus": quality_bonus,
+        "usage_penalty": usage_penalty,
+        "matched_query_tokens": matched_query_tokens,
+        "matched_semantic_tokens": semantic["matched_semantic_tokens"],
+        "matched_entities": semantic["matched_entities"],
+        "matched_required_tags": semantic["matched_required_tags"],
+        "recent_use_count": int((usage_stats or {}).get("recent_use_count") or 0),
+        "recent_project_count": int((usage_stats or {}).get("recent_project_count") or 0),
+        "same_project_recent": int((usage_stats or {}).get("same_project_recent") or 0),
+        "last_used_at": str((usage_stats or {}).get("last_used_at") or ""),
+        "final_score": round(score, 4),
+    }
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:

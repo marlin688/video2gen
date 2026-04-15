@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 import click
 
+from v2g.asset_library_layout import build_library_asset_path
 from v2g.asset_store import AssetMeta, AssetStore
 from v2g.config import Config
 from v2g.image_source import source_image
@@ -20,7 +21,6 @@ from v2g.workflow_contract import sync_workflow_contract
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
-_IMAGE_VISUAL_TYPES = {"image_overlay", "screenshot", "product_ui"}
 
 
 def resolve_project_assets(
@@ -47,7 +47,7 @@ def resolve_project_assets(
     script = json.loads(script_path.read_text(encoding="utf-8"))
     segments = script.get("segments", [])
     report = {
-        "version": "v3",
+        "version": "v4",
         "project_id": project_id,
         "require_cleared_rights": require_cleared_rights,
         "checked_segments": 0,
@@ -178,12 +178,18 @@ def _resolve_image_segment(
         # 旧 path 不可用时清空，避免下游继续读脏路径。
         image_content["image_path"] = ""
 
+    semantic_request = _build_image_semantic_request(image_content)
     query = _resolve_query(seg, image_content)
-    local = _pick_local_asset(
+    local, local_reason, top_candidates = _pick_local_asset(
         store,
         query=query,
         require_cleared_rights=require_cleared_rights,
         asset_kind="image",
+        project_id=project_id,
+        semantic_type=semantic_request["semantic_type"],
+        entities=semantic_request["entities"],
+        required_tags=semantic_request["required_tags"],
+        excluded_tags=semantic_request["excluded_tags"],
     )
     if local is not None:
         rel_path = _materialize_to_project(
@@ -209,6 +215,9 @@ def _resolve_image_segment(
                 "rights_status": local.rights_status,
                 "assigned_path": rel_path,
                 "query": query,
+                "semantic_request": semantic_request,
+                "candidate_reason": local_reason,
+                "top_candidates": top_candidates,
             }
         )
         _record_usage(
@@ -282,21 +291,24 @@ def _resolve_image_segment(
     report["resolved_remote"] += 1
     report["resolved_remote_image"] += 1
     report["records"].append(
-        {
-            "segment_id": seg_id,
-            "asset_kind": "image",
-            "decision": "resolved_remote",
-            "method": method,
-            "query": source_query,
-            "assigned_path": rel_path,
-        }
-    )
+            {
+                "segment_id": seg_id,
+                "asset_kind": "image",
+                "decision": "resolved_remote",
+                "method": method,
+                "query": source_query,
+                "assigned_path": rel_path,
+                "semantic_request": semantic_request,
+                "top_candidates": top_candidates,
+            }
+        )
 
     meta = _ingest_remote_image(
         store=store,
         cfg=cfg,
         project_id=project_id,
         seg=seg,
+        image_content=image_content,
         method=method,
         source_query=source_query,
         local_image_path=remote_path,
@@ -358,11 +370,12 @@ def _resolve_web_video_segment(
         return changed
 
     query = str(web_video.get("search_query") or "").strip() or _resolve_query(seg, web_video)
-    local = _pick_local_asset(
+    local, local_reason, top_candidates = _pick_local_asset(
         store,
         query=query,
         require_cleared_rights=require_cleared_rights,
         asset_kind="web_video",
+        project_id=project_id,
     )
     if local is not None:
         rel_path = _materialize_to_project(
@@ -389,6 +402,8 @@ def _resolve_web_video_segment(
                 "rights_status": local.rights_status,
                 "assigned_path": rel_path,
                 "query": query,
+                "candidate_reason": local_reason,
+                "top_candidates": top_candidates,
             }
         )
         _record_usage(
@@ -426,22 +441,24 @@ def _resolve_web_video_segment(
     report["resolved_remote"] += 1
     report["resolved_remote_web_video"] += 1
     report["records"].append(
-        {
-            "segment_id": seg_id,
-            "asset_kind": "web_video",
-            "decision": "resolved_remote",
-            "assigned_path": str(remote_path.relative_to(project_dir)),
-            "source_url": source_url,
-            "query": query,
-            "reason": remote_reason,
-        }
-    )
+            {
+                "segment_id": seg_id,
+                "asset_kind": "web_video",
+                "decision": "resolved_remote",
+                "assigned_path": str(remote_path.relative_to(project_dir)),
+                "source_url": source_url,
+                "query": query,
+                "reason": remote_reason,
+                "top_candidates": top_candidates,
+            }
+        )
 
     meta = _ingest_remote_web_video(
         store=store,
         cfg=cfg,
         project_id=project_id,
         seg=seg,
+        web_video=web_video,
         source_url=source_url,
         query=query,
         local_video_path=remote_path,
@@ -463,6 +480,10 @@ def _resolve_query(seg: dict, payload: dict) -> str:
     parts = [
         str(payload.get("source_query") or "").strip(),
         str(payload.get("search_query") or "").strip(),
+        str(payload.get("semantic_type") or "").strip(),
+        " ".join(_coerce_str_list(payload.get("entities"))),
+        " ".join(_coerce_str_list(payload.get("scene_tags"))),
+        " ".join(_coerce_str_list(payload.get("must_have"))),
         str(payload.get("overlay_text") or "").strip(),
         str(seg.get("narration_zh") or "").strip(),
         str(seg.get("notes") or "").strip(),
@@ -479,27 +500,45 @@ def _pick_local_asset(
     query: str,
     require_cleared_rights: bool,
     asset_kind: str,
-) -> AssetMeta | None:
+    project_id: str,
+    semantic_type: str | None = None,
+    entities: list[str] | None = None,
+    required_tags: list[str] | None = None,
+    excluded_tags: list[str] | None = None,
+) -> tuple[AssetMeta | None, dict | None, list[dict]]:
     visual_type = "web_video" if asset_kind == "web_video" else None
-    candidates = store.search_local_first(
+    ranked = store.search_local_ranked(
         query,
         visual_type=visual_type,
+        semantic_type=semantic_type,
+        entities=entities,
+        required_tags=required_tags,
+        excluded_tags=excluded_tags,
+        project_id=project_id,
         require_cleared_rights=require_cleared_rights,
         allow_possibly_outdated=False,
         limit=12,
     )
-    for asset in candidates:
+    top_candidates: list[dict] = []
+    chosen_asset: AssetMeta | None = None
+    chosen_reason: dict | None = None
+    for asset, details in ranked:
         path = Path(asset.file_path)
         if not path.exists():
             continue
         if asset_kind == "web_video":
             if asset.visual_type != "web_video" and not _is_video_file(path):
                 continue
-            return asset
-        if asset.visual_type not in _IMAGE_VISUAL_TYPES and not _is_image_file(path):
+        elif not _is_image_file(path):
             continue
-        return asset
-    return None
+        candidate = _candidate_snapshot(asset, details)
+        top_candidates.append(candidate)
+        if chosen_asset is None:
+            chosen_asset = asset
+            chosen_reason = details
+        if len(top_candidates) >= 3 and chosen_asset is not None:
+            break
+    return chosen_asset, chosen_reason, top_candidates[:3]
 
 
 def _materialize_to_project(
@@ -636,14 +675,12 @@ def _ingest_remote_image(
     cfg: Config,
     project_id: str,
     seg: dict,
+    image_content: dict,
     method: str,
     source_query: str,
     local_image_path: Path,
 ) -> AssetMeta | None:
     """把在线补图回灌到全局素材库，供后续项目复用。"""
-    library_dir = _asset_library_root(cfg) / "images"
-    library_dir.mkdir(parents=True, exist_ok=True)
-
     file_hash = _compute_file_hash(local_image_path)
     existing = store.get_by_hash(file_hash) if file_hash else None
     if existing is not None:
@@ -653,17 +690,19 @@ def _ingest_remote_image(
     if suffix not in _IMAGE_SUFFIXES:
         suffix = ".png"
     digest = file_hash[:16] if file_hash else hashlib.sha1(str(local_image_path).encode("utf-8")).hexdigest()[:16]
-    library_name = f"img_{digest}{suffix}"
-
-    library_path = library_dir / library_name
-    if not library_path.exists():
-        shutil.copy2(local_image_path, library_path)
-
     clip_id = f"img-{digest[:12]}"
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     mood = _infer_mood(seg)
     products = _infer_products(source_query)
     tags = _tokenize_tags(source_query)
+    semantic_type = str(image_content.get("semantic_type") or "").strip()
+    entities = _coerce_str_list(image_content.get("entities"))
+    scene_tags = _merge_unique(
+        _coerce_str_list(image_content.get("scene_tags")),
+        _coerce_str_list(image_content.get("must_have")),
+    )
+    if not entities:
+        entities = [p for p in products if p and p != "other"]
 
     meta = AssetMeta(
         clip_id=clip_id,
@@ -678,7 +717,7 @@ def _ingest_remote_image(
         mood=mood,
         reusable=True,
         freshness="current",
-        file_path=str(library_path),
+        file_path="",
         notes=f"auto-ingest image from {project_id} segment {seg.get('id', '?')}: {source_query[:120]}",
         source_kind=_method_to_source_kind(method),
         source_url=source_query if method == "screenshot" else "",
@@ -687,7 +726,15 @@ def _ingest_remote_image(
         license_type=method,
         license_scope="",
         expires_at="",
+        semantic_type=semantic_type,
+        entities=entities,
+        scene_tags=scene_tags,
     )
+    library_path = build_library_asset_path(cfg, meta, current_path=local_image_path)
+    library_path.parent.mkdir(parents=True, exist_ok=True)
+    if not library_path.exists():
+        shutil.copy2(local_image_path, library_path)
+    meta.file_path = str(library_path)
     store.insert(meta)
     return meta
 
@@ -698,29 +745,41 @@ def _ingest_remote_web_video(
     cfg: Config,
     project_id: str,
     seg: dict,
+    web_video: dict,
     source_url: str,
     query: str,
     local_video_path: Path,
 ) -> AssetMeta | None:
     """把远程下载的视频回灌到全局素材库。"""
-    library_dir = _asset_library_root(cfg) / "web_videos"
-    library_dir.mkdir(parents=True, exist_ok=True)
-
     file_hash = _compute_file_hash(local_video_path)
     existing = store.get_by_hash(file_hash) if file_hash else None
     if existing is not None:
         return existing
 
     digest = file_hash[:16] if file_hash else hashlib.sha1(str(local_video_path).encode("utf-8")).hexdigest()[:16]
-    library_name = f"wv_{digest}.mp4"
-    library_path = library_dir / library_name
-    if not library_path.exists():
-        shutil.copy2(local_video_path, library_path)
-
     clip_id = f"web-{digest[:12]}"
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    tags = _tokenize_tags(query or source_url)
-    products = _infer_products(query or source_url)
+    seed = query or source_url
+    tags = _tokenize_tags(seed)
+    products = _infer_products(seed)
+    mood = _infer_mood(seg)
+    semantic_type = _infer_web_video_semantic_type(web_video, seed=seed, products=products, mood=mood)
+    entities = _coerce_str_list(web_video.get("entities"))
+    if not entities:
+        entities = [p for p in products if p and p != "other"]
+    library_category = _infer_web_video_library_category(
+        web_video,
+        seg,
+        semantic_type=semantic_type,
+        seed=seed,
+        tags=tags,
+        products=products,
+    )
+    scene_tags = _merge_unique(
+        _coerce_str_list(web_video.get("scene_tags")),
+        [library_category, mood],
+        tags[:3],
+    )
 
     meta = AssetMeta(
         clip_id=clip_id,
@@ -732,10 +791,10 @@ def _ingest_remote_web_video(
         visual_type="web_video",
         tags=tags,
         product=products,
-        mood=_infer_mood(seg),
+        mood=mood,
         reusable=True,
         freshness="current",
-        file_path=str(library_path),
+        file_path="",
         notes=f"auto-ingest web_video from {project_id} segment {seg.get('id', '?')}: {(query or source_url)[:120]}",
         source_kind="search_download" if query else "external",
         source_url=source_url,
@@ -744,13 +803,18 @@ def _ingest_remote_web_video(
         license_type="downloaded_video",
         license_scope="",
         expires_at="",
+        semantic_type=semantic_type,
+        entities=entities,
+        scene_tags=scene_tags,
+        library_category=library_category,
     )
+    library_path = build_library_asset_path(cfg, meta, current_path=local_video_path)
+    library_path.parent.mkdir(parents=True, exist_ok=True)
+    if not library_path.exists():
+        shutil.copy2(local_video_path, library_path)
+    meta.file_path = str(library_path)
     store.insert(meta)
     return meta
-
-
-def _asset_library_root(cfg: Config) -> Path:
-    return cfg.output_dir / "asset_library"
 
 
 def _record_usage(
@@ -848,6 +912,153 @@ def _tokenize_tags(text: str) -> list[str]:
         if len(result) >= 10:
             break
     return result
+
+
+def _coerce_str_list(value) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        cleaned = str(item or "").strip()
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(cleaned)
+    return result
+
+
+def _merge_unique(*groups: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group:
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(item)
+    return result
+
+
+def _safe_slug(value: str | None, *, fallback: str = "general", max_len: int = 48) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return fallback
+    chars: list[str] = []
+    prev_sep = False
+    for ch in text:
+        if ch.isascii() and ch.isalnum():
+            chars.append(ch)
+            prev_sep = False
+        else:
+            if not prev_sep:
+                chars.append("_")
+                prev_sep = True
+    slug = "".join(chars).strip("_")
+    slug = "_".join(part for part in slug.split("_") if part)
+    return slug[:max_len] or fallback
+
+
+def _infer_web_video_semantic_type(
+    web_video: dict,
+    *,
+    seed: str,
+    products: list[str],
+    mood: str,
+) -> str:
+    explicit = str(web_video.get("semantic_type") or "").strip()
+    if explicit:
+        return _safe_slug(explicit, fallback="general")
+    if seed and not _is_http_url(seed):
+        return _safe_slug(seed, fallback="general", max_len=36)
+    for product in products:
+        if product and product != "other":
+            return _safe_slug(product, fallback="general")
+    return _safe_slug(mood or "general", fallback="general")
+
+
+def _infer_web_video_library_category(
+    web_video: dict,
+    seg: dict,
+    *,
+    semantic_type: str,
+    seed: str,
+    tags: list[str],
+    products: list[str],
+) -> str:
+    explicit = str(web_video.get("library_category") or "").strip()
+    if explicit:
+        return _safe_slug(explicit, fallback="general")
+    corpus = " ".join([
+        semantic_type,
+        seed,
+        str(web_video.get("overlay_text") or ""),
+        str(seg.get("narration_zh") or ""),
+        " ".join(tags),
+        " ".join(products),
+    ]).lower()
+    if any(k in corpus for k in ("terminal", "cli", "shell", "console", "command")):
+        return "terminal"
+    if any(k in corpus for k in ("code", "coding", "developer", "editor", "vscode", "cursor", "keyboard", "mouse", "laptop", "programmer")):
+        return "code_editor"
+    if any(k in corpus for k in ("chat", "message", "texting", "whatsapp", "assistant", "conversation")):
+        return "chat_ui"
+    if any(k in corpus for k in ("dashboard", "analytics", "admin", "browser", "interface", "ui", "screen", "login")):
+        return "product_ui"
+    if any(k in corpus for k in ("server", "data center", "rack", "infrastructure")):
+        return "data_center"
+    if any(k in corpus for k in ("chip", "microchip", "motherboard", "circuit", "pcb", "processor", "electronics")):
+        return "chip_circuit"
+    if any(k in corpus for k in ("network", "matrix", "grid", "sphere", "world map", "cloud", "light beams", "points of light")):
+        return "abstract_network"
+    if any(k in corpus for k in ("vr", "futuristic", "gesture", "device", "hologram")):
+        return "futuristic_promo"
+    return "product_ui" if any(p in {"openai", "anthropic", "claude", "claude-code", "chatgpt", "github", "vscode"} for p in products) else "abstract_network"
+
+
+def _build_image_semantic_request(image_content: dict) -> dict:
+    semantic_type = str(image_content.get("semantic_type") or "").strip()
+    entities = _coerce_str_list(image_content.get("entities"))
+    scene_tags = _coerce_str_list(image_content.get("scene_tags"))
+    must_have = _coerce_str_list(image_content.get("must_have"))
+    avoid = _coerce_str_list(image_content.get("avoid"))
+    return {
+        "semantic_type": semantic_type,
+        "entities": entities,
+        "required_tags": _merge_unique(scene_tags, must_have),
+        "excluded_tags": avoid,
+    }
+
+
+def _candidate_snapshot(asset: AssetMeta, details: dict) -> dict:
+    return {
+        "asset_id": asset.clip_id,
+        "file_path": asset.file_path,
+        "visual_type": asset.visual_type,
+        "quality_score": asset.quality_score,
+        "candidate_reason": {
+            "final_score": details.get("final_score"),
+            "semantic_score": details.get("semantic_score"),
+            "text_score": details.get("text_score"),
+            "quality_bonus": details.get("quality_bonus"),
+            "freshness_bonus": details.get("freshness_bonus"),
+            "usage_penalty": details.get("usage_penalty"),
+            "matched_semantic_tokens": details.get("matched_semantic_tokens"),
+            "matched_entities": details.get("matched_entities"),
+            "matched_required_tags": details.get("matched_required_tags"),
+            "matched_query_tokens": details.get("matched_query_tokens"),
+            "recent_use_count": details.get("recent_use_count"),
+            "recent_project_count": details.get("recent_project_count"),
+            "same_project_recent": details.get("same_project_recent"),
+            "last_used_at": details.get("last_used_at"),
+        },
+    }
 
 
 def _compute_file_hash(path: Path) -> str:

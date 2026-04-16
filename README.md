@@ -55,7 +55,7 @@ brew install ffmpeg
 cp .env.example .env
 
 # 2. 编辑 .env，填入 API Key
-#    至少需要一个 LLM 的 Key（ANTHROPIC_API_KEY / GPT_API_KEY / ZHIPU_API_KEY）
+#    至少需要一套可用 LLM 凭证（如 ANTHROPIC_API_KEY / GPT_API_KEY / ZHIPU_API_KEY / OPENAI_AUTH_FILE）
 
 # 3. 每次使用前，加载环境变量
 source .env
@@ -75,11 +75,13 @@ v2g config
 |------|------|------|
 | `ANTHROPIC_API_KEY` | Claude API 密钥 | 至少一个 LLM Key |
 | `GPT_API_KEY` / `GPT_BASE_URL` | OpenAI 兼容接口 | 可选 |
+| `OPENAI_AUTH_FILE` | OpenAI OAuth 凭证文件（`auth.json`）；当 token 无 `api.*` scope 时自动走 ChatGPT Codex 路由 | 可选 |
+| `OPENAI_CODEX_BASE_URL` | ChatGPT Codex 兼容网关地址（默认 `https://chatgpt.com/backend-api/codex`） | 可选 |
 | `ZHIPU_API_KEY` | 智谱 GLM API | 可选 |
 | `TTS_ENGINE` | TTS 引擎 (`voxcpm` / `edge` / `minimax` / `sovits`) | 默认 `voxcpm`（本地高质量） |
 | `TTS_VOXCPM_MODEL` | VoxCPM 模型 ID | 默认 `openbmb/VoxCPM2` |
 | `TTS_MINMAX_KEY` | MiniMax API 密钥 | `minimax` 引擎时必需 |
-| `SCRIPT_MODEL` | 脚本生成模型 | 默认 `claude-sonnet-4-5-20250929` |
+| `SCRIPT_MODEL` | 脚本生成模型 | 默认 `gpt-5.4` |
 | `V2G_THEME` | Remotion 渲染主题 | 默认 `tech-blue` |
 | `OBSIDIAN_VAULT_PATH` | Obsidian vault 路径 | 可选，默认 `output/` |
 | `YOUTUBE_API_KEY` | YouTube Data API v3 | 可选，ideation 竞品分析用 |
@@ -222,6 +224,25 @@ v2g assets review-ui --open-browser
 - `workflow.md`：输入/输出约定与阶段说明
 - `artifacts_manifest.json`：产物索引与存在性
 - `run_log.jsonl`：阶段执行日志（append-only）
+
+### 公众号素材批量入库
+
+```bash
+# 从微信公众号文章 URL 批量抓图入库（默认目标 100 条）
+v2g assets seed-wechat \
+  --urls "https://mp.weixin.qq.com/s/xxx;https://mp.weixin.qq.com/s/yyy" \
+  --seed-id seed-wechat-2026-04-14 \
+  --allow-account 智东西 --allow-account 36氪 --allow-account 新智元 \
+  --allow-account 机器之心 --allow-account 量子位
+
+# 或者从文本文件读取 URL（每行一条）
+v2g assets seed-wechat --urls-file wechat_urls.txt --limit 120 --per-article 10
+```
+
+说明：
+- 自动做质量过滤（最小尺寸/文件大小）和去重（按图片 hash）。
+- 入库后会生成清单：`output/asset_library/seeds/<seed_id>.json`。
+- 默认版权状态为 `unknown`，建议在审核台批量 `approve/block/set tags` 后再进入商用渲染。
 
 ## 项目结构
 

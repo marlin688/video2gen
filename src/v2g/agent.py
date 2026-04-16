@@ -5,9 +5,11 @@
 - OpenAI 兼容 SDK (MiniMax / DeepSeek / GPT / Qwen 等)
 """
 
+import hashlib
 import json
 import os
 import re
+import time
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -442,10 +444,174 @@ def _run_agent_loop_openai(
 ) -> str:
     """OpenAI-compatible agent loop with function calling."""
     from openai import OpenAI
-    from v2g.llm import _make_http_client
+    from v2g.llm import (
+        _load_openai_oauth_session,
+        _make_http_client,
+        _read_oauth_scopes,
+        _resolve_codex_base_url,
+        _read_proxy_url,
+    )
     from v2g.cost import get_tracker
 
+    def _normalize_base_url(url: str | None) -> str:
+        val = (url or "").strip()
+        if not val:
+            return ""
+        if not any(val.rstrip("/").endswith(s) for s in ("/v1", "/v4")):
+            val = val.rstrip("/") + "/v1"
+        return val
+
+    def _timeout_like(exc: Exception) -> bool:
+        name = exc.__class__.__name__
+        if name in {"APITimeoutError", "APIConnectionError"}:
+            return True
+        text = str(exc).lower()
+        return "timed out" in text or "timeout" in text
+
+    def _to_responses_tools(chat_tools: list[dict]) -> list[dict]:
+        converted: list[dict] = []
+        for tool in chat_tools:
+            if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
+                fn = tool["function"]
+                converted.append({
+                    "type": "function",
+                    "name": fn.get("name"),
+                    "description": fn.get("description", ""),
+                    "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+                })
+            else:
+                converted.append(tool)
+        return converted
+
+    def _run_codex_responses_turn(
+        *,
+        codex_base_url: str,
+        access_token: str,
+        account_id: str | None,
+        model_name: str,
+        instructions: str,
+        inputs: list[dict],
+        tools: list[dict],
+    ) -> tuple[str, list[dict], int, int]:
+        def _retryable(exc: Exception) -> bool:
+            import httpx
+            if isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
+                return True
+            text = str(exc).lower()
+            return any(
+                needle in text
+                for needle in (
+                    "unexpected_eof_while_reading",
+                    "ssl",
+                    "eof occurred",
+                    "connection reset",
+                    "stream disconnected",
+                )
+            )
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+        if account_id:
+            headers["ChatGPT-Account-ID"] = account_id
+
+        payload = {
+            "model": model_name,
+            "instructions": instructions,
+            "input": inputs,
+            "tools": tools,
+            "tool_choice": "auto",
+            "parallel_tool_calls": True,
+            "store": False,
+            "stream": True,
+        }
+
+        last_exc: Exception | None = None
+        for attempt in range(1, 4):
+            output_deltas: list[str] = []
+            output_done = ""
+            tool_calls: list[dict] = []
+            usage_input = 0
+            usage_output = 0
+
+            try:
+                with _make_http_client("openai", codex_base_url, timeout=240.0) as http_client:
+                    with http_client.stream(
+                        "POST",
+                        f"{codex_base_url}/responses",
+                        headers=headers,
+                        json=payload,
+                    ) as response:
+                        if response.status_code != 200:
+                            body = response.read().decode("utf-8", errors="ignore")
+                            raise click.ClickException(
+                                f"ChatGPT Codex Agent 调用失败 ({response.status_code}): {body[:800]}"
+                            )
+
+                        for raw_line in response.iter_lines():
+                            line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else raw_line
+                            if not line or not line.startswith("data: "):
+                                continue
+                            data_str = line[6:].strip()
+                            if not data_str or data_str == "[DONE]":
+                                continue
+                            try:
+                                event = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                continue
+
+                            event_type = str(event.get("type", ""))
+                            if event_type == "response.output_text.delta":
+                                delta = event.get("delta")
+                                if isinstance(delta, str):
+                                    output_deltas.append(delta)
+                            elif event_type == "response.output_text.done":
+                                txt = event.get("text")
+                                if isinstance(txt, str):
+                                    output_done = txt
+                            elif event_type == "response.output_item.done":
+                                item = event.get("item")
+                                if isinstance(item, dict) and item.get("type") == "function_call":
+                                    call_id = item.get("call_id")
+                                    name = item.get("name")
+                                    arguments = item.get("arguments")
+                                    if isinstance(call_id, str) and isinstance(name, str):
+                                        tool_calls.append({
+                                            "call_id": call_id,
+                                            "name": name,
+                                            "arguments": arguments if isinstance(arguments, str) else "{}",
+                                        })
+                            elif event_type == "response.completed":
+                                resp_obj = event.get("response")
+                                if isinstance(resp_obj, dict):
+                                    usage = resp_obj.get("usage")
+                                    if isinstance(usage, dict):
+                                        usage_input = int(usage.get("input_tokens", 0) or 0)
+                                        usage_output = int(usage.get("output_tokens", 0) or 0)
+
+                final_text = (output_done or "".join(output_deltas)).strip()
+                final_text = re.sub(r"<think>.*?</think>", "", final_text, flags=re.DOTALL).strip()
+                return final_text, tool_calls, usage_input, usage_output
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= 3 or not _retryable(exc):
+                    break
+                wait_s = 0.8 * attempt
+                click.echo(f"   ⚠️ ChatGPT Codex 连接波动，{wait_s:.1f}s 后重试 ({attempt}/3)...")
+                time.sleep(wait_s)
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("ChatGPT Codex Agent 调用失败")
+
     # 各厂商官方 API 路由
+    oauth_active = False
+    gpt_base_url = _normalize_base_url(os.environ.get("GPT_BASE_URL", ""))
+    use_codex_backend = False
+    codex_base_url = ""
+    codex_account_id: str | None = None
     if _is_zhipu_model(model):
         base_url = "https://open.bigmodel.cn/api/paas/v4"
         api_key = os.environ.get("ZHIPU_API_KEY", "")
@@ -466,24 +632,105 @@ def _run_agent_loop_openai(
         else:
             raise click.ClickException("未设置 TTS_MINMAX_KEY 或 GPT_API_KEY")
     else:
-        base_url = os.environ.get("GPT_BASE_URL", "")
-        api_key = os.environ.get("GPT_API_KEY", "")
+        base_url = gpt_base_url
+        api_key = os.environ.get("GPT_API_KEY", "").strip()
+        oauth_session = None
         provider = "openai"
-        if not api_key:
+        supports_openai_oauth = model.lower().startswith(("gpt", "o1", "o3", "o4"))
+        if supports_openai_oauth:
+            oauth_session = _load_openai_oauth_session()
+            if oauth_session:
+                scopes = _read_oauth_scopes(oauth_session["access_token"])
+                has_api_scopes = (scopes is None) or any(scope.startswith("api.") for scope in scopes)
+                if has_api_scopes:
+                    api_key = oauth_session["access_token"]
+                    # OAuth 场景固定直连 OpenAI 官方 API
+                    base_url = "https://api.openai.com/v1"
+                    oauth_active = True
+                else:
+                    use_codex_backend = True
+                    codex_base_url = _resolve_codex_base_url()
+                    codex_account_id = oauth_session.get("account_id")
+                    api_key = oauth_session["access_token"]
+                    click.echo("   ℹ️ OAuth token 无 OpenAI API scope，使用 ChatGPT Codex 路由（同模型）")
+        if not api_key and not use_codex_backend:
             base_url = os.environ.get("ANTHROPIC_BASE_URL", base_url)
-            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
+        supports_openai_oauth = model.lower().startswith(("gpt", "o1", "o3", "o4"))
+        if supports_openai_oauth:
+            raise click.ClickException("未设置 GPT_API_KEY（或 OPENAI_AUTH_FILE/CODEX_AUTH_FILE）")
         raise click.ClickException("未设置 GPT_API_KEY")
 
-    # 只对需要 /v1 后缀的平台补充（智谱等已有正确路径的跳过）
-    if base_url and not any(base_url.rstrip("/").endswith(s) for s in ("/v1", "/v4")):
-        base_url = base_url.rstrip("/") + "/v1"
+    if use_codex_backend:
+        inputs: list[dict] = [{
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": user_message}],
+        }]
+        responses_tools = _to_responses_tools(TOOLS_OPENAI)
+        final_text = ""
 
-    client = OpenAI(
-        api_key=api_key,
-        base_url=base_url,
-        http_client=_make_http_client(provider, base_url),
-    )
+        for turn in range(max_turns):
+            text, pending_calls, usage_in, usage_out = _run_codex_responses_turn(
+                codex_base_url=codex_base_url,
+                access_token=api_key,
+                account_id=codex_account_id,
+                model_name=model,
+                instructions=system_prompt,
+                inputs=inputs,
+                tools=responses_tools,
+            )
+
+            if usage_in or usage_out:
+                get_tracker().record_llm(model, usage_in, usage_out, stage="agent")
+            if text:
+                final_text = text
+
+            if not pending_calls:
+                break
+
+            for tc in pending_calls:
+                raw_args = tc.get("arguments", "{}")
+                try:
+                    args = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    args = {"raw": raw_args}
+
+                fn_name = str(tc.get("name", ""))
+                click.echo(f"   🔧 {fn_name}({_summarize_input(args)})")
+                result_str = _exec_tool(fn_name, args)
+
+                call_id = str(tc.get("call_id", ""))
+                inputs.append({
+                    "type": "function_call",
+                    "call_id": call_id,
+                    "name": fn_name,
+                    "arguments": raw_args,
+                })
+                inputs.append({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": result_str,
+                })
+
+        return final_text
+
+    base_url = _normalize_base_url(base_url)
+
+    client_kwargs = {
+        "api_key": api_key,
+        "base_url": base_url,
+        "http_client": _make_http_client(provider, base_url),
+    }
+    if provider == "openai":
+        oauth_session = locals().get("oauth_session")
+        if isinstance(oauth_session, dict) and oauth_session.get("account_id"):
+            client_kwargs["default_headers"] = {
+                "ChatGPT-Account-ID": oauth_session["account_id"],
+            }
+
+    client = OpenAI(**client_kwargs)
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -492,13 +739,23 @@ def _run_agent_loop_openai(
     final_text = ""
 
     for turn in range(max_turns):
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=TOOLS_OPENAI,
-            temperature=0.3,
-            max_tokens=16000,
-        )
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=TOOLS_OPENAI,
+                temperature=0.3,
+                max_tokens=16000,
+            )
+        except Exception as e:
+            if provider == "openai" and oauth_active and _timeout_like(e):
+                proxy_tip = (
+                    "已检测到代理配置，请确认本地代理可访问 api.openai.com。"
+                    if _read_proxy_url()
+                    else "未检测到代理，请设置 OPENAI_PROXY（如 http://127.0.0.1:7890）或开启系统代理。"
+                )
+                raise click.ClickException(f"OpenAI OAuth 直连超时: {e}；{proxy_tip}") from e
+            raise
 
         # 记录 token usage
         if response.usage:
@@ -839,6 +1096,7 @@ def run_agent(
     auto_confirm: bool = False,
     auto_confirm_threshold: int = 85,
     quality_profile: str = "default",
+    force_regenerate: bool = False,
 ):
     """Agent 驱动的脚本编排：素材 → 大纲 → script.json。
 
@@ -902,6 +1160,50 @@ def run_agent(
         state.default_transition = profile_default_transition
         state.save(cfg.output_dir)
 
+    source_signature = _build_source_signature(resolved_sources)
+    topic_template = _topic_script_template(topic, sources)
+    asset_ctx = build_asset_context(cfg) or ""
+    outline_path = output_dir / "outline.json"
+    script_path = output_dir / "script.json"
+
+    outline_signature = _build_outline_signature(
+        topic=topic,
+        duration=duration,
+        model=model,
+        source_signature=source_signature,
+    )
+
+    if force_regenerate:
+        click.echo("   ♻️ 强制重生成：忽略已有 outline/script 缓存")
+        _reset_state_from_outline(state)
+        state.save(cfg.output_dir)
+    elif state.agent_outline_done:
+        if not outline_path.exists() or state.agent_outline_signature != outline_signature:
+            click.echo("   ♻️ 检测到大纲输入或提示词变化，重新生成 outline/script")
+            _reset_state_from_outline(state)
+            state.save(cfg.output_dir)
+
+    if outline_path.exists():
+        script_signature = _build_script_signature(
+            topic=topic,
+            duration=duration,
+            model=model,
+            profile=profile,
+            profile_prompt=profile_prompt,
+            source_signature=source_signature,
+            outline_path=outline_path,
+            topic_template=topic_template,
+            asset_ctx=asset_ctx,
+        )
+    else:
+        script_signature = ""
+
+    if not force_regenerate and state.scripted:
+        if not script_path.exists() or not script_signature or state.agent_script_signature != script_signature:
+            click.echo("   ♻️ 检测到脚本输入或提示词变化，重新展开 script")
+            _reset_state_from_script(state)
+            state.save(cfg.output_dir)
+
     # Initialize context
     _CTX_VAR.set({
         "output_dir": output_dir,
@@ -911,7 +1213,6 @@ def run_agent(
     })
 
     # ── Phase 1: 素材分析 + 大纲生成 ──────────────────────────
-    outline_path = output_dir / "outline.json"
     if state.agent_outline_done and outline_path.exists():
         click.echo("⏭️  大纲已存在")
     else:
@@ -948,7 +1249,12 @@ def run_agent(
             raise click.ClickException("Agent 未生成大纲。请检查素材内容后重试。")
 
         state.agent_outline_done = True
+        state.agent_outline_signature = outline_signature
         state.agent_sources = _build_source_records(resolved_sources)
+        state.save(cfg.output_dir)
+
+    if state.agent_outline_done and state.agent_outline_signature != outline_signature:
+        state.agent_outline_signature = outline_signature
         state.save(cfg.output_dir)
 
     # ── 大纲预览 + 自动/人工确认 ─────────────────────────────
@@ -976,9 +1282,21 @@ def run_agent(
         state.save(cfg.output_dir)
 
     # ── Phase 2: 大纲 → script.json (分段生成，避免截断) ──────
-    script_path = output_dir / "script.json"
+    script_signature = _build_script_signature(
+        topic=topic,
+        duration=duration,
+        model=model,
+        profile=profile,
+        profile_prompt=profile_prompt,
+        source_signature=source_signature,
+        outline_path=outline_path,
+        topic_template=topic_template,
+        asset_ctx=asset_ctx,
+    )
     if state.scripted and script_path.exists():
         click.echo("⏭️  脚本已存在")
+        state.script_json = str(script_path)
+        state.recording_guide = str(output_dir / "recording_guide.md")
     else:
         click.echo("\n🔄 展开脚本中...")
 
@@ -995,7 +1313,6 @@ def run_agent(
                 id_prefix=style_id_prefix,
             )
         )
-        topic_template = _topic_script_template(topic, sources)
         if topic_template:
             click.echo("   🧩 应用专题骨架: Claude Code + Obsidian")
             system_prompt += "\n\n" + topic_template
@@ -1004,7 +1321,6 @@ def run_agent(
             system_prompt += "\n\n## 质量档位约束\n" + profile_prompt
 
         # 注入素材库历史反馈（留存表现 + 可复用素材）
-        asset_ctx = build_asset_context(cfg)
         if asset_ctx:
             system_prompt += "\n\n" + asset_ctx
 
@@ -1055,7 +1371,12 @@ def run_agent(
 
         # ── Phase 2.2: 脚本结构自动修复 ──────────────────────
         from v2g.script_fixer import fix_script
-        script_data, fix_logs = fix_script(script_data, output_dir)
+        enforce_rich_media = not str(profile.get("style_id_prefix") or "").startswith("slide.anthropic-")
+        script_data, fix_logs = fix_script(
+            script_data,
+            output_dir,
+            ensure_rich_media=enforce_rich_media,
+        )
         if fix_logs:
             click.echo(f"\n🔧 脚本结构修复: {len(fix_logs)} 处")
             for log in fix_logs:
@@ -1080,6 +1401,7 @@ def run_agent(
 
         state.scripted = True
         state.assets_resolved = False
+    state.agent_script_signature = script_signature
     state.last_error = ""
     state.save(cfg.output_dir)
     sync_workflow_contract(
@@ -1270,6 +1592,109 @@ def _build_source_records(sources: list[SourceInput]) -> list[dict]:
         else:
             records.append({"id": i, "type": source.kind, "path": source.raw})
     return records
+
+
+def _hash_text(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
+def _hash_file(path: Path) -> str:
+    return hashlib.sha1(path.read_bytes()).hexdigest()
+
+
+def _build_source_signature(sources: list[SourceInput]) -> str:
+    """为当前素材集生成稳定签名，感知源文件内容变化。"""
+    payload: list[dict] = []
+    for source in sources:
+        readable = source.readable_path or (source.path if source.kind == "local_text" else None)
+        record = {
+            "kind": source.kind,
+            "stable_id": source.stable_id,
+            "url": source.url or "",
+            "path": str(source.path or ""),
+            "readable_path": str(readable or ""),
+        }
+        if readable and readable.exists() and readable.is_file():
+            record["content_hash"] = _hash_file(readable)
+        elif source.path and source.path.exists() and source.kind == "local_video":
+            stat = source.path.stat()
+            record["video_size"] = stat.st_size
+            record["video_mtime_ns"] = stat.st_mtime_ns
+        payload.append(record)
+    return _hash_text(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+def _build_outline_signature(
+    *,
+    topic: str,
+    duration: int,
+    model: str,
+    source_signature: str,
+) -> str:
+    payload = {
+        "version": 1,
+        "topic": topic,
+        "duration": duration,
+        "model": model,
+        "source_signature": source_signature,
+        "agent_system_prompt_hash": _hash_text(_read_prompt("agent_system.md")),
+        "agent_outline_prompt_hash": _hash_text(_read_prompt("agent_outline.md")),
+    }
+    return _hash_text(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+def _build_script_signature(
+    *,
+    topic: str,
+    duration: int,
+    model: str,
+    profile: dict,
+    profile_prompt: str,
+    source_signature: str,
+    outline_path: Path,
+    topic_template: str,
+    asset_ctx: str,
+) -> str:
+    outline_hash = _hash_file(outline_path) if outline_path.exists() else ""
+    payload = {
+        "version": 1,
+        "topic": topic,
+        "duration": duration,
+        "model": model,
+        "profile": profile.get("name", ""),
+        "style_id_prefix": profile.get("style_id_prefix", ""),
+        "source_signature": source_signature,
+        "outline_hash": outline_hash,
+        "agent_system_prompt_hash": _hash_text(_read_prompt("agent_system.md")),
+        "agent_script_prompt_hash": _hash_text(_read_prompt("agent_script.md")),
+        "profile_prompt_hash": _hash_text(profile_prompt or ""),
+        "topic_template_hash": _hash_text(topic_template or ""),
+        "asset_ctx_hash": _hash_text(asset_ctx or ""),
+    }
+    return _hash_text(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+def _reset_state_from_outline(state: PipelineState) -> None:
+    state.agent_outline_done = False
+    state.outline_reviewed = False
+    state.agent_outline_signature = ""
+    _reset_state_from_script(state)
+
+
+def _reset_state_from_script(state: PipelineState) -> None:
+    state.scripted = False
+    state.script_reviewed = False
+    state.assets_resolved = False
+    state.tts_done = False
+    state.slides_done = False
+    state.assembled = False
+    state.final_reviewed = False
+    state.agent_script_signature = ""
+    state.script_json = ""
+    state.recording_guide = ""
+    state.voiceover = ""
+    state.voiceover_timing = ""
+    state.final_video = ""
 
 
 def _load_cached_sources(output_dir: Path, sources: list[SourceInput]) -> str:

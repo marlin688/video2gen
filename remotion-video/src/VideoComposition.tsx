@@ -216,6 +216,17 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
       return <AbsoluteFill style={{ backgroundColor: "#000" }} />;
     }
 
+    const webSourceRaw = String(seg.web_video?.source_url || "").trim();
+    const normalizedWebSource = webSourceRaw
+      ? (webSourceRaw.startsWith("web_videos/") ? webSourceRaw : `web_videos/${webSourceRaw}`)
+      : "";
+    if (entry.meta.schema === "web-video" && !normalizedWebSource) {
+      const fallbackComponent = String(seg.web_video?.fallback_component || "slide.tech-dark").trim();
+      if (fallbackComponent && fallbackComponent !== seg.component) {
+        return renderSegment({ ...seg, component: fallbackComponent });
+      }
+    }
+
     // 根据 schema 构建 data
     const schema = entry.meta.schema;
     const t = timing[String(seg.id)];
@@ -427,13 +438,9 @@ export const VideoComposition: React.FC<VideoCompositionProps> = (props) => {
 
       case "web-video": {
         const ttsDur = t ? t.duration : 10;
-        const src = (seg.web_video?.source_url || "").trim();
-        const normalizedSrc = src
-          ? (src.startsWith("web_videos/") ? src : `web_videos/${src}`)
-          : "";
         data = {
           schema: "web-video",
-          videoFile: normalizedSrc,
+          videoFile: normalizedWebSource,
           overlayText: seg.web_video?.overlay_text,
           overlayPosition: seg.web_video?.overlay_position,
           filter: (seg.web_video?.filter || "none") as "none" | "desaturate" | "tint",

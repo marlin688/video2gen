@@ -35,8 +35,26 @@ def preflight_check(mode: str = "single", model: str = ""):
         if not os.environ.get("GEMINI_API_KEY"):
             warnings.append("GEMINI_API_KEY 未设置")
             blocked = True
-    elif model_lower.startswith(("gpt", "o1", "o3", "o4", "deepseek", "qwen")):
-        if not os.environ.get("GPT_API_KEY"):
+    elif model_lower.startswith(("gpt", "o1", "o3", "o4")):
+        gpt_key = os.environ.get("GPT_API_KEY", "").strip()
+        local_oauth_file = Path("auth.json")
+        default_oauth_file = Path.home() / ".codex" / "auth.json"
+        oauth_file = (
+            os.environ.get("OPENAI_AUTH_FILE", "").strip()
+            or os.environ.get("CODEX_AUTH_FILE", "").strip()
+            or os.environ.get("CODEX_OPENAI_AUTH_FILE", "").strip()
+            or (str(local_oauth_file.resolve()) if local_oauth_file.exists() else "")
+            or (str(default_oauth_file) if default_oauth_file.exists() else "")
+        )
+        if not gpt_key:
+            if oauth_file and not Path(oauth_file).expanduser().exists():
+                warnings.append(f"OPENAI_AUTH_FILE 不存在: {oauth_file}")
+                blocked = True
+            elif not oauth_file:
+                warnings.append("GPT_API_KEY 未设置（可改用 OPENAI_AUTH_FILE）")
+                blocked = True
+    elif model_lower.startswith(("deepseek", "qwen", "abab")):
+        if not os.environ.get("GPT_API_KEY", "").strip():
             warnings.append("GPT_API_KEY 未设置")
             blocked = True
     elif model_lower.startswith("minimax"):
@@ -128,9 +146,19 @@ def _run_quality_gate(cfg: Config, video_id: str, model: str,
 
     # 自动修复脚本结构问题（在 eval 之前）
     from v2g.script_fixer import fix_script
+    from v2g.quality_profile import resolve_quality_profile
     from v2g.scriptwriter import sync_script_sidecars, validate_script_sidecars
     project_dir = cfg.output_dir / video_id
-    script, fix_logs = fix_script(script, project_dir)
+    try:
+        profile_cfg = resolve_quality_profile(quality_profile)
+    except Exception:
+        profile_cfg = {"style_id_prefix": ""}
+    enforce_rich_media = not str(profile_cfg.get("style_id_prefix") or "").startswith("slide.anthropic-")
+    script, fix_logs = fix_script(
+        script,
+        project_dir,
+        ensure_rich_media=enforce_rich_media,
+    )
     if fix_logs:
         click.echo(f"\n🔧 脚本结构修复: {len(fix_logs)} 处")
         for log in fix_logs:

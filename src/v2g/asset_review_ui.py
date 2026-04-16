@@ -112,6 +112,16 @@ def _sort_assets(assets: list[AssetMeta], sort_by: str) -> list[AssetMeta]:
                 a.clip_id,
             ),
         )
+    if sort_by == "quality":
+        return sorted(
+            assets,
+            key=lambda a: (
+                a.quality_score if a.quality_score is not None else -1,
+                a.captured_date or "0000-00-00",
+                a.clip_id,
+            ),
+            reverse=True,
+        )
     # newest
     return sorted(
         assets,
@@ -229,27 +239,46 @@ def apply_batch_action(
             elif action == "set_tags":
                 incoming_tags = _split_csv_or_list(payload.get("tags"))
                 incoming_products = _split_csv_or_list(payload.get("products"))
+                incoming_entities = _split_csv_or_list(payload.get("entities"))
+                incoming_scene_tags = _split_csv_or_list(payload.get("scene_tags"))
                 tag_mode = str(payload.get("tag_mode", "merge") or "merge").lower()
                 note_mode = str(payload.get("note_mode", "append") or "append").lower()
                 mood = str(payload.get("mood", "") or "").strip()
                 note = str(payload.get("note", "") or "")
+                semantic_type = str(payload.get("semantic_type", "") or "").strip()
+                quality_score_raw = payload.get("quality_score", None)
+                quality_score: int | None = None
 
                 if tag_mode not in {"merge", "replace"}:
                     raise ValueError("invalid tag_mode, expected merge/replace")
                 if mood and mood not in MOODS:
                     raise ValueError(f"invalid mood: {mood}")
+                if quality_score_raw not in (None, ""):
+                    quality_score = int(quality_score_raw)
+                    if quality_score not in {1, 2, 3, 4, 5}:
+                        raise ValueError("quality_score must be 1-5")
 
                 final_tags = incoming_tags if tag_mode == "replace" else _merge_unique(asset.tags, incoming_tags)
                 final_products = (
                     incoming_products if tag_mode == "replace" else _merge_unique(asset.product, incoming_products)
+                )
+                final_entities = (
+                    incoming_entities if tag_mode == "replace" else _merge_unique(asset.entities, incoming_entities)
+                )
+                final_scene_tags = (
+                    incoming_scene_tags if tag_mode == "replace" else _merge_unique(asset.scene_tags, incoming_scene_tags)
                 )
                 next_note = _asset_note(asset.notes, note, append=(note_mode != "replace"))
                 res = store.update_asset(
                     asset_id,
                     tags=final_tags,
                     product=final_products,
+                    semantic_type=semantic_type or None,
+                    entities=final_entities,
+                    scene_tags=final_scene_tags,
                     mood=mood or None,
                     notes=next_note if note else None,
+                    quality_score=quality_score,
                 )
             elif action == "remove":
                 delete_file = bool(payload.get("delete_file", False))
@@ -421,8 +450,13 @@ class _AssetReviewHandler(BaseHTTPRequestHandler):
                 sort_by=sort_by,
                 limit=limit,
             )
+            usage_map = store.get_usage_summary_map([a.clip_id for a in assets], recent_days=30)
 
-        return {"ok": True, "items": [_serialize_asset(a) for a in assets], "count": len(assets)}
+        return {
+            "ok": True,
+            "items": [_serialize_asset(a, usage_map.get(a.clip_id, {})) for a in assets],
+            "count": len(assets),
+        }
 
     def do_GET(self):  # noqa: N802
         parsed = urlparse(self.path)
@@ -503,7 +537,7 @@ class _AssetReviewHandler(BaseHTTPRequestHandler):
         self._send_json(result, status)
 
 
-def _serialize_asset(asset: AssetMeta) -> dict:
+def _serialize_asset(asset: AssetMeta, usage_summary: dict | None = None) -> dict:
     p = Path(asset.file_path) if asset.file_path else Path("")
     suffix = p.suffix.lower()
     if suffix in _IMAGE_SUFFIXES:
@@ -513,6 +547,7 @@ def _serialize_asset(asset: AssetMeta) -> dict:
     else:
         preview_kind = "none"
 
+    usage_summary = usage_summary or {}
     return {
         "clip_id": asset.clip_id,
         "project_id": asset.source_video,
@@ -530,9 +565,17 @@ def _serialize_asset(asset: AssetMeta) -> dict:
         "file_exists": p.exists(),
         "source_kind": asset.source_kind,
         "source_url": asset.source_url,
+        "quality_score": asset.quality_score,
+        "semantic_type": asset.semantic_type,
         "tags": asset.tags,
         "product": asset.product,
+        "entities": asset.entities,
+        "scene_tags": asset.scene_tags,
         "notes": asset.notes,
+        "total_use_count": int(usage_summary.get("total_use_count") or 0),
+        "recent_use_count": int(usage_summary.get("recent_use_count") or 0),
+        "recent_project_count": int(usage_summary.get("recent_project_count") or 0),
+        "last_used_at": usage_summary.get("last_used_at") or "",
         "preview_kind": preview_kind,
         "preview_url": f"/api/preview?asset_id={quote(asset.clip_id)}",
     }
@@ -762,6 +805,7 @@ _INDEX_HTML = """<!doctype html>
             <option value="newest">newest</option>
             <option value="oldest">oldest</option>
             <option value="rights">rights</option>
+            <option value="quality">quality</option>
           </select>
         </div>
         <div class="col-2">
@@ -817,6 +861,18 @@ _INDEX_HTML = """<!doctype html>
           <input id="productsInput" placeholder="openai,github" />
         </div>
         <div class="col-2">
+          <label>semantic_type</label>
+          <input id="semanticTypeInput" placeholder="pricing-table" />
+        </div>
+        <div class="col-3">
+          <label>entities（逗号分隔）</label>
+          <input id="entitiesInput" placeholder="Claude,Anthropic" />
+        </div>
+        <div class="col-3">
+          <label>scene_tags（逗号分隔）</label>
+          <input id="sceneTagsInput" placeholder="pricing,table,官网截图" />
+        </div>
+        <div class="col-2">
           <label>mood</label>
           <select id="moodSelect"><option value="">不改</option></select>
         </div>
@@ -825,6 +881,17 @@ _INDEX_HTML = """<!doctype html>
           <select id="noteMode">
             <option value="append">append</option>
             <option value="replace">replace</option>
+          </select>
+        </div>
+        <div class="col-2">
+          <label>quality_score</label>
+          <select id="qualityScore">
+            <option value="">不改</option>
+            <option value="5">5 - 首选</option>
+            <option value="4">4 - 好</option>
+            <option value="3">3 - 可用</option>
+            <option value="2">2 - 一般</option>
+            <option value="1">1 - 差</option>
           </select>
         </div>
         <div class="col-12">
@@ -847,9 +914,10 @@ _INDEX_HTML = """<!doctype html>
             <th style="width:150px;">预览</th>
             <th style="width:180px;">asset_id</th>
             <th style="width:120px;">项目/日期</th>
-            <th style="width:120px;">type/mood</th>
+            <th style="width:140px;">type/mood/quality</th>
             <th style="width:120px;">rights</th>
-            <th style="width:220px;">tags/products</th>
+            <th style="width:260px;">semantic/tags</th>
+            <th style="width:160px;">usage</th>
             <th style="width:280px;">file</th>
             <th style="width:170px;">source</th>
           </tr>
@@ -913,10 +981,14 @@ _INDEX_HTML = """<!doctype html>
         await batchAction("set_tags", {
           tags: el("tagsInput").value.trim(),
           products: el("productsInput").value.trim(),
+          semantic_type: el("semanticTypeInput").value.trim(),
+          entities: el("entitiesInput").value.trim(),
+          scene_tags: el("sceneTagsInput").value.trim(),
           mood: el("moodSelect").value,
           note: el("noteInput").value.trim(),
           note_mode: el("noteMode").value,
           tag_mode: el("tagMode").value,
+          quality_score: el("qualityScore").value,
         });
       });
       el("btnRemove").addEventListener("click", async () => {
@@ -1017,6 +1089,10 @@ _INDEX_HTML = """<!doctype html>
         const checked = state.selected.has(a.clip_id) ? "checked" : "";
         const tags = (a.tags || []).slice(0, 6).join(", ");
         const products = (a.product || []).slice(0, 6).join(", ");
+        const entities = (a.entities || []).slice(0, 5).join(", ");
+        const sceneTags = (a.scene_tags || []).slice(0, 5).join(", ");
+        const semanticType = a.semantic_type || "-";
+        const quality = (a.quality_score === null || a.quality_score === undefined) ? "-" : String(a.quality_score);
 
         let preview = "<div class='preview muted'>无预览</div>";
         if (a.preview_kind === "image") {
@@ -1031,10 +1107,19 @@ _INDEX_HTML = """<!doctype html>
           <td><span class="mono">${esc(a.clip_id)}</span></td>
           <td><div>${esc(a.project_id || "-")}</div>
               <div class="muted">${esc(a.captured_date || "-")}</div></td>
-          <td>${esc(a.visual_type)}<br><span class="muted">${esc(a.mood)}</span></td>
+          <td>${esc(a.visual_type)}<br><span class="muted">${esc(a.mood)} · q=${esc(quality)}</span></td>
           <td><span class="status ${esc(a.rights_status)}">${esc(a.rights_status)}</span>
               <br><span class="muted">reusable=${a.reusable ? 1 : 0}, exp=${esc(a.expires_at || "-")}</span></td>
-          <td><div>${esc(tags || "-")}</div><div class="muted">${esc(products || "-")}</div></td>
+          <td>
+              <div>${esc(semanticType)}</div>
+              <div class="muted">${esc(entities || "-")}</div>
+              <div class="muted">${esc(sceneTags || "-")}</div>
+              <div class="muted">${esc(tags || "-")}</div>
+              <div class="muted">${esc(products || "-")}</div>
+          </td>
+          <td><div>total=${esc(String(a.total_use_count || 0))}</div>
+              <div class="muted">30d=${esc(String(a.recent_use_count || 0))} · proj=${esc(String(a.recent_project_count || 0))}</div>
+              <div class="muted mono">${esc(a.last_used_at || "-")}</div></td>
           <td><div class="mono">${esc(a.file_name || "-")}</div>
               <div class="muted mono">${esc(a.file_path || "-")}</div></td>
           <td><div>${esc(a.source_kind || "-")}</div>

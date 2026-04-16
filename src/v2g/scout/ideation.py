@@ -297,7 +297,9 @@ def _write_ideation_report(
         lines.append(f"## 竞品视频 ({len(videos)} 个)\n")
         for v in videos[:20]:
             lines.append(f"- [{v['channel']}] [{v['title']}]({v['url']})")
-            lines.append(f"  👁 {v['views']:,} | ❤️ {v['likes']:,} | 💬 {v['comments']:,}")
+            lines.append(
+                f"  👁 {v['views']:,} | ❤️ {v['likes']:,} | 💬 {v['comments']:,} | 🗓 {v.get('published_at', '')}"
+            )
             lines.append("")
     else:
         lines.append("*无 YouTube 竞品数据（YOUTUBE_API_KEY 未设置或搜索无结果）*\n")

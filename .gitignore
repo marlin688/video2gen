@@ -9,6 +9,7 @@ remotion-video/public/
 
 # Environment
 .env
+auth.json
 
 # Python
 __pycache__/

@@ -179,7 +179,13 @@ terminal_session 步骤类型说明：
 5. **大数字 / 指标对比必须用 hero-stat**：涉及"从 X 降到 Y"、"提升 N 倍"、"省下 $M"的段落**必须**用 `hero-stat.default` 或 `hero-stat.progress`，不要塞进普通 slide 的 bullet。
 6. **架构 / 流程 / 多方关系必须用 diagram**：涉及架构图、调用流程、多方协作关系的段落**必须**用 `diagram.*` 系列。
 7. **GitHub / 推特 / HN 必须用原生组件**：GitHub 仓库 → `social-card.github-repo`；推文 → `social-card.default` 或 `image-overlay.default`；HN → `social-card.default`。不要把这些内容重写成 slide 的 bullet 文字。
-8. **叙事节拍**：如果脚本涉及"问题 → 方案 → 结果"叙事，配对使用 `slide.problem-statement` → `slide.solution-reveal` → `slide.result-showcase`。
+8. **动态画面硬约束**：脚本必须至少包含 1 个 `web-video.*` 段（真实产品演示/现场片段），禁止整片只用 slide + terminal。
+9. **叙事节拍**：如果脚本涉及"问题 → 方案 → 结果"叙事，配对使用 `slide.problem-statement` → `slide.solution-reveal` → `slide.result-showcase`。
+10. **material 必须和 schema 对齐**：
+   - `slide / browser / diagram / hero-stat / code-block / social-card / image-overlay` → `material: "A"`
+   - `terminal / recording` → `material: "B"`
+   - `web-video / source-clip` → `material: "C"`
+   - 不要写出 `material: "B" + code-block.default`、`material: "B" + web-video.default` 这类组合，否则最终成片会被错误覆盖成普通录屏。
 
 ### 高级组件数据字段速查
 
@@ -192,7 +198,8 @@ terminal_session 步骤类型说明：
 | `diagram.*` | `diagram`: `{title?, nodes: [{id, label, type?: "primary"/"success"/"warning"/"danger"}], edges: [{from, to, label?}], direction?: "LR"/"TB"}` | 流程图 |
 | `hero-stat.*` | `hero_stat`: `{stats: [{value: "3.5x", label: "性能提升", oldValue?: "1x", trend?: "up"/"down"}], footnote?}` | 大数字 |
 | `browser.*` | `browser_content`: `{url, tabTitle, pageTitle?, contentLines: ["行1"], theme?: "light"/"dark"}` | 浏览器 |
-| `image-overlay.*` | `image_content`: `{image_path: "", source_method?: "screenshot"/"search"/"generate", source_query?: "关键词或URL", overlay_text?, ken_burns?: "zoom-in"/"zoom-out"}` | 全屏配图 |
+| `image-overlay.*` | `image_content`: `{image_path: "", source_method?: "screenshot"/"search"/"generate", source_query?: "关键词或URL", semantic_type?: "语义类型", entities?: ["实体"], scene_tags?: ["场景标签"], must_have?: ["必须元素"], avoid?: ["规避元素"], overlay_text?, ken_burns?: "zoom-in"/"zoom-out"}` | 全屏配图 |
+| `web-video.*` | `web_video`: `{search_query: "检索词", source_url?: "可选", overlay_text?: "叠字", overlay_position?: "top"/"bottom", filter?: "none"/"desaturate"/"tint", fallback_component?: "slide.tech-dark"}` | 真实动态演示 |
 
 ### scene_data 字段名规范
 
@@ -208,6 +215,16 @@ terminal_session 步骤类型说明：
 | `search` | 英文搜索关键词 | 提到新闻事件/人物/真实场景时（如 "Sam Altman house fire"） |
 | `generate` | 英文场景描述 prompt | 需要虚构/概念化画面时（如 "AI robot controlling server room"） |
 
+**新增语义检索字段**：为了让本地素材库优先命中“内容相关”的图片，而不是只命中同类组件，请尽量补齐以下字段：
+
+| 字段 | 作用 | 示例 |
+|------|------|------|
+| `semantic_type` | 这张图在讲什么，不是组件类型 | `pricing-table`, `keynote-photo`, `robot-demo`, `terminal-screenshot` |
+| `entities` | 必须关联到的实体/品牌/人物 | `["Claude", "Anthropic"]` |
+| `scene_tags` | 场景或画面标签 | `["pricing", "table", "官网截图"]` |
+| `must_have` | 画面中一定要出现的元素 | `["price", "table"]` |
+| `avoid` | 明确不要匹配到的元素 | `["person", "stage"]` |
+
 **使用示例**：
 
 ```json
@@ -219,6 +236,11 @@ terminal_session 步骤类型说明：
     "image_path": "",
     "source_method": "screenshot",
     "source_query": "https://openai.com/policies/terms-of-use",
+    "semantic_type": "policy-page",
+    "entities": ["OpenAI"],
+    "scene_tags": ["terms", "policy", "网页截图"],
+    "must_have": ["section", "text"],
+    "avoid": ["person", "conference"],
     "overlay_text": "OpenAI 服务条款 §7",
     "overlay_position": "bottom",
     "ken_burns": "zoom-in"
@@ -228,9 +250,12 @@ terminal_session 步骤类型说明：
 
 **使用原则**：
 - 一个脚本建议 2-4 个 image-overlay 段落，穿插在提及具体产品/事件/数据的位置
+- 一个脚本至少 1 个 `web-video` 段落（用于真实动态演示，source_url 可留空让系统按 search_query 自动下载）
 - 不要连续使用，和 slide/terminal/diagram 等组件交替
 - `overlay_text` 用自己的话概括（≤15 字），不要复制原文
 - 优先 `screenshot`（最真实）→ `search`（新闻场景）→ `generate`（虚构场景）
+- `semantic_type` 描述“内容语义”，不要写 `overlay/chart/slide` 这种组件词
+- `must_have` / `avoid` 尽量具体，避免本地素材库命中到主题相关但内容错误的图
 
 ## 脚本结构
 
@@ -324,4 +349,5 @@ terminal_session 步骤类型说明：
 - source_start/source_end 必须基于提供的字幕时间线，不要瞎编
 - slide_content.bullet_points 禁止使用 emoji（不要 ❌✅⚠️📈 等），用纯文本
 - 不要编造原视频没有的事实，但可以加入你自己的分析和判断
-- **视觉多样性（硬约束）**：每段 segment 必须显式指定 `component` 字段；一个脚本的 `component` 字段必须跨越**至少 4 种不同 schema**；相邻两段不得使用相同 schema。违反任一条规则的脚本都会被质量门控打回重试，详见「组件选择硬性规则」章节。
+- **视觉多样性（硬约束）**：每段 segment 必须显式指定 `component` 字段；一个脚本的 `component` 字段必须跨越**至少 4 种不同 schema**；相邻两段不得使用相同 schema；且至少有 1 个 `web-video` 段。违反任一条规则的脚本都会被质量门控打回重试，详见「组件选择硬性规则」章节。
+- **信息密度优先**：评论/热点类不要把 B 段浪费在品牌官网首屏、登录页、空白欢迎页。优先展示 `README / pricing / policy / benchmark / workflow / PR / docs / before-after` 这类有明确信息的画面。

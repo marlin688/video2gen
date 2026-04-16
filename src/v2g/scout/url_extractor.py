@@ -141,18 +141,7 @@ def match_urls_to_topic(
             scored.append({**item, "match_score": score})
 
     if not scored:
-        # 关键词没命中时降级：按来源优先级给出候选，避免 NotebookLM 无素材
-        fallback: list[dict] = []
-        seen_urls: set[str] = set()
-        for item in sorted(all_urls, key=lambda x: _SOURCE_PRIORITY.get(x.get("source_type", ""), 9)):
-            url = item.get("url", "")
-            if not url or url in seen_urls:
-                continue
-            fallback.append({**item, "match_score": 0})
-            seen_urls.add(url)
-            if len(fallback) >= min(max_results, 4):
-                break
-        return fallback
+        return []
 
     # 按 score 降序排序
     scored.sort(key=lambda x: (-x["match_score"], _SOURCE_PRIORITY.get(x["source_type"], 9)))
@@ -286,7 +275,7 @@ def extract_youtube_from_ideation(ideation_path: Path) -> list[dict]:
     # 格式: - [频道] [标题](URL)\n  👁 views | ❤️ likes | 💬 comments
     pattern = re.compile(
         r"- \[([^\]]+)\] \[([^\]]+)\]\((https://www\.youtube\.com/watch\?v=([^)]+))\)\s*\n"
-        r"\s*👁\s*([\d,]+)\s*\|\s*❤️\s*([\d,]+)\s*\|\s*💬\s*([\d,]+)",
+        r"\s*👁\s*([\d,]+)\s*\|\s*❤️\s*([\d,]+)\s*\|\s*💬\s*([\d,]+)(?:\s*\|\s*🗓\s*([\d-]+))?",
     )
     for m in pattern.finditer(content):
         videos.append({
@@ -297,33 +286,72 @@ def extract_youtube_from_ideation(ideation_path: Path) -> list[dict]:
             "views": int(m.group(5).replace(",", "")),
             "likes": int(m.group(6).replace(",", "")),
             "comments": int(m.group(7).replace(",", "")),
+            "published_at": (m.group(8) or "").strip(),
         })
 
-    # 按播放量降序
-    videos.sort(key=lambda v: -v["views"])
+    # 按近期热度降序，而不是只看历史播放量
+    today = date.today()
+
+    def _score(video: dict) -> float:
+        published_at = str(video.get("published_at") or "").strip()
+        try:
+            published = date.fromisoformat(published_at)
+            age_days = max((today - published).days, 0)
+        except ValueError:
+            age_days = 14
+        freshness = 1.0 / (1.0 + age_days / 7.0)
+        engagement = video["views"] + 2 * video["likes"] + 3 * video["comments"]
+        return engagement * freshness
+
+    videos.sort(key=_score, reverse=True)
     return videos
 
 
 def select_videos_auto(
     videos: list[dict], max_select: int = 2,
 ) -> list[dict]:
-    """自动选择竞品视频：按播放量取 top N。
-
-    已按播放量降序排列，直接取前 max_select 个。
-    """
+    """自动选择竞品视频：按近期热度取 top N。"""
     if not videos:
         click.echo("   ⚠️ 未找到竞品视频")
         return []
 
     selected = videos[:max_select]
-    click.echo(f"   📺 自动选择 {len(selected)} 个竞品视频（按播放量）:")
+    click.echo(f"   📺 自动选择 {len(selected)} 个竞品视频（按近期热度）:")
     for v in selected:
-        click.echo(f"      👁 {v['views']:>8,} | [{v['channel'][:15]}] {v['title'][:50]}")
+        published_at = str(v.get("published_at") or "").strip() or "unknown"
+        click.echo(
+            f"      👁 {v['views']:>8,} | {published_at} | [{v['channel'][:15]}] {v['title'][:50]}"
+        )
 
     return selected
 
 
-def find_scout_scripts(vault_path: Path, today: date, topic_slug: str) -> list[Path]:
+def _normalize_topic_slug(topic: str) -> str:
+    return re.sub(r"[^\w\u4e00-\u9fff]+", "-", (topic or "").strip()).strip("-").lower()
+
+
+def _read_frontmatter_topic(path: Path) -> str:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    match = re.search(r"^topic:\s*(.+)$", content, re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def _topic_matches_report(path: Path, topic: str) -> bool:
+    report_topic = _read_frontmatter_topic(path)
+    if report_topic and report_topic == topic:
+        return True
+
+    normalized_topic = _normalize_topic_slug(topic)
+    normalized_name = _normalize_topic_slug(path.stem)
+    if normalized_topic and normalized_name.endswith(normalized_topic):
+        return True
+    return False
+
+
+def find_scout_scripts(vault_path: Path, today: date, topic: str) -> list[Path]:
     """查找与话题匹配的 scout script 文件（hook/title/outline）。"""
     scripts_dir = vault_path / "scout" / "scripts"
     if not scripts_dir.exists():
@@ -332,8 +360,7 @@ def find_scout_scripts(vault_path: Path, today: date, topic_slug: str) -> list[P
     matched = []
     for prefix in ("hook", "title", "outline"):
         for f in scripts_dir.glob(f"{today}-{prefix}-*.md"):
-            # slug 模糊匹配
-            if topic_slug[:15] in f.stem:
+            if _topic_matches_report(f, topic):
                 matched.append(f)
                 break
     return matched

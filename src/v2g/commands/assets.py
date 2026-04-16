@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import click
@@ -284,6 +285,78 @@ def register_asset_commands(main: click.Group) -> None:
                     emoji = "↑" if score > 0 else "↓" if score < 0 else "→"
                     click.echo(f"      {emoji} {combo}: {score:+.2f}")
 
+    @assets.command("organize-library")
+    @click.option("--dry-run", is_flag=True, help="只预览迁移结果，不实际移动文件")
+    @click.option("--include-seed-dirs", is_flag=True, help="包含 seed_web_* 这类人工整理目录")
+    @click.pass_obj
+    def assets_organize_library(cfg: Config, dry_run, include_seed_dirs):
+        """整理全局素材库目录与命名，并同步更新 assets.db 路径"""
+        from v2g.asset_library_layout import reorganize_asset_library
+
+        click.echo(
+            f"🗂️ 整理素材库: dry_run={dry_run}, include_seed_dirs={include_seed_dirs}"
+        )
+        report = reorganize_asset_library(
+            cfg,
+            dry_run=dry_run,
+            include_seed_dirs=include_seed_dirs,
+        )
+        click.echo(
+            "   结果: "
+            f"扫描 {report['scanned']} 条, "
+            f"移动 {report['moved']}, "
+            f"仅更新路径 {report['updated_only']}, "
+            f"已规范 {report['already_canonical']}"
+        )
+        click.echo(
+            "   跳过: "
+            f"缺文件 {report['skipped_missing']}, "
+            f"库外 {report['skipped_outside_library']}, "
+            f"seed目录 {report['skipped_seed_dirs']}, "
+            f"无路径 {report['skipped_no_path']}"
+        )
+        if report["errors"]:
+            click.echo(f"   ⚠️ 错误 {len(report['errors'])} 条，请查看 report")
+
+        reports_dir = cfg.output_dir / "asset_library" / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        suffix = "dry-run" if dry_run else "apply"
+        report_path = reports_dir / f"organize-library-{suffix}.json"
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        click.echo(f"   报告: {report_path}")
+
+    @assets.command("prune-missing")
+    @click.option("--dry-run", is_flag=True, help="只预览将删除的脏记录")
+    @click.pass_obj
+    def assets_prune_missing(cfg: Config, dry_run):
+        """清理数据库中指向缺失文件的素材记录"""
+        from v2g.asset_library_layout import prune_missing_asset_records
+
+        click.echo(f"🧹 清理缺失文件记录: dry_run={dry_run}")
+        report = prune_missing_asset_records(cfg, dry_run=dry_run)
+        click.echo(
+            "   结果: "
+            f"扫描 {report['scanned']} 条, "
+            f"缺失 {report['missing']}, "
+            f"删除 {report['deleted']}, "
+            f"无路径 {report['skipped_no_path']}"
+        )
+        if report["errors"]:
+            click.echo(f"   ⚠️ 错误 {len(report['errors'])} 条，请查看 report")
+
+        reports_dir = cfg.output_dir / "asset_library" / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        suffix = "dry-run" if dry_run else "apply"
+        report_path = reports_dir / f"prune-missing-{suffix}.json"
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        click.echo(f"   报告: {report_path}")
+
     @assets.command("list")
     @click.option("--query", default="", help="按关键词搜索（命中 notes/tags 等）")
     @click.option("--type", "visual_type", default="", help="按 visual_type 过滤")
@@ -323,7 +396,7 @@ def register_asset_commands(main: click.Group) -> None:
         for a in assets:
             click.echo(
                 f"  [{a.clip_id}] {a.visual_type}/{a.mood} | rights={a.rights_status} "
-                f"| reusable={int(a.reusable)} | {Path(a.file_path).name}"
+                f"| reusable={int(a.reusable)} | quality={a.quality_score if a.quality_score is not None else '-'} | {Path(a.file_path).name}"
             )
             if a.tags:
                 click.echo(f"     tags: {', '.join(a.tags[:6])}")
@@ -352,8 +425,12 @@ def register_asset_commands(main: click.Group) -> None:
         click.echo(f"   source: {asset.source_kind} | {asset.source_url or '-'}")
         click.echo(f"   reusable: {asset.reusable} | freshness: {asset.freshness}")
         click.echo(f"   expires_at: {asset.expires_at or '-'}")
+        click.echo(f"   quality_score: {asset.quality_score if asset.quality_score is not None else '-'}")
         click.echo(f"   tags: {', '.join(asset.tags) if asset.tags else '-'}")
         click.echo(f"   products: {', '.join(asset.product) if asset.product else '-'}")
+        click.echo(f"   semantic_type: {asset.semantic_type or '-'}")
+        click.echo(f"   entities: {', '.join(asset.entities) if asset.entities else '-'}")
+        click.echo(f"   scene_tags: {', '.join(asset.scene_tags) if asset.scene_tags else '-'}")
         click.echo(f"   notes: {asset.notes or '-'}")
 
         if usage:
@@ -380,6 +457,10 @@ def register_asset_commands(main: click.Group) -> None:
     @click.option("--source-url", default=None, help="来源 URL")
     @click.option("--source-kind", default=None, help="source_kind")
     @click.option("--file-path", default=None, help="更新文件路径")
+    @click.option("--quality-score", default=None, type=int, help="质量评分 1-5")
+    @click.option("--semantic-type", default=None, help="图片/视频语义类型")
+    @click.option("--entities", default=None, help="逗号分隔关键实体")
+    @click.option("--scene-tags", default=None, help="逗号分隔场景标签")
     @click.pass_obj
     def assets_set(
         cfg: Config,
@@ -396,6 +477,10 @@ def register_asset_commands(main: click.Group) -> None:
         source_url,
         source_kind,
         file_path,
+        quality_score,
+        semantic_type,
+        entities,
+        scene_tags,
     ):
         """更新素材字段（版权/标签/可复用性）"""
         from v2g.asset_store import AssetStore
@@ -413,6 +498,10 @@ def register_asset_commands(main: click.Group) -> None:
             "source_url": source_url,
             "source_kind": source_kind,
             "file_path": file_path,
+            "quality_score": quality_score,
+            "semantic_type": semantic_type,
+            "entities": _split_csv(entities),
+            "scene_tags": _split_csv(scene_tags),
         }
         if all(v is None for v in updates.values()):
             raise click.ClickException("没有可更新字段，请至少传一个 --option")
@@ -706,6 +795,74 @@ def register_asset_commands(main: click.Group) -> None:
         )
         click.echo(f"✅ 预取完成: {len(results)} 个素材")
 
+    @assets.command("seed-wechat")
+    @click.option("--urls", default="", help="公众号文章 URL（分号或换行分隔）")
+    @click.option("--urls-file", type=click.Path(exists=True), default=None, help="URL 文本文件（每行一个）")
+    @click.option("--seed-id", default=None, help="种子批次 ID（默认 seed-wechat-YYYY-MM-DD）")
+    @click.option("--allow-account", "allow_accounts", multiple=True, help="仅保留指定公众号（可重复传参）")
+    @click.option("--limit", default=100, type=int, help="最多入库数量")
+    @click.option("--per-article", default=8, type=int, help="每篇文章最多抓图数量")
+    @click.option("--min-width", default=960, type=int, help="最小宽度")
+    @click.option("--min-height", default=540, type=int, help="最小高度")
+    @click.option("--min-bytes", default=30000, type=int, help="最小文件大小（字节）")
+    @click.option("--dry-run", is_flag=True, help="仅检查，不写入 DB/文件")
+    @click.pass_obj
+    def assets_seed_wechat(
+        cfg: Config,
+        urls: str,
+        urls_file: str | None,
+        seed_id: str | None,
+        allow_accounts: tuple[str, ...],
+        limit: int,
+        per_article: int,
+        min_width: int,
+        min_height: int,
+        min_bytes: int,
+        dry_run: bool,
+    ):
+        """公众号文章抓图入库（优先用于构建高质量中文素材库）"""
+        from datetime import datetime
+
+        from v2g.wechat_seed import ingest_wechat_seed
+
+        url_list = _parse_url_inputs(urls, urls_file)
+        if not url_list:
+            raise click.ClickException("未提供有效 URL，请使用 --urls 或 --urls-file")
+
+        resolved_seed_id = seed_id or f"seed-wechat-{datetime.now().strftime('%Y-%m-%d')}"
+        click.echo(
+            f"🌱 微信素材种子: {resolved_seed_id} | URLs={len(url_list)} | limit={limit} | dry_run={dry_run}"
+        )
+        report = ingest_wechat_seed(
+            cfg,
+            article_urls=url_list,
+            seed_id=resolved_seed_id,
+            allow_accounts=list(allow_accounts) or None,
+            target_total=max(1, int(limit)),
+            per_article_limit=max(1, int(per_article)),
+            min_width=max(1, int(min_width)),
+            min_height=max(1, int(min_height)),
+            min_bytes=max(1024, int(min_bytes)),
+            dry_run=dry_run,
+        )
+        click.echo(
+            "   ✅ 完成: "
+            f"新增 {report.get('added_this_run', 0)} / 目标 {report.get('target_total', limit)}, "
+            f"扫描图片 {report.get('scanned_images', 0)}"
+        )
+        by_visual = report.get("by_visual_type", {}) or {}
+        if by_visual:
+            click.echo(
+                "   类型分布: " + ", ".join(f"{k}:{v}" for k, v in sorted(by_visual.items()))
+            )
+        skip_reason = report.get("skip_reason_count", {}) or {}
+        if skip_reason:
+            click.echo(
+                "   跳过原因: " + ", ".join(f"{k}:{v}" for k, v in sorted(skip_reason.items()))
+            )
+        if not dry_run:
+            click.echo(f"   清单: {report.get('manifest_path', '-')}")
+
 
 def _scan_bvids_from_checkpoints(cfg: Config) -> list[tuple[str, str]]:
     """从 output/ 下的 checkpoint.json 中扫描 bvid。"""
@@ -731,3 +888,26 @@ def _split_csv(raw: str | None) -> list[str] | None:
         return None
     vals = [v.strip() for v in raw.split(",") if v.strip()]
     return vals
+
+
+def _parse_url_inputs(urls: str, urls_file: str | None) -> list[str]:
+    values: list[str] = []
+    if urls:
+        for part in re.split(r"[;\n\r]+", urls):
+            u = part.strip()
+            if u:
+                values.append(u)
+    if urls_file:
+        for line in Path(urls_file).read_text(encoding="utf-8").splitlines():
+            u = line.strip()
+            if not u or u.startswith("#"):
+                continue
+            values.append(u)
+    seen = set()
+    out = []
+    for u in values:
+        if u in seen:
+            continue
+        seen.add(u)
+        out.append(u)
+    return out

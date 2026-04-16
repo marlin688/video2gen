@@ -125,6 +125,13 @@ export interface ScriptSegment {
   // image-overlay 组件
   image_content?: {
     image_path: string;
+    source_method?: "screenshot" | "search" | "generate";
+    source_query?: string;
+    semantic_type?: string;
+    entities?: string[];
+    scene_tags?: string[];
+    must_have?: string[];
+    avoid?: string[];
     overlay_text?: string;
     overlay_position?: "top" | "center" | "bottom";
     ken_burns?: "zoom-in" | "zoom-out" | "pan-left" | "pan-right";

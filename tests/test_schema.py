@@ -111,6 +111,31 @@ class TestValidScript:
         assert parsed.lighting_tag == "accent"
         assert parsed.camera_intensity == 0.8
 
+    def test_image_overlay_semantic_fields_valid(self):
+        seg = _make_segment(
+            1,
+            "body",
+            "A",
+            component="image-overlay.default",
+            image_content={
+                "image_path": "",
+                "source_method": "search",
+                "source_query": "Claude pricing page",
+                "semantic_type": "pricing-table",
+                "entities": ["Claude", "Anthropic"],
+                "scene_tags": ["pricing", "官网截图"],
+                "must_have": ["price", "table"],
+                "avoid": ["person", "stage"],
+            },
+        )
+        data, errors = validate_script(_make_script(segments=[seg]))
+        assert errors == []
+        image = data.segments[0].image_content
+        assert image is not None
+        assert image.semantic_type == "pricing-table"
+        assert image.entities == ["Claude", "Anthropic"]
+        assert image.must_have == ["price", "table"]
+
     def test_code_block_annotations_string_keys(self):
         """annotations 的 key 应为 string（JSON 序列化后的行号）。"""
         seg = _make_segment(1, "body", "B", component="code-block.default",

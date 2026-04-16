@@ -77,10 +77,14 @@ def test_apply_batch_action_set_tags_merge_and_replace(tmp_path: Path):
             payload={
                 "tags": "beta,gamma",
                 "products": "openai",
+                "semantic_type": "pricing-table",
+                "entities": "Claude,Anthropic",
+                "scene_tags": "pricing,官网截图",
                 "mood": "demo",
                 "note": "reviewed",
                 "tag_mode": "merge",
                 "note_mode": "append",
+                "quality_score": 5,
             },
         )
         assert merge_res["ok"] is True
@@ -88,7 +92,11 @@ def test_apply_batch_action_set_tags_merge_and_replace(tmp_path: Path):
         assert merged is not None
         assert merged.tags == ["alpha", "beta", "gamma"]
         assert merged.product == ["other", "openai"]
+        assert merged.semantic_type == "pricing-table"
+        assert merged.entities == ["Claude", "Anthropic"]
+        assert merged.scene_tags == ["pricing", "官网截图"]
         assert merged.mood == "demo"
+        assert merged.quality_score == 5
         assert "seed" in merged.notes and "reviewed" in merged.notes
 
         replace_res = apply_batch_action(
@@ -98,6 +106,8 @@ def test_apply_batch_action_set_tags_merge_and_replace(tmp_path: Path):
             payload={
                 "tags": ["omega"],
                 "products": ["github"],
+                "entities": ["OpenAI"],
+                "scene_tags": ["dashboard"],
                 "tag_mode": "replace",
                 "note": "replace-note",
                 "note_mode": "replace",
@@ -108,6 +118,8 @@ def test_apply_batch_action_set_tags_merge_and_replace(tmp_path: Path):
         assert replaced is not None
         assert replaced.tags == ["omega"]
         assert replaced.product == ["github"]
+        assert replaced.entities == ["OpenAI"]
+        assert replaced.scene_tags == ["dashboard"]
         assert replaced.notes == "replace-note"
 
 

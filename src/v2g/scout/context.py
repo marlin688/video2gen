@@ -1,10 +1,11 @@
 """上下文加载工具：为 hook/title/outline 注入额外分析上下文。"""
 
-import re
 from datetime import date
 from pathlib import Path
 
 import click
+
+from v2g.scout.url_extractor import _topic_matches_report
 
 
 def load_notebooklm_context(vault_path: Path, today: date, topic: str) -> str:
@@ -17,12 +18,8 @@ def load_notebooklm_context(vault_path: Path, today: date, topic: str) -> str:
     if not nlm_dir.exists():
         return ""
 
-    slug = re.sub(r"[^\w\u4e00-\u9fff]+", "-", topic)[:20].strip("-").lower()
-
-    # 精确匹配 slug
     for f in nlm_dir.glob(f"{today}-*.md"):
-        file_slug = f.stem.split("-", 3)[-1].lower() if "-" in f.stem else ""
-        if slug and slug in file_slug:
+        if _topic_matches_report(f, topic):
             content = f.read_text(encoding="utf-8")[:3000]
             click.echo(f"   📎 已加载 NotebookLM 分析: {f.name}")
             return f"\n\n## NotebookLM 深度分析参考\n\n{content}"

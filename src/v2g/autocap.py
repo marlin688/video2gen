@@ -20,6 +20,7 @@ import click
 
 from v2g.config import Config
 from v2g.material_library import MaterialLibrary, MaterialEntry
+from v2g.page_quality import assess_page_snapshot, collect_page_snapshot, is_auth_risk_host
 
 
 def run_capture(cfg: Config, project_id: str) -> int:
@@ -69,7 +70,14 @@ def run_capture(cfg: Config, project_id: str) -> int:
 
         # L1.5: 动态录屏（有 URL 时）
         urls = _extract_urls(instruction)
-        if urls and _dynamic_record(instruction, narration, rec_path, duration=15.0):
+        focus_hints = _extract_focus_hints(instruction)
+        if urls and _should_try_dynamic_record(urls) and _dynamic_record(
+            instruction,
+            narration,
+            rec_path,
+            duration=15.0,
+            focus_hints=focus_hints,
+        ):
             click.echo(f"      ✅ L1.5 动态录屏成功")
             library.add(MaterialEntry(
                 type="capture",
@@ -198,6 +206,11 @@ def _capture_webpage(page, url: str, screenshots_dir: Path, start_idx: int,
         if focus_hints:
             _scroll_to_focus(page, focus_hints)
             page.wait_for_timeout(500)
+
+        ok, reason = _ensure_captureworthy_page(page, url, allow_scroll_retry=True)
+        if not ok:
+            click.echo(f"      ❌ 页面无效({reason})，跳过")
+            return 0
 
         # 截图当前视口
         path = screenshots_dir / f"{start_idx + count:03d}.png"
@@ -377,28 +390,31 @@ def _extract_tweet_id(url: str) -> str | None:
 def _is_blocked_page(page) -> bool:
     """检测页面是否被拦截或为错误页面（404/500 等）。"""
     try:
-        text = page.text_content("body") or ""
-        block_signals = [
-            "security verification",
-            "verifies you are not a bot",
-            "checking your browser",
-            "just a moment",
-            "enable javascript",
-            "captcha",
-            "请完成安全验证",
-            # 错误页面检测
-            "page not found",
-            "404 not found",
-            "the requested page could not be found",
-            "this page doesn't exist",
-            "page does not exist",
-            "404 error",
-            "500 internal server error",
-        ]
-        text_lower = text.lower()
-        return any(signal in text_lower for signal in block_signals)
+        ok, reason = assess_page_snapshot(collect_page_snapshot(page))
+        return (not ok) and reason == "blocked"
     except Exception:
         return False
+
+
+def _ensure_captureworthy_page(page, url: str, allow_scroll_retry: bool = True) -> tuple[bool, str]:
+    """判断页面是否值得截图/录屏，必要时尝试滚动后重试一次。"""
+    snapshot = collect_page_snapshot(page)
+    ok, reason = assess_page_snapshot(snapshot, url=url)
+    if ok:
+        return True, "ok"
+
+    if allow_scroll_retry and reason == "low_density":
+        try:
+            page.evaluate("window.scrollBy(0, Math.max(window.innerHeight * 0.9, 640))")
+            page.wait_for_timeout(800)
+        except Exception:
+            return False, reason
+        snapshot = collect_page_snapshot(page)
+        ok, reason = assess_page_snapshot(snapshot, url=url)
+        if ok:
+            return True, "ok"
+
+    return False, reason
 
 
 def _extract_highlight_keywords(narration: str) -> list[str]:
@@ -430,6 +446,7 @@ def _dynamic_record(
     narration: str,
     output_path: Path,
     duration: float = 15.0,
+    focus_hints: list[str] | None = None,
 ) -> bool:
     """L1.5: Playwright 动态录屏 — 打开 URL、高亮关键词、平滑滚动。
 
@@ -441,10 +458,9 @@ def _dynamic_record(
         return False
 
     urls = _extract_urls(instruction)
-    if not urls:
+    url = _pick_dynamic_record_url(urls)
+    if not url:
         return False
-
-    url = urls[0]  # 取第一个 URL
     highlight_keywords = _extract_highlight_keywords(narration)
 
     import tempfile
@@ -484,6 +500,17 @@ def _dynamic_record(
                 return False
 
             page.wait_for_timeout(2000)
+
+            if focus_hints:
+                _scroll_to_focus(page, focus_hints)
+                page.wait_for_timeout(500)
+
+            ok, reason = _ensure_captureworthy_page(page, url, allow_scroll_retry=True)
+            if not ok:
+                click.echo(f"      ⚠️ 动态录屏跳过无效页面: {reason}")
+                ctx.close()
+                browser.close()
+                return False
 
             # 记录内容就绪时间（用于后续裁掉加载阶段）
             content_ready = time.time() - record_start
@@ -594,3 +621,19 @@ def _extract_keywords(instruction: str) -> list[str]:
     chinese = re.findall(r'[\u4e00-\u9fff]{2,4}', instruction)
     keywords.extend(chinese[:5])
     return list(set(keywords))
+
+
+def _should_try_dynamic_record(urls: list[str]) -> bool:
+    """动态录屏只尝试在非登录墙高风险站点上执行。"""
+    return _pick_dynamic_record_url(urls) is not None
+
+
+def _pick_dynamic_record_url(urls: list[str]) -> str | None:
+    """挑一个适合动态录屏的 URL。"""
+    for url in urls:
+        if _is_tweet_url(url):
+            continue
+        if is_auth_risk_host(url):
+            continue
+        return url
+    return None

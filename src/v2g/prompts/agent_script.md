@@ -170,7 +170,13 @@
    - **不要**把这些内容重新写成 slide 卡片的 bullet 文字复述
 8. **大数字 / 指标对比必须用 hero-stat**：涉及"从 X 降到 Y"、"提升 N 倍"、"省下 $M"的段落**必须**用 `hero-stat.default` 或 `hero-stat.progress`，不要塞进普通 slide 的 bullet。
 9. **架构 / 流程 / 多方关系必须用 diagram**：涉及架构图、调用流程、多方协作关系的段落**必须**用 `diagram.*` 系列（default / pipeline / dual-card / sequence / tree-card 中选一个与结构最匹配的）。
-10. **叙事节拍**：如果脚本涉及"问题 → 方案 → 结果"叙事，配对使用 `slide.problem-statement` → `slide.solution-reveal` → `slide.result-showcase`。
+10. **动态画面硬约束**：脚本必须至少包含 1 个 `web-video.*` 段（真实产品演示/现场片段），禁止整片只用 slide + terminal。
+11. **material 必须和 schema 对齐**：
+   - `slide / browser / diagram / hero-stat / code-block / social-card / image-overlay` → `material: "A"`
+   - `terminal / recording` → `material: "B"`
+   - `web-video / source-clip` → `material: "C"`
+   - 禁止输出 `material: "B" + code-block.default`、`material: "B" + web-video.default` 这种会把高信息密度组件压回普通录屏的组合。
+11. **叙事节拍**：如果脚本涉及"问题 → 方案 → 结果"叙事，配对使用 `slide.problem-statement` → `slide.solution-reveal` → `slide.result-showcase`。
 
 ### 视觉记忆点：flash_meme 与 image-overlay
 
@@ -206,6 +212,11 @@
   "narration_zh": "OpenCode 在 GitHub 上已经 11800 star，核心贡献者来自前 Anthropic 团队。",
   "image_content": {
     "image_path": "images/opencode_readme.png",
+    "semantic_type": "github-readme",
+    "entities": ["OpenCode", "GitHub"],
+    "scene_tags": ["README", "star", "开源项目"],
+    "must_have": ["star", "readme"],
+    "avoid": ["person", "发布会"],
     "overlay_text": "11800 ⭐ · Telemetry disabled",
     "overlay_position": "bottom",
     "ken_burns": "zoom-in"
@@ -217,6 +228,7 @@
 - **用途**：产品 README 截图、真实 UI 截图、推文截图、新闻配图、架构图照片
 - **规则**：`overlay_text` 用自己的话概括（≤12 字），不要复制原文长句
 - **与 social-card 的分工**：有截图 → `image-overlay.default`；只有推文文本、没有截图 → `social-card.default`
+- **关键新增点**：请同时补 `semantic_type / entities / must_have / avoid`，让本地素材库优先命中“语义正确”的图片，而不是只命中同类组件
 
 ## 硬性约束
 
@@ -225,7 +237,8 @@
 - 素材比例: A 40-60%, B ≥20%, C 可选（原创视频无需源视频片段）
 - 避免连续两段使用相同素材类型（视觉节奏：A→B→A→B 交替）
 - **视觉多样性（硬约束）**：每段 segment 必须显式指定 `component` 字段（无录屏的 B 段也要指定）；一个脚本的 `component` 字段必须跨越**至少 4 种不同 schema**；相邻两段不得使用相同 schema；hook 段必须用 `slide.hook-opener` 或 `slide.fireship-title`；outro 最后一段必须用 `slide.cta-outro`。违反任一条规则的脚本都会被质量门控打回重试，详见「组件选择硬性规则」章节。
-- **视觉记忆点（硬约束）**：脚本中必须包含至少 3 个 `flash_meme`（穿插在情绪爆发点）和至少 1 个 `image-overlay` 段落（真实截图）。详见「视觉记忆点」章节。
+- **视觉记忆点（硬约束）**：脚本中必须包含至少 3 个 `flash_meme`（穿插在情绪爆发点）、至少 1 个 `image-overlay` 段落（真实截图）和至少 1 个 `web-video` 段落（真实动态演示）。详见「视觉记忆点」章节。
+- **信息密度优先**：评论/热点脚本中的真实网页画面，优先 `README / 官方文档 / pricing / policy / 结果页 / repo / PR / benchmark`，不要安排登录页、注册页、品牌宣传首屏、空白 Hero 作为主要镜头。
 - B 类素材的 recording_instruction 中尽可能包含 URL
 - bullet_points 禁止 emoji
 - 不要编造素材中没有的事实，但可以加入你自己的分析判断

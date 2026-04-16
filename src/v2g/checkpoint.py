@@ -55,6 +55,8 @@ class PipelineState:
     agent_sources: list = field(default_factory=list)  # 输入素材清单
     agent_outline_done: bool = False     # 大纲已生成
     outline_reviewed: bool = False       # 大纲已确认
+    agent_outline_signature: str = ""    # 大纲输入/提示词签名
+    agent_script_signature: str = ""     # 脚本输入/提示词签名
 
     # 文件路径 (单视频模式)
     source_video: str = ""

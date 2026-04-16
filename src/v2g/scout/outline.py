@@ -78,12 +78,12 @@ def _write_outline_report(writer, today: date, topic: str, content: str) -> Path
 
 def _load_ideation_context(vault_path: Path, today: date, topic: str) -> str:
     """查找今日匹配的 ideation 报告作为补充上下文。"""
-    import re
+    from v2g.scout.url_extractor import _topic_matches_report
+
     ideation_dir = vault_path / "scout" / "ideation"
     if not ideation_dir.exists():
         return ""
-    slug = re.sub(r"[^\w\u4e00-\u9fff]+", "-", topic)[:20].strip("-").lower()
     for f in ideation_dir.glob(f"{today}-*.md"):
-        if slug and slug in f.name.lower():
+        if _topic_matches_report(f, topic):
             return "\n\n---\n" + f.read_text(encoding="utf-8")[:2000]
     return ""

@@ -71,6 +71,22 @@ if (fs.existsSync(imagesSrc)) {
   fs.cpSync(imagesSrc, imagesDst, { recursive: true });
 }
 
+// 复制配音（SubtitleOverlay / Audio 仍会请求音频文件）
+let voiceoverSrc = path.join(videoDir, "voiceover", "full.mp3");
+if (!fs.existsSync(voiceoverSrc)) {
+  voiceoverSrc = path.join(videoDir, "voiceover.mp3");
+}
+if (fs.existsSync(voiceoverSrc)) {
+  fs.copyFileSync(voiceoverSrc, path.join(publicDir, "voiceover.mp3"));
+}
+
+// 复制 web_videos（web-video 预览需要）
+const webVideosSrc = path.join(videoDir, "web_videos");
+const webVideosDst = path.join(publicDir, "web_videos");
+if (fs.existsSync(webVideosSrc)) {
+  fs.cpSync(webVideosSrc, webVideosDst, { recursive: true });
+}
+
 // 空 recordings 目录（preview 不需要录屏）
 const recDst = path.join(publicDir, "recordings");
 if (!fs.existsSync(recDst)) fs.mkdirSync(recDst, { recursive: true });
@@ -158,6 +174,9 @@ async function main() {
   // 清理 public（和 render.mjs 一致）
   try {
     if (fs.existsSync(slidesDst)) fs.rmSync(slidesDst, { recursive: true, force: true });
+    if (fs.existsSync(imagesDst)) fs.rmSync(imagesDst, { recursive: true, force: true });
+    if (fs.existsSync(webVideosDst)) fs.rmSync(webVideosDst, { recursive: true, force: true });
+    if (fs.existsSync(path.join(publicDir, "voiceover.mp3"))) fs.rmSync(path.join(publicDir, "voiceover.mp3"), { force: true });
   } catch {}
 
   console.log(`\n🎉 预览完成: ${rendered} 张`);

@@ -6,7 +6,14 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import os
+import subprocess
+import time
+from functools import lru_cache
+from pathlib import Path
+from urllib.parse import urlparse
 
 import click
 import httpx
@@ -25,21 +32,113 @@ for _k in list(os.environ):
 
 # 各 provider 的官方域名（用于判断是否需要系统代理）
 _OFFICIAL_DOMAINS = {
-    "anthropic": "api.anthropic.com",
-    "openai": "api.openai.com",
+    "anthropic": ("api.anthropic.com",),
+    "openai": ("api.openai.com", "auth.openai.com", "chatgpt.com"),
 }
 
 # 国内 API：始终不走系统代理
 _NO_PROXY_PROVIDERS = frozenset(["zhipu", "minimax", "gemini"])
 
 
-def _read_proxy_url() -> str | None:
-    """只读取系统代理环境变量，不修改。"""
-    url = os.environ.get("https_proxy") or os.environ.get("http_proxy") or None
-    # 跳过畸形值
-    if url and url.rstrip("/").endswith("~"):
+def _sanitize_proxy_url(url: str | None) -> str | None:
+    if not url:
         return None
-    return url
+    val = url.strip()
+    if not val:
+        return None
+    if val.rstrip("/").endswith("~"):
+        return None
+    if "://" not in val:
+        val = f"http://{val}"
+    return val.rstrip("~")
+
+
+@lru_cache(maxsize=1)
+def _read_macos_system_proxy_url() -> str | None:
+    """读取 macOS 系统代理（scutil --proxy）。"""
+    if os.name != "posix":
+        return None
+    try:
+        output = subprocess.run(
+            ["scutil", "--proxy"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        ).stdout
+    except Exception:
+        return None
+
+    entries: dict[str, str] = {}
+    for line in output.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        entries[key.strip()] = value.strip()
+
+    def _proxy_for(prefix: str) -> str | None:
+        enabled = entries.get(f"{prefix}Enable")
+        host = entries.get(f"{prefix}Proxy")
+        port = entries.get(f"{prefix}Port")
+        if enabled != "1" or not host or not port:
+            return None
+        return _sanitize_proxy_url(f"http://{host}:{port}")
+
+    return _proxy_for("HTTPS") or _proxy_for("HTTP")
+
+
+def _read_proxy_url() -> str | None:
+    """读取代理设置：显式环境变量 > 常见代理变量 > macOS 系统代理。"""
+    direct = _sanitize_proxy_url(os.environ.get("OPENAI_PROXY"))
+    if direct:
+        return direct
+
+    for key in (
+        "https_proxy", "HTTPS_PROXY",
+        "all_proxy", "ALL_PROXY",
+        "http_proxy", "HTTP_PROXY",
+    ):
+        url = _sanitize_proxy_url(os.environ.get(key))
+        if url:
+            return url
+    return _read_macos_system_proxy_url()
+
+
+def _read_oauth_scopes(access_token: str) -> set[str] | None:
+    """从 JWT access token 中读取 scp（scope）列表。"""
+    parts = access_token.split(".")
+    if len(parts) < 2:
+        return None
+    payload_seg = parts[1]
+    padding = "=" * (-len(payload_seg) % 4)
+    try:
+        payload_obj = json.loads(base64.urlsafe_b64decode(payload_seg + padding).decode("utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload_obj, dict):
+        return None
+    scp = payload_obj.get("scp")
+    if not isinstance(scp, list):
+        return None
+    return {str(item).strip() for item in scp if str(item).strip()}
+
+
+def _resolve_codex_base_url() -> str:
+    """Resolve ChatGPT Codex-compatible base URL."""
+    base = os.environ.get("OPENAI_CODEX_BASE_URL", "https://chatgpt.com/backend-api/codex").strip()
+    if not base:
+        base = "https://chatgpt.com/backend-api/codex"
+    return base.rstrip("/")
+
+
+def _is_official_base_url(provider: str, base_url: str) -> bool:
+    domains = _OFFICIAL_DOMAINS.get(provider)
+    if not domains:
+        return False
+    hostname = (urlparse(base_url).hostname or "").lower()
+    if not hostname:
+        return False
+    return any(hostname == domain or hostname.endswith(f".{domain}") for domain in domains)
 
 
 def _make_http_client(provider: str, base_url: str = "",
@@ -54,8 +153,7 @@ def _make_http_client(provider: str, base_url: str = "",
     if provider in _NO_PROXY_PROVIDERS:
         proxy_url = None
     elif base_url:
-        official = _OFFICIAL_DOMAINS.get(provider, "")
-        if official and official in base_url:
+        if _is_official_base_url(provider, base_url):
             proxy_url = _read_proxy_url()
         else:
             # 自定义网关，本身就是代理，不需要系统代理
@@ -94,6 +192,56 @@ def is_openai_compat_model(model: str) -> bool:
 
 def is_minimax_model(model: str) -> bool:
     return model.lower().startswith("minimax")
+
+
+def _resolve_openai_auth_file() -> str | None:
+    """Resolve OpenAI OAuth token file path from env or default location."""
+    env_candidates = (
+        os.environ.get("OPENAI_AUTH_FILE", "").strip(),
+        os.environ.get("CODEX_AUTH_FILE", "").strip(),
+        os.environ.get("CODEX_OPENAI_AUTH_FILE", "").strip(),
+    )
+    for candidate in env_candidates:
+        if candidate:
+            return candidate
+
+    local_auth = Path("auth.json")
+    if local_auth.exists():
+        return str(local_auth.resolve())
+
+    default_path = Path.home() / ".codex" / "auth.json"
+    if default_path.exists():
+        return str(default_path)
+    return None
+
+
+def _load_openai_oauth_session() -> dict[str, str] | None:
+    """Load OpenAI OAuth session from auth token file.
+
+    Returns:
+      {"access_token": "...", "account_id": "...", "source_path": "..."} or None.
+    """
+    auth_file = _resolve_openai_auth_file()
+    if not auth_file:
+        return None
+
+    from v2g.openai_auth import (
+        OpenAIAuthError,
+        OpenAIAuthRefreshError,
+        OpenAIAuthTokenFileError,
+        load_openai_auth_session,
+    )
+
+    try:
+        with _make_http_client("openai", "https://auth.openai.com/oauth/token", timeout=30.0) as refresh_client:
+            session = load_openai_auth_session(auth_file, http_client=refresh_client)
+        return {
+            "access_token": session.access_token,
+            "account_id": session.account_id,
+            "source_path": auth_file,
+        }
+    except (OpenAIAuthTokenFileError, OpenAIAuthRefreshError, OpenAIAuthError) as e:
+        raise click.ClickException(f"OpenAI OAuth 凭证不可用 ({auth_file}): {e}") from e
 
 
 # ── 统一调用入口 ──────────────────────────────────────────
@@ -269,45 +417,214 @@ def _call_gpt(system_prompt: str, user_message: str, model: str,
     from openai import OpenAI
     from v2g.cost import get_tracker
 
-    base_url = os.environ.get("GPT_BASE_URL")
-    api_key = os.environ.get("GPT_API_KEY", "")
+    def _normalize_base_url(url: str | None) -> str:
+        val = (url or "").strip()
+        if not val:
+            return ""
+        if not val.rstrip("/").endswith("/v1"):
+            val = val.rstrip("/") + "/v1"
+        return val
 
+    def _timeout_like(exc: Exception) -> bool:
+        name = exc.__class__.__name__
+        if name in {"APITimeoutError", "APIConnectionError"}:
+            return True
+        if isinstance(exc, httpx.TimeoutException):
+            return True
+        text = str(exc).lower()
+        return "timed out" in text or "timeout" in text
+
+    def _chat_once(client: OpenAI) -> str:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+        usage_input = 0
+        usage_output = 0
+        if response.usage:
+            usage_input = response.usage.prompt_tokens or 0
+            usage_output = response.usage.completion_tokens or 0
+        get_tracker().record_llm(model, usage_input, usage_output)
+
+        result = response.choices[0].message.content or ""
+        import re as _re
+        result = _re.sub(r"<think>.*?</think>", "", result, flags=_re.DOTALL).strip()
+        return result
+
+    def _codex_responses_once(session: dict[str, str]) -> str:
+        """Call ChatGPT Codex-compatible /responses endpoint via OAuth token."""
+        from v2g.cost import get_tracker
+
+        def _retryable(exc: Exception) -> bool:
+            if isinstance(exc, (httpx.TransportError, httpx.TimeoutException)):
+                return True
+            text = str(exc).lower()
+            return any(
+                needle in text
+                for needle in (
+                    "unexpected_eof_while_reading",
+                    "ssl",
+                    "eof occurred",
+                    "connection reset",
+                    "stream disconnected",
+                )
+            )
+
+        headers = {
+            "Authorization": f"Bearer {session['access_token']}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+        if session.get("account_id"):
+            headers["ChatGPT-Account-ID"] = session["account_id"]
+
+        payload = {
+            "model": model,
+            "instructions": system_prompt,
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": user_message}],
+            }],
+            "store": False,
+            "stream": True,
+            "parallel_tool_calls": False,
+            "tool_choice": "none",
+        }
+        codex_base = _resolve_codex_base_url()
+        last_exc: Exception | None = None
+        for attempt in range(1, 4):
+            output_deltas: list[str] = []
+            output_done = ""
+            usage_input = 0
+            usage_output = 0
+            try:
+                with _make_http_client("openai", codex_base, timeout=180.0) as client:
+                    with client.stream(
+                        "POST",
+                        f"{codex_base}/responses",
+                        headers=headers,
+                        json=payload,
+                    ) as response:
+                        if response.status_code != 200:
+                            body = response.read().decode("utf-8", errors="ignore")
+                            raise click.ClickException(
+                                f"ChatGPT Codex 调用失败 ({response.status_code}): {body[:500]}"
+                            )
+
+                        for raw_line in response.iter_lines():
+                            line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else raw_line
+                            if not line or not line.startswith("data: "):
+                                continue
+                            data_str = line[6:].strip()
+                            if not data_str or data_str == "[DONE]":
+                                continue
+                            try:
+                                event = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                continue
+
+                            event_type = str(event.get("type", ""))
+                            if event_type == "response.output_text.delta":
+                                delta = event.get("delta")
+                                if isinstance(delta, str):
+                                    output_deltas.append(delta)
+                            elif event_type == "response.output_text.done":
+                                txt = event.get("text")
+                                if isinstance(txt, str):
+                                    output_done = txt
+                            elif event_type == "response.completed":
+                                resp_obj = event.get("response")
+                                if isinstance(resp_obj, dict):
+                                    usage = resp_obj.get("usage")
+                                    if isinstance(usage, dict):
+                                        usage_input = int(usage.get("input_tokens", 0) or 0)
+                                        usage_output = int(usage.get("output_tokens", 0) or 0)
+
+                result = output_done or "".join(output_deltas).strip()
+                if not result:
+                    raise RuntimeError("ChatGPT Codex 返回空响应")
+
+                get_tracker().record_llm(model, usage_input, usage_output)
+                import re as _re
+                result = _re.sub(r"<think>.*?</think>", "", result, flags=_re.DOTALL).strip()
+                return result
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= 3 or not _retryable(exc):
+                    break
+                wait_s = 0.8 * attempt
+                click.echo(f"   ⚠️ ChatGPT Codex 连接波动，{wait_s:.1f}s 后重试 ({attempt}/3)...")
+                time.sleep(wait_s)
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("ChatGPT Codex 调用失败")
+
+    supports_openai_oauth = is_gpt_model(model)
+    oauth_session = _load_openai_oauth_session() if supports_openai_oauth else None
+    gpt_api_key = os.environ.get("GPT_API_KEY", "").strip()
+    gpt_base_url = _normalize_base_url(os.environ.get("GPT_BASE_URL"))
+
+    # 1) gpt/o*：优先 OAuth 路由（API scopes 足够则走官方 API，否则走 ChatGPT Codex 路由）
+    if supports_openai_oauth and oauth_session:
+        scopes = _read_oauth_scopes(oauth_session["access_token"])
+        has_api_scopes = (scopes is None) or any(scope.startswith("api.") for scope in scopes)
+        if has_api_scopes:
+            oauth_client = OpenAI(
+                api_key=oauth_session["access_token"],
+                base_url="https://api.openai.com/v1",
+                default_headers={
+                    "ChatGPT-Account-ID": oauth_session["account_id"],
+                } if oauth_session.get("account_id") else None,
+                http_client=_make_http_client("openai", "https://api.openai.com/v1"),
+            )
+            try:
+                return _chat_once(oauth_client)
+            except Exception as e:
+                if _timeout_like(e):
+                    proxy_tip = (
+                        "已检测到代理配置，请确认本地代理可访问 api.openai.com。"
+                        if _read_proxy_url()
+                        else "未检测到代理，请设置 OPENAI_PROXY（如 http://127.0.0.1:7890）或开启系统代理。"
+                    )
+                    raise click.ClickException(f"OpenAI OAuth 直连超时: {e}；{proxy_tip}") from e
+                raise
+        else:
+            click.echo("   ℹ️ OAuth token 无 OpenAI API scope，改走 ChatGPT Codex 路由（同模型）")
+            return _codex_responses_once(oauth_session)
+
+    # 2) GPT key 路由（OAuth 不可用时）
+    if gpt_api_key:
+        gpt_client_kwargs: dict = {
+            "http_client": _make_http_client("openai", gpt_base_url),
+        }
+        if gpt_base_url:
+            gpt_client_kwargs["base_url"] = gpt_base_url
+        gpt_client = OpenAI(api_key=gpt_api_key, **gpt_client_kwargs)
+        return _chat_once(gpt_client)
+
+    # 3) 兼容历史：无 GPT key 时，走 Anthropic 兼容 key
+    base_url = _normalize_base_url(os.environ.get("ANTHROPIC_BASE_URL"))
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
-        base_url = os.environ.get("ANTHROPIC_BASE_URL") or base_url
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
+        if supports_openai_oauth:
+            raise click.ClickException("未设置 GPT_API_KEY（或 OPENAI_AUTH_FILE/CODEX_AUTH_FILE）")
         raise click.ClickException("未设置 GPT_API_KEY")
 
-    client_kwargs: dict = {}
+    anth_client_kwargs: dict = {
+        "http_client": _make_http_client("openai", base_url),
+    }
     if base_url:
-        if not base_url.rstrip("/").endswith("/v1"):
-            base_url = base_url.rstrip("/") + "/v1"
-        client_kwargs["base_url"] = base_url
-    client_kwargs["http_client"] = _make_http_client("openai", base_url or "")
-
-    client = OpenAI(api_key=api_key, **client_kwargs)
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-
-    # 提取 usage
-    usage_input = 0
-    usage_output = 0
-    if response.usage:
-        usage_input = response.usage.prompt_tokens or 0
-        usage_output = response.usage.completion_tokens or 0
-    get_tracker().record_llm(model, usage_input, usage_output)
-
-    result = response.choices[0].message.content or ""
-    import re as _re
-    result = _re.sub(r"<think>.*?</think>", "", result, flags=_re.DOTALL).strip()
-    return result
+        anth_client_kwargs["base_url"] = base_url
+    anth_client = OpenAI(api_key=api_key, **anth_client_kwargs)
+    return _chat_once(anth_client)
 
 
 def _call_minimax(system_prompt: str, user_message: str, model: str,

@@ -143,3 +143,30 @@ def test_shot_plan_scene_hint_is_beat_level_and_short(tmp_path):
     assert hint_1 != hint_2
     assert len(hint_1) <= 20
     assert len(hint_2) <= 20
+
+
+def test_sync_sidecars_accepts_legacy_hero_stat_list(tmp_path):
+    script = {
+        "title": "关键数字",
+        "description": "demo",
+        "tags": ["ai", "hero"],
+        "segments": [
+            {
+                "id": 1,
+                "type": "body",
+                "material": "A",
+                "component": "hero-stat.default",
+                "narration_zh": "这个数字很关键。它代表风险也在抬头。",
+                "hero_stat": [
+                    {"label": "涨幅", "value": "175%", "trend": "up"},
+                    {"label": "风险", "value": "升高", "trend": "down"},
+                ],
+            }
+        ],
+    }
+
+    sync_script_sidecars(script, tmp_path)
+
+    content = (tmp_path / "script.md").read_text(encoding="utf-8")
+    assert "关键指标" in content
+    assert "涨幅: 175% (up)" in content

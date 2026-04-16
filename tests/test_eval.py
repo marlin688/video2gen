@@ -34,14 +34,37 @@ def _golden_script():
         "tags": ["ai", "coding", "tools", "review"],
         "segments": [
             _seg(1, "intro", "C", "你有没有想过，为什么现在 AI 编程助手越来越多，市面上已经有几十款产品，但真正好用的却很少？今天我们就来深度测评五款主流工具。"),
-            _seg(2, "body", "A", "首先来看第一款工具 Cursor，它的核心优势在于代码补全的准确率非常高，在我们的测试中达到了百分之八十五的首次通过率。"),
+            _seg(
+                2,
+                "body",
+                "A",
+                "首先来看第一款工具 Cursor，它的核心优势在于代码补全的准确率非常高，在我们的测试中达到了百分之八十五的首次通过率。",
+                component="image-overlay.default",
+                image_content={
+                    "image_path": "",
+                    "source_method": "search",
+                    "source_query": "Cursor IDE code completion screenshot",
+                    "overlay_text": "Cursor 实测",
+                },
+            ),
             _seg(3, "body", "B", "让我们实际演示一下 Cursor 的核心功能，看看它在真实项目中处理复杂重构任务时的表现究竟如何。"),
-            _seg(4, "body", "A", "第二款工具 Copilot 走的是完全不同的路线，它更注重代码理解和重构能力，对大型代码库的支持也更好。"),
+            _seg(
+                4,
+                "body",
+                "C",
+                "第二款工具 Copilot 走的是完全不同的路线，它更注重代码理解和重构能力，对大型代码库的支持也更好。",
+                component="web-video.default",
+                web_video={
+                    "search_query": "GitHub Copilot demo coding workflow",
+                    "overlay_text": "Copilot 演示",
+                    "fallback_component": "slide.tech-dark",
+                },
+            ),
             _seg(5, "body", "B", "同样的测试场景下，Copilot 给出了完全不同的解决方案，我们来对比看看两种方案各自的优劣势。"),
             _seg(6, "body", "C", "从原始测评视频中可以看到，两款工具在响应速度和补全质量上的性能差异非常明显。"),
             _seg(7, "body", "A", "综合对比这五款工具之后，可以发现每款都有自己的最佳适用场景，没有一个万能的解决方案。"),
             _seg(8, "body", "B", "最后我们用一个完整的全栈项目来做端到端测试，模拟真实的日常开发工作流程。"),
-            _seg(9, "body", "B", "测试结果的数据汇总如下，从补全速度、准确率和用户体验三个维度来逐项分析比较。"),
+            _seg(9, "body", "A", "测试结果的数据汇总如下，从补全速度、准确率和用户体验三个维度来逐项分析比较。"),
             _seg(10, "outro", "A", "以上就是本期五款 AI 编程工具深度测评的全部内容，如果觉得有帮助请点赞关注，我会持续更新更多工具评测！"),
         ],
     }
@@ -186,3 +209,76 @@ class TestTutorialDepthChecks:
 
         blocking_names = [c["name"] for c in get_blocking_warnings(report)]
         assert "教程含踩坑修复" in blocking_names
+
+
+class TestBlockingWarningsByProfile:
+    def test_commentary_does_not_block_material_alternation(self):
+        script = {
+            "title": "AI 热点评",
+            "description": "讨论最近的 AI 概念泡沫",
+            "tags": ["ai", "commentary", "market"],
+            "segments": [
+                _seg(1, "intro", "A", "开头内容。" * 8),
+                _seg(2, "body", "B", "第二段内容。" * 6),
+                _seg(3, "body", "B", "第三段内容。" * 6),
+                _seg(4, "body", "A", "第四段内容。" * 6),
+                _seg(5, "body", "A", "第五段内容。" * 6),
+                _seg(6, "body", "B", "第六段内容。" * 6),
+                _seg(7, "body", "B", "第七段内容。" * 6),
+                _seg(8, "outro", "A", "收尾内容。" * 8),
+            ],
+        }
+
+        report = eval_script(script, "commentary", quality_profile="commentary")
+        failed_names = [c["name"] for c in report["warning_failed"]]
+        assert "素材类型交替" in failed_names
+        assert "body段 A/B 交替" in failed_names
+
+        blocking_names = [c["name"] for c in get_blocking_warnings(report)]
+        assert "素材类型交替" not in blocking_names
+        assert "body段 A/B 交替" not in blocking_names
+
+    def test_commentary_does_not_block_consecutive_schema(self):
+        report = {
+            "quality_profile": "commentary",
+            "warning_failed": [
+                {"name": "无连续相同 schema"},
+                {"name": "视觉 schema 多样性"},
+            ],
+        }
+        blocking_names = [c["name"] for c in get_blocking_warnings(report)]
+        assert "无连续相同 schema" not in blocking_names
+        assert "视觉 schema 多样性" in blocking_names
+
+
+def test_eval_flags_component_material_mismatch():
+    script = {
+        "title": "AI 热点评",
+        "description": "测试 component/material 错位",
+        "tags": ["ai", "commentary", "market"],
+        "segments": [
+            _seg(1, "intro", "A", "开场内容。" * 8),
+            _seg(
+                2,
+                "body",
+                "B",
+                "这里应该是配图段。" * 6,
+                component="image-overlay.default",
+                image_content={"image_path": "", "source_method": "search", "source_query": "Claude pricing"},
+            ),
+            _seg(
+                3,
+                "body",
+                "B",
+                "这里应该是动态视频段。" * 6,
+                component="web-video.default",
+                web_video={"search_query": "AI coding demo", "fallback_component": "slide.tech-dark"},
+            ),
+            _seg(4, "outro", "A", "收尾内容。" * 8),
+        ],
+    }
+    report = eval_script(script, "commentary", quality_profile="commentary")
+    failed_names = [c["name"] for c in report["warning_failed"]]
+    assert "组件与素材语义一致" in failed_names
+    blocking_names = [c["name"] for c in get_blocking_warnings(report)]
+    assert "组件与素材语义一致" in blocking_names

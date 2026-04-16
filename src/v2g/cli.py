@@ -1,5 +1,6 @@
 """Click CLI 入口。"""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -587,10 +588,11 @@ def scout_plan(cfg: Config, skip_notebooklm, duration, topic_index):
 @click.option("--topic-index", "-i", default=None, type=int, help="直接选择第 N 个话题")
 @click.option("--duration", "-d", default=240, type=int, help="目标视频时长秒数 (默认 240)")
 @click.option("--model", default=None, help="LLM 模型")
-@click.option("--profile", default="tutorial_general", help="质量档位 (default / tutorial_general / anthropic_brand / tech_explainer)")
+@click.option("--profile", default="commentary", help="质量档位 (default / commentary / news_briefing / tutorial_general / anthropic_brand / tech_explainer)")
+@click.option("--force-regenerate", is_flag=True, help="忽略已有 outline/script，强制重新生成")
 @click.option("--skip-download", is_flag=True, help="跳过视频下载（仅用已有 sources/）")
 @click.pass_obj
-def scout_produce(cfg: Config, topic_index, duration, model, profile, skip_download):
+def scout_produce(cfg: Config, topic_index, duration, model, profile, force_regenerate, skip_download):
     """一键生产: 选话题 → 选视频下载 → agent 生成 script.json
 
     从 ideation 竞品视频中选择素材，结合 scout scripts 上下文，
@@ -615,6 +617,7 @@ def scout_produce(cfg: Config, topic_index, duration, model, profile, skip_downl
         return
     topic = selected["title"]
     slug = _topic_slug(topic)
+    topic_digest = hashlib.sha1(topic.encode("utf-8")).hexdigest()[:6]
     click.echo()
 
     # 2. 选竞品视频下载
@@ -653,7 +656,7 @@ def scout_produce(cfg: Config, topic_index, duration, model, profile, skip_downl
     sources = []
 
     # scout scripts（hook/title/outline）
-    scout_files = find_scout_scripts(vault, today, slug)
+    scout_files = find_scout_scripts(vault, today, topic)
     for f in scout_files:
         sources.append(str(f))
         click.echo(f"   📎 {f.name}")
@@ -682,7 +685,7 @@ def scout_produce(cfg: Config, topic_index, duration, model, profile, skip_downl
     click.echo()
 
     # 5. 生成 project_id
-    project_id = f"{slug[:20]}-{today}".lower().replace(" ", "-")
+    project_id = f"{slug[:18]}-{topic_digest}-{today}".lower().replace(" ", "-")
 
     # 5.5 推文截图注入
     tw_json = vault / "scout" / "twitter" / f"{today}-curated.json"
@@ -726,6 +729,7 @@ def scout_produce(cfg: Config, topic_index, duration, model, profile, skip_downl
         auto_confirm=True,
         auto_confirm_threshold=85,
         quality_profile=profile,
+        force_regenerate=force_regenerate,
     )
 
 

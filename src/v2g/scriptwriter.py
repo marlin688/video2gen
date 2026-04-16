@@ -235,15 +235,26 @@ def _generate_script_md(script_data: dict, output_path: Path):
 
         elif component.startswith("hero-stat") and seg.get("hero_stat"):
             hs = seg["hero_stat"]
+            if isinstance(hs, list):
+                stat_items = hs
+                footnote = ""
+            elif isinstance(hs, dict):
+                stat_items = hs.get("stats", [])
+                footnote = hs.get("footnote")
+            else:
+                stat_items = []
+                footnote = ""
             lines.append("*关键指标:*\n")
-            for item in hs.get("stats", []):
+            for item in stat_items:
+                if not isinstance(item, dict):
+                    continue
                 value = item.get("value", "")
                 label = item.get("label", "")
                 trend = item.get("trend", "")
                 t = f" ({trend})" if trend else ""
                 lines.append(f"- {label}: {value}{t}\n")
-            if hs.get("footnote"):
-                lines.append(f"- 说明: {hs['footnote']}\n")
+            if footnote:
+                lines.append(f"- 说明: {footnote}\n")
             lines.append("\n")
 
         if material == "A" and "slide_content" in seg:
@@ -1330,6 +1341,18 @@ def run_script(
         )
         raise click.ClickException(state.last_error)
 
+    from v2g.script_fixer import fix_script
+    enforce_rich_media = not str(profile.get("style_id_prefix") or "").startswith("slide.anthropic-")
+    script_data, fix_logs = fix_script(
+        script_data,
+        output_dir,
+        ensure_rich_media=enforce_rich_media,
+    )
+    if fix_logs:
+        click.echo(f"🔧 脚本结构修复: {len(fix_logs)} 处")
+        for log in fix_logs:
+            click.echo(f"   {log}")
+
     # 保存输出
     script_json_path = output_dir / "script.json"
     script_json_path.write_text(
@@ -1509,6 +1532,18 @@ def run_multi_script(
     if "source_channel" not in script_data:
         channels = [s.channel_name for s in sources if s.channel_name]
         script_data["source_channel"] = " / ".join(channels[:3]) if channels else ""
+
+    from v2g.script_fixer import fix_script
+    enforce_rich_media = not str(profile.get("style_id_prefix") or "").startswith("slide.anthropic-")
+    script_data, fix_logs = fix_script(
+        script_data,
+        output_dir,
+        ensure_rich_media=enforce_rich_media,
+    )
+    if fix_logs:
+        click.echo(f"🔧 脚本结构修复: {len(fix_logs)} 处")
+        for log in fix_logs:
+            click.echo(f"   {log}")
 
     # 保存
     script_json_path = output_dir / "script.json"

@@ -19,9 +19,12 @@ BLOCKING_WARNING_NAMES = frozenset({
     "B段有 terminal_session",
     "素材类型交替",
     "视觉 schema 多样性",
+    "组件与素材语义一致",
     "无连续相同 schema",
     "无重复段落",
     "body段 A/B 交替",
+    "配图丰富度(image-overlay)",
+    "动态素材(web-video)",
     "教程可复现闭环",
     "教程含踩坑修复",
     "教程含前置条件/版本",
@@ -30,13 +33,32 @@ BLOCKING_WARNING_NAMES = frozenset({
     "outro有可执行交付",
 })
 
+_SCHEMA_MATERIAL = {
+    "slide": "A",
+    "browser": "A",
+    "diagram": "A",
+    "hero-stat": "A",
+    "code-block": "A",
+    "social-card": "A",
+    "image-overlay": "A",
+    "terminal": "B",
+    "recording": "B",
+    "web-video": "C",
+    "source-clip": "C",
+}
+
 
 def get_blocking_warnings(report: dict) -> list[dict]:
     """返回会阻断质量门控的 warning 项。"""
-    return [
+    blocking = [
         c for c in report.get("warning_failed", [])
         if c.get("name") in BLOCKING_WARNING_NAMES
     ]
+    profile = str(report.get("quality_profile") or "").strip().lower()
+    if profile in {"commentary", "news_briefing", "anthropic_brand"}:
+        non_blocking = {"素材类型交替", "body段 A/B 交替", "无连续相同 schema"}
+        blocking = [c for c in blocking if c.get("name") not in non_blocking]
+    return blocking
 
 
 def _segment_text(seg: dict) -> str:
@@ -301,6 +323,25 @@ def eval_script(
         category="objective",
     )
 
+    # --- 组件 / material 语义一致性 ---
+    mismatches: list[str] = []
+    for seg in segments:
+        comp = str(seg.get("component") or "").strip()
+        if not comp:
+            continue
+        schema = comp.split(".")[0]
+        expected = _SCHEMA_MATERIAL.get(schema)
+        actual = str(seg.get("material") or "").strip()
+        if expected and actual and actual != expected:
+            mismatches.append(f"seg{seg.get('id')}:{schema}:{actual}->{expected}")
+    check(
+        "组件与素材语义一致",
+        len(mismatches) == 0,
+        weight=2,
+        detail=", ".join(mismatches[:6]) if mismatches else "",
+        category="objective",
+    )
+
     # --- 显式 component 覆盖率 ---
     a_segs = [s for s in segments if s.get("material") == "A"]
     a_with_component = [s for s in a_segs if s.get("component")]
@@ -315,15 +356,27 @@ def eval_script(
         )
 
     # --- image-overlay 使用提醒 ---
+    require_rich_media = profile.get("name") not in {"anthropic_brand", "tech_explainer"}
     image_overlay_count = sum(
         1 for s in segments
         if (s.get("component", "").startswith("image-overlay") or s.get("image_content"))
     )
     check(
         "配图丰富度(image-overlay)",
-        image_overlay_count >= 1,
-        weight=1,
+        (not require_rich_media) or image_overlay_count >= 1,
+        weight=2 if require_rich_media else 1,
         detail=f"当前 {image_overlay_count} 个 image-overlay 段落（建议 2-4 个，用截图/搜图增强视觉）",
+        category="subjective",
+    )
+    web_video_count = sum(
+        1 for s in segments
+        if (s.get("component", "").startswith("web-video") or s.get("web_video"))
+    )
+    check(
+        "动态素材(web-video)",
+        (not require_rich_media) or web_video_count >= 1,
+        weight=2 if require_rich_media else 1,
+        detail=f"当前 {web_video_count} 个 web-video 段落（建议 1-3 个，用真实动态画面降低 AI 感）",
         category="subjective",
     )
 

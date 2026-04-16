@@ -22,7 +22,7 @@ class Config:
     tts_rate: str = "+5%"
 
     # LLM
-    script_model: str = "claude-sonnet-4-5-20250929"
+    script_model: str = "gpt-5.4"
 
     # 视频
     video_width: int = 1920

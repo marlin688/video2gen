@@ -18,6 +18,7 @@ from pathlib import Path
 
 import click
 import httpx
+from v2g.page_quality import assess_page_snapshot, collect_page_snapshot
 
 log = logging.getLogger(__name__)
 
@@ -93,9 +94,9 @@ def screenshot_url(
             page.goto(url, wait_until="domcontentloaded", timeout=15000)
             page.wait_for_timeout(wait_ms)
 
-            # 反爬检测（复用 tweet_screenshot 逻辑）
-            if _is_blocked(page):
-                click.echo(f"   ⚠️ 页面被反爬拦截: {url}")
+            ok, reason = _is_captureworthy(page, url)
+            if not ok:
+                click.echo(f"   ⚠️ 页面不适合截图({reason}): {url}")
                 browser.close()
                 return None
 
@@ -118,18 +119,23 @@ def screenshot_url(
         return None
 
 
-def _is_blocked(page) -> bool:
-    """检测反爬/验证页面。"""
-    try:
-        text = (page.text_content("body") or "").lower()
-        signals = [
-            "security verification", "verifies you are not a bot",
-            "checking your browser", "just a moment", "captcha",
-            "page not found", "404 not found",
-        ]
-        return any(s in text for s in signals)
-    except Exception:
-        return False
+def _is_captureworthy(page, url: str) -> tuple[bool, str]:
+    """检测页面是否适合截图。低信息页面尝试向下滚动后重试一次。"""
+    snapshot = collect_page_snapshot(page)
+    ok, reason = assess_page_snapshot(snapshot, url=url)
+    if ok:
+        return True, "ok"
+    if reason == "low_density":
+        try:
+            page.evaluate("window.scrollBy(0, Math.max(window.innerHeight * 0.9, 640))")
+            page.wait_for_timeout(800)
+        except Exception:
+            return False, reason
+        snapshot = collect_page_snapshot(page)
+        ok, reason = assess_page_snapshot(snapshot, url=url)
+        if ok:
+            return True, "ok"
+    return False, reason
 
 
 # ── 方式 2: 搜图 (DuckDuckGo 免费，Bing 备选) ──────────

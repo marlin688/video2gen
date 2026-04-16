@@ -4,6 +4,8 @@
  *
  * 用法:
  *   node render.mjs <video_id> [--output-dir <path>] [--sources-dir <path>]
+ *   node render.mjs <video_id> --preset 360p
+ *   node render.mjs <video_id> --height 360
  *
  * 目录结构:
  *   sources/{video_id}/          — 输入素材 (视频 + 字幕)
@@ -41,8 +43,13 @@ try {
 const args = process.argv.slice(2);
 const videoId = args[0];
 if (!videoId) {
-  console.error("用法: node render.mjs <video_id> [--output-dir <path>] [--sources-dir <path>]");
+  console.error("用法: node render.mjs <video_id> [--output-dir <path>] [--sources-dir <path>] [--preset 360p|720p] [--height 360]");
   process.exit(1);
+}
+
+function getArgValue(flag) {
+  const idx = args.indexOf(flag);
+  return idx !== -1 ? args[idx + 1] : "";
 }
 
 const outputDirIdx = args.indexOf("--output-dir");
@@ -54,6 +61,29 @@ const sourcesDirIdx = args.indexOf("--sources-dir");
 const sourcesDir = sourcesDirIdx !== -1
   ? args[sourcesDirIdx + 1]
   : path.resolve(__dirname, "..", "sources");
+
+const renderPreset = String(getArgValue("--preset") || "").trim().toLowerCase();
+const requestedHeightRaw = String(getArgValue("--height") || "").trim();
+let requestedHeight = requestedHeightRaw ? Number.parseInt(requestedHeightRaw, 10) : 0;
+if (!requestedHeight && renderPreset === "360p") requestedHeight = 360;
+if (!requestedHeight && renderPreset === "480p") requestedHeight = 480;
+if (!requestedHeight && renderPreset === "720p") requestedHeight = 720;
+if (requestedHeight && (!Number.isFinite(requestedHeight) || requestedHeight <= 0)) {
+  console.error(`非法高度: ${requestedHeightRaw}`);
+  process.exit(1);
+}
+const BASE_WIDTH = 1920;
+const BASE_HEIGHT = 1080;
+const renderScale = requestedHeight
+  ? Math.max(0.1, Math.min(requestedHeight / BASE_HEIGHT, 1))
+  : 1;
+const outputHeight = requestedHeight
+  ? Math.max(2, Math.round(BASE_HEIGHT * renderScale / 2) * 2)
+  : BASE_HEIGHT;
+const outputWidth = requestedHeight
+  ? Math.max(2, Math.round(BASE_WIDTH * renderScale / 2) * 2)
+  : BASE_WIDTH;
+const isPreviewResolution = renderScale < 0.999;
 
 const videoDir = path.join(v2gOutputDir, videoId);
 const finalDir = path.join(videoDir, "final");
@@ -629,6 +659,20 @@ function cleanupStagedPublicAssets() {
   console.log(`   ✅ 已清理 ${cleaned} 项缓存`);
 }
 
+function updateCheckpointAfterRender(outputPath) {
+  if (isPreviewResolution) return;
+  if (!fs.existsSync(checkpointPath)) return;
+  try {
+    const checkpoint = JSON.parse(fs.readFileSync(checkpointPath, "utf-8"));
+    checkpoint.assembled = true;
+    checkpoint.final_video = outputPath;
+    checkpoint.last_error = "";
+    fs.writeFileSync(checkpointPath, JSON.stringify(checkpoint, null, 2), "utf-8");
+  } catch (err) {
+    console.warn(`⚠️ checkpoint 回写失败: ${err.message}`);
+  }
+}
+
 async function main() {
   try {
     // 1. Bundle
@@ -648,10 +692,14 @@ async function main() {
     });
 
     console.log(`   分辨率: ${composition.width}x${composition.height}`);
+    if (isPreviewResolution) {
+      console.log(`   输出预览: ${outputWidth}x${outputHeight} (${renderPreset || `${outputHeight}p`})`);
+    }
     console.log(`   时长: ${composition.durationInFrames} 帧 (${(composition.durationInFrames / 30).toFixed(1)}s)`);
 
     // 3. 渲染到 final/ 目录
-    const outputPath = path.join(finalDir, "video.mp4");
+    const outputFileName = isPreviewResolution ? `video_${outputHeight}p.mp4` : "video.mp4";
+    const outputPath = path.join(finalDir, outputFileName);
     console.log(`🎨 渲染中... → ${outputPath}`);
 
     await renderMedia({
@@ -660,6 +708,7 @@ async function main() {
       codec: "h264",
       outputLocation: outputPath,
       inputProps,
+      scale: renderScale,
       browserExecutable: chromePath,
       onProgress: ({ progress }) => {
         if (Math.round(progress * 100) % 10 === 0) {
@@ -672,6 +721,10 @@ async function main() {
     const stats = fs.statSync(outputPath);
     console.log(`   视频: ${outputPath} (${(stats.size / 1024 / 1024).toFixed(1)}MB)`);
     console.log(`   字幕: ${srtPath}`);
+    if (isPreviewResolution) {
+      console.log("   说明: 这是调效果用的低分辨率预览，不会覆盖正式成片 checkpoint");
+    }
+    updateCheckpointAfterRender(outputPath);
   } finally {
     cleanupStagedPublicAssets();
   }

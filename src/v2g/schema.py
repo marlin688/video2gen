@@ -142,9 +142,32 @@ class ImageContent(BaseModel):
     image_path: str = ""  # 可为空，render 前由 image_prepare 填充
     source_method: Literal["screenshot", "search", "generate"] | None = None
     source_query: str | None = None  # URL / 关键词 / prompt
+    semantic_type: str | None = None  # 语义类型，如 pricing-table / keynote-photo
+    entities: list[str] | None = None  # 关键实体，如 Claude / Anthropic / Jensen Huang
+    scene_tags: list[str] | None = None  # 场景标签，如 发布会 / 终端 / 价格页
+    must_have: list[str] | None = None  # 必须出现的元素
+    avoid: list[str] | None = None  # 需要规避的元素
     overlay_text: str | None = None
     overlay_position: Literal["top", "center", "bottom"] | None = None
     ken_burns: Literal["zoom-in", "zoom-out", "pan-left", "pan-right"] | None = None
+
+    @field_validator("entities", "scene_tags", "must_have", "avoid")
+    @classmethod
+    def normalize_string_lists(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        seen: set[str] = set()
+        result: list[str] = []
+        for item in value:
+            cleaned = str(item or "").strip()
+            if not cleaned:
+                continue
+            lowered = cleaned.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            result.append(cleaned)
+        return result or None
 
 
 class WebVideo(BaseModel):

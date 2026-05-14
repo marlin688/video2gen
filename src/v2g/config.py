@@ -43,6 +43,8 @@ class Config:
     twitter_authors: str = ""
     scout_db_path: Path = field(default_factory=lambda: Path("data/scout.db"))
     hn_keywords: str = "AI,LLM,Claude,GPT,agent,RAG"
+    arxiv_categories: str = "cs.AI,cs.CL,cs.LG"
+    arxiv_keywords: str = ""
     article_rss_urls: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
@@ -82,6 +84,8 @@ class Config:
             twitter_authors=os.environ.get("TWITTER_AUTHORS", ""),
             scout_db_path=Path(os.environ.get("SCOUT_DB_PATH", str(defaults.scout_db_path))),
             hn_keywords=os.environ.get("HN_KEYWORDS", defaults.hn_keywords),
+            arxiv_categories=os.environ.get("ARXIV_CATEGORIES", defaults.arxiv_categories),
+            arxiv_keywords=os.environ.get("ARXIV_KEYWORDS", defaults.arxiv_keywords),
             article_rss_urls=os.environ.get("ARTICLE_RSS_URLS", ""),
             telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),

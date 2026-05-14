@@ -573,6 +573,16 @@ def scout_hn(cfg: Config, hours, min_points):
     run_hn_monitor(cfg, hours=hours, min_points=min_points)
 
 
+@scout.command("arxiv")
+@click.option("--days", default=2, type=int, help="搜索最近 N 天 (默认 2)")
+@click.option("--max-per-query", default=30, type=int, help="每次查询最多返回 (默认 30)")
+@click.pass_obj
+def scout_arxiv(cfg: Config, days, max_per_query):
+    """arXiv AI 新论文监控 (cs.AI / cs.CL / cs.LG, 无需 API Key)"""
+    from v2g.scout.arxiv_monitor import run_arxiv_monitor
+    run_arxiv_monitor(cfg, days=days, max_per_query=max_per_query)
+
+
 @scout.command("twitter")
 @click.option("--temperature", default=0.5, type=float, help="softmax temperature (默认 0.5)")
 @click.option("--max-tweets", default=100, type=int, help="最大抓取数 (默认 100)")
@@ -591,6 +601,22 @@ def scout_article(cfg: Config, urls):
     from v2g.scout.article_monitor import run_article_monitor
     url_list = [u.strip() for u in urls.split(";")] if urls else None
     run_article_monitor(cfg, urls=url_list)
+
+
+@scout.command("brief")
+@click.option("--date", "date_str", default=None,
+              help="指定日期 (YYYY-MM-DD)，默认今天")
+@click.pass_obj
+def scout_brief(cfg: Config, date_str):
+    """今日 X 发推简报: 5 热点 + 评分 + 2 推文/热点 + 1 长推 + 3 回复"""
+    from datetime import date, datetime
+    from v2g.scout.brief import run_brief
+
+    target = (
+        datetime.strptime(date_str, "%Y-%m-%d").date()
+        if date_str else date.today()
+    )
+    run_brief(cfg, today=target)
 
 
 @scout.command("ideation")
@@ -1024,6 +1050,17 @@ def scout_all(cfg: Config):
 
     click.echo()
 
+    # arXiv
+    try:
+        from v2g.scout.arxiv_monitor import run_arxiv_monitor
+        path = run_arxiv_monitor(cfg)
+        if path:
+            results["arxiv"] = path
+    except Exception as e:
+        click.echo(f"⚠️ arXiv 监控失败: {e}")
+
+    click.echo()
+
     # Twitter
     try:
         from v2g.scout.twitter_monitor import run_twitter_monitor
@@ -1059,11 +1096,12 @@ def scout_all(cfg: Config):
         fallback_paths = {
             "github": vault / "scout" / "github" / f"{today}-trending.md",
             "hn": vault / "scout" / "hn" / f"{today}-hn.md",
+            "arxiv": vault / "scout" / "arxiv" / f"{today}-arxiv.md",
             "twitter": vault / "scout" / "twitter" / f"{today}-curated.md",
             "articles": vault / "scout" / "articles" / f"{today}-articles.md",
         }
         sections_input = {}
-        for name in ("github", "hn", "twitter", "articles"):
+        for name in ("github", "hn", "arxiv", "twitter", "articles"):
             src = results.get(name) or fallback_paths[name]
             try:
                 if src.exists():
@@ -1094,6 +1132,14 @@ def scout_all(cfg: Config):
             click.echo("   ℹ️ 无当天报告可汇总")
     except Exception as e:
         click.echo(f"   ⚠️ 汇总生成失败: {e}")
+
+    # 今日 X 发推简报（5 热点 + 评分 + 推文 + 长推 + 回复）
+    click.echo()
+    try:
+        from v2g.scout.brief import run_brief
+        run_brief(cfg)
+    except Exception as e:
+        click.echo(f"⚠️ 发推简报生成失败: {e}")
 
     # 创意构思（从 daily digest 提取话题）
     click.echo()

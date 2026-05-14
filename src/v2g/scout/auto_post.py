@@ -22,6 +22,7 @@ def _generate_daily_digest(cfg, vault: Path, today: date) -> None:
     source_files = {
         "github":   vault / "scout" / "github"  / f"{today}-trending.md",
         "hn":       vault / "scout" / "hn"       / f"{today}-hn.md",
+        "arxiv":    vault / "scout" / "arxiv"    / f"{today}-arxiv.md",
         "twitter":  vault / "scout" / "twitter"  / f"{today}-curated.md",
         "articles": vault / "scout" / "articles" / f"{today}-articles.md",
     }

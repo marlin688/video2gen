@@ -126,6 +126,8 @@ def fix_script(
         if seg.get(required_field):
             if schema == "code-block":
                 _fix_code_content(seg, sid, fixes)
+            elif schema == "browser":
+                _fix_browser_content(seg, sid, fixes)
             continue
 
         # ── 策略 2: scene_data 提升 ──
@@ -171,6 +173,15 @@ def fix_script(
                 promoted = True
 
             if promoted:
+                continue
+
+        # ── 策略 2.5: browser 缺字段时先自愈，不要直接打回 terminal ──
+        if schema == "browser":
+            synthesized = _synthesize_browser_content(seg)
+            if synthesized:
+                seg["browser_content"] = synthesized
+                _fix_browser_content(seg, sid, fixes)
+                fixes.append(f"[{sid}] browser_content synthesized from segment")
                 continue
 
         # ── 策略 3: 从 slide_content 提取 hero_stat ──
@@ -304,6 +315,74 @@ def _fix_browser_content(seg: dict, sid, fixes: list[str]):
 
     if changed:
         fixes.append(f"[{sid}] browser_content normalized ({', '.join(changed)})")
+
+
+def _synthesize_browser_content(seg: dict) -> dict | None:
+    """从 segment 现有信息兜底生成 browser_content，优先保住网页证据镜头。"""
+    instruction = str(seg.get("recording_instruction") or "").strip()
+    session = seg.get("terminal_session")
+    slide = seg.get("slide_content") if isinstance(seg.get("slide_content"), dict) else {}
+    narration = str(seg.get("narration_zh") or "").strip()
+
+    url_match = re.search(r"https?://[^\s,，。)）\]]+", instruction)
+    url = url_match.group(0) if url_match else ""
+
+    content_lines: list[str] = []
+    if isinstance(session, list):
+        for step in session:
+            if not isinstance(step, dict):
+                continue
+            if step.get("type") == "output" and isinstance(step.get("lines"), list):
+                content_lines.extend(str(line).strip() for line in step["lines"] if str(line).strip())
+            elif step.get("type") in {"input", "status"} and step.get("text"):
+                prefix = "$ " if step.get("type") == "input" else ""
+                content_lines.append(f"{prefix}{str(step.get('text')).strip()}")
+    if not content_lines and slide:
+        bullets = slide.get("bullet_points")
+        if isinstance(bullets, list):
+            content_lines.extend(str(b).strip() for b in bullets if str(b).strip())
+    if not content_lines and instruction:
+        stripped = re.sub(r"https?://[^\s,，。)）\]]+", "", instruction).strip()
+        content_lines.extend(
+            chunk.strip()
+            for chunk in re.split(r"[，。；;]\s*|\d+\.\s*", stripped)
+            if chunk.strip()
+        )
+    if not content_lines and narration:
+        content_lines.extend(
+            chunk.strip()
+            for chunk in re.split(r"[。！？!?；;，,]", narration)
+            if chunk.strip()
+        )
+
+    if not url and not content_lines:
+        return None
+
+    tab_title = "Browser"
+    page_title = str(slide.get("title") or "").strip() if slide else ""
+    if url:
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(url)
+            tab_title = parsed.netloc or tab_title
+            if not page_title:
+                page_title = (
+                    parsed.path.strip("/").split("/")[-1].replace("-", " ").replace("_", " ")
+                )
+        except Exception:
+            tab_title = url[:40]
+
+    if not page_title:
+        page_title = content_lines[0][:40] if content_lines else "页面内容"
+
+    return {
+        "url": url,
+        "tabTitle": tab_title,
+        "pageTitle": page_title,
+        "contentLines": content_lines[:5] or ["页面内容"],
+        "theme": "dark",
+    }
 
 
 def _dual_card_scene_data_to_diagram(scene_data: dict) -> dict:

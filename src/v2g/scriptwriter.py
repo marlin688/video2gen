@@ -811,22 +811,27 @@ def _estimate_beat_weight(text: str) -> float:
 
 def _build_segment_timeline(script_data: dict, timing_map: dict[str, dict]) -> tuple[dict[int, dict], bool]:
     """将 segment 时长映射为绝对时间轴。"""
+    segments = script_data.get("segments", [])
+    seg_ids = [int(seg["id"]) for seg in segments if seg.get("id") is not None]
+    has_complete_timing = bool(seg_ids) and all(
+        max(0.0, _as_float((timing_map.get(str(seg_id)) or {}).get("duration"), 0.0)) > 0
+        for seg_id in seg_ids
+    )
+
     seg_timeline: dict[int, dict] = {}
     cursor = 0.0
-    has_timing = False
 
-    for seg in script_data.get("segments", []):
+    for seg in segments:
         seg_id = seg.get("id")
         if seg_id is None:
             continue
-        t = timing_map.get(str(seg_id), {})
-        duration = max(0.0, _as_float(t.get("duration"), 0.0))
-        gap_after = max(0.0, _as_float(t.get("gap_after"), 0.0))
-        if duration > 0:
+        t = timing_map.get(str(seg_id), {}) if has_complete_timing else {}
+        duration = max(0.0, _as_float(t.get("duration"), 0.0)) if has_complete_timing else 0.0
+        gap_after = max(0.0, _as_float(t.get("gap_after"), 0.0)) if has_complete_timing else 0.0
+        if has_complete_timing and duration > 0:
             start = cursor
             end = start + duration
             cursor = end + gap_after
-            has_timing = True
         else:
             start = None
             end = None
@@ -838,7 +843,7 @@ def _build_segment_timeline(script_data: dict, timing_map: dict[str, dict]) -> t
             "gap_after_sec": round(gap_after, 3),
         }
 
-    return seg_timeline, has_timing
+    return seg_timeline, has_complete_timing
 
 
 def _build_beat_timeline(beats: list[dict], seg_timeline: dict[int, dict]) -> dict[int, dict]:

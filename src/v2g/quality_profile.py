@@ -43,6 +43,18 @@ QUALITY_PROFILES = {
             "subjective": 0.4,
         },
     },
+    "creator_commentary": {
+        "label": "主播感评论片",
+        "description": "少 PPT、证据优先、Anthropic 风格只做包装的评论视频",
+        "content_type": "commentary",
+        "weights": {
+            "objective": 0.65,
+            "subjective": 0.35,
+        },
+        "theme": "anthropic-cream",
+        "camera_rig": False,
+        "default_transition": "none",
+    },
     "anthropic_brand": {
         "label": "Anthropic 品牌片",
         "description": "米白衬线品牌短片，专用 slide.anthropic-* 场景组件",
@@ -116,4 +128,3 @@ def load_profile_prompt(name: str | None) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8").strip()
-

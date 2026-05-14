@@ -68,3 +68,25 @@ def test_shot_plan_without_timing_has_no_windows(tmp_path):
     shot_plan = json.loads((tmp_path / "shot_plan.json").read_text(encoding="utf-8"))
     assert shot_plan["has_timing"] is False
     assert all(s.get("start_sec") is None for s in shot_plan["shots"])
+
+
+def test_stale_partial_timing_is_ignored(tmp_path):
+    output_dir = tmp_path
+    voiceover_dir = output_dir / "voiceover"
+    voiceover_dir.mkdir(parents=True, exist_ok=True)
+    timing = {
+        "1": {"duration": 4.0, "gap_after": 0.5},
+    }
+    (voiceover_dir / "timing.json").write_text(
+        json.dumps(timing, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    sync_script_sidecars(_script(), output_dir)
+
+    shot_plan = json.loads((output_dir / "shot_plan.json").read_text(encoding="utf-8"))
+    render_plan = json.loads((output_dir / "render_plan.json").read_text(encoding="utf-8"))
+
+    assert shot_plan["has_timing"] is False
+    assert render_plan["has_timing"] is False
+    assert all(s.get("start_sec") is None for s in shot_plan["shots"])
+    assert all(seg.get("start_sec") is None for seg in render_plan["segments"])

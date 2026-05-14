@@ -29,6 +29,229 @@ register_agent_commands(main)
 register_asset_commands(main)
 
 
+@main.group("wx")
+def wx_group():
+    """微信公众号内容流水线：打包 → 打分 → 发布准备。"""
+
+
+@wx_group.command("package")
+@click.argument("source", type=str)
+@click.option("--package-id", default=None, help="输出包 ID（默认由标题生成）")
+@click.option("--title", default=None, help="覆盖文章标题")
+@click.pass_obj
+def wx_package(cfg: Config, source, package_id, title):
+    """把 Markdown/HTML/文章目录打成公众号生产包。"""
+    from v2g.wechat_pipeline import make_package
+
+    pkg = make_package(
+        cfg.output_dir,
+        source,
+        package_id=package_id,
+        title=title,
+    )
+    click.echo("✅ 公众号文章包已生成")
+    click.echo(f"   标题: {pkg.title}")
+    click.echo(f"   目录: {pkg.package_dir}")
+    click.echo(f"   Markdown: {pkg.markdown_path}")
+    if pkg.html_path:
+        click.echo(f"   HTML: {pkg.html_path}")
+    click.echo(f"   图片: {len(pkg.images)} 张")
+
+
+@wx_group.command("score")
+@click.argument("package_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--min-score", default=85, type=int, help="通过阈值（默认 85）")
+@click.pass_obj
+def wx_score(cfg: Config, package_dir, min_score):
+    """对公众号文章包做规则化打分。"""
+    from v2g.wechat_pipeline import score_package
+
+    report = score_package(package_dir, min_score=min_score)
+    icon = "✅" if report["passed"] else "❌"
+    click.echo(f"{icon} 媒体竞争力评分: {report['score_pct']:.1f}/100 (阈值 {min_score})")
+    click.echo(f"   发布门禁分: {report.get('gate_score_pct', 0):.1f}/100")
+    click.echo(f"   标题: {report['title']}")
+    metrics = report["metrics"]
+    click.echo(
+        "   指标: "
+        f"{metrics['chars']} 字, "
+        f"{metrics['image_refs']} 图, "
+        f"{metrics['real_screenshots']} 张真实截图, "
+        f"{metrics['original_visuals']} 张原创图"
+    )
+    failed = [c for c in report["checks"] if not c["passed"]]
+    if failed:
+        click.echo("   待改进:")
+        for c in failed:
+            click.echo(f"      - {c['label']} (-{c['points']})")
+    click.echo(f"   报告: {package_dir / 'score.json'}")
+
+
+@wx_group.command("publish")
+@click.argument("package_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--execute", is_flag=True, help="真正调用微信接口（默认 dry-run）")
+@click.option("--free-publish", is_flag=True, help="草稿创建后提交发布（默认只到草稿箱）")
+@click.option("--allow-below-threshold", is_flag=True, help="评分低于阈值也允许生成发布计划")
+@click.option("--min-score", default=85, type=int, help="发布阈值（默认 85）")
+@click.option("--digest", default="", help="微信公众号摘要")
+@click.pass_obj
+def wx_publish(cfg: Config, package_dir, execute, free_publish, allow_below_threshold, min_score, digest):
+    """生成发布计划，或将文章发到微信公众号草稿箱。"""
+    from v2g.wechat_pipeline import (
+        build_publish_plan,
+        env_wechat_credentials,
+        publish_to_wechat,
+    )
+
+    if not execute:
+        plan = build_publish_plan(
+            package_dir,
+            min_score=min_score,
+            allow_below_threshold=allow_below_threshold,
+        )
+        if not plan.get("ready"):
+            click.echo("❌ 未达到发布条件")
+            click.echo(f"   原因: {plan.get('reason')}")
+            click.echo(f"   媒体分: {plan.get('score_pct')} / 阈值 {plan.get('min_score')}")
+            click.echo(f"   门禁分: {plan.get('gate_score_pct')}")
+            click.echo("   如需强制生成计划，加 --allow-below-threshold")
+            return
+        click.echo("🧪 微信发布 dry-run")
+        click.echo(f"   标题: {plan['title']}")
+        click.echo(f"   媒体分: {plan['score_pct']}/100")
+        click.echo(f"   门禁分: {plan.get('gate_score_pct', '-')}/100")
+        click.echo(f"   封面: {plan.get('cover_image') or '-'}")
+        click.echo(f"   图片: {plan['image_count']} 张")
+        click.echo(f"   计划: {package_dir / 'publish_plan.json'}")
+        click.echo("   真正发草稿箱: v2g wx publish <package_dir> --execute")
+        return
+
+    app_id, app_secret, author = env_wechat_credentials()
+    result = publish_to_wechat(
+        package_dir,
+        app_id=app_id,
+        app_secret=app_secret,
+        author=author,
+        digest=digest,
+        dry_run=False,
+        free_publish=free_publish,
+        min_score=min_score,
+    )
+    click.echo("✅ 微信发布接口已执行")
+    click.echo(f"   结果: {package_dir / 'publish_result.json'}")
+    if result.get("draft"):
+        click.echo(f"   draft media_id: {result['draft'].get('media_id')}")
+
+
+@wx_group.command("run")
+@click.argument("source", type=str)
+@click.option("--package-id", default=None, help="输出包 ID（默认由标题生成）")
+@click.option("--title", default=None, help="覆盖文章标题")
+@click.option("--min-score", default=85, type=int, help="发布阈值（默认 85）")
+@click.option("--execute", is_flag=True, help="真正调用微信接口（默认只 dry-run）")
+@click.pass_obj
+def wx_run(cfg: Config, source, package_id, title, min_score, execute):
+    """一键执行公众号包生产 + 打分 + 发布 dry-run。"""
+    from v2g.wechat_pipeline import (
+        build_publish_plan,
+        env_wechat_credentials,
+        make_package,
+        publish_to_wechat,
+        score_package,
+    )
+
+    pkg = make_package(cfg.output_dir, source, package_id=package_id, title=title)
+    click.echo(f"✅ package: {pkg.package_dir}")
+    report = score_package(pkg.package_dir, min_score=min_score)
+    click.echo(f"{'✅' if report['passed'] else '❌'} media score: {report['score_pct']:.1f}/100")
+    click.echo(f"   gate score: {report.get('gate_score_pct', 0):.1f}/100")
+    if execute:
+        app_id, app_secret, author = env_wechat_credentials()
+        result = publish_to_wechat(
+            pkg.package_dir,
+            app_id=app_id,
+            app_secret=app_secret,
+            author=author,
+            dry_run=False,
+            min_score=min_score,
+        )
+        click.echo(f"✅ publish result: {pkg.package_dir / 'publish_result.json'}")
+        if result.get("draft"):
+            click.echo(f"   draft media_id: {result['draft'].get('media_id')}")
+    else:
+        plan = build_publish_plan(pkg.package_dir, min_score=min_score)
+        click.echo(f"🧪 publish dry-run: {'ready' if plan.get('ready') else plan.get('reason')}")
+        click.echo(f"   plan: {pkg.package_dir / 'publish_plan.json'}")
+
+
+@wx_group.command("benchmark")
+@click.option("--article-source", default=None, help="可选：本地文章目录/Markdown，参与横向对比")
+@click.option("--date", "date_str", default=None, help="目标日期 YYYY-MM-DD（默认中国时区前一天）")
+@click.option("--per-source", default=2, type=int, help="每家媒体抓取篇数（默认 2）")
+@click.option("--manual-url", multiple=True, help="手动补充样本，格式 source=url 或直接 URL，可重复")
+@click.option("--beat-margin", default=0.0, type=float, help="AGI通识至少领先媒体最高分多少分（默认 0）")
+@click.option("--require-beat-media", is_flag=True, help="若 AGI通识未高于有效媒体最高分，则命令失败")
+@click.option("--require-all-sources", is_flag=True, help="若三家任一缺少有效样本，则命令失败")
+@click.pass_obj
+def wx_benchmark(cfg: Config, article_source, date_str, per_source, manual_url, beat_margin, require_beat_media, require_all_sources):
+    """抓取媒体样本，对比 AGI通识与机器之心/量子位/新智元。"""
+    from datetime import date
+
+    from v2g.wechat_benchmark import run_benchmark
+
+    target_date = date.fromisoformat(date_str) if date_str else None
+    result = run_benchmark(
+        cfg.output_dir,
+        article_source=article_source,
+        target_date=target_date,
+        per_source=per_source,
+        manual_urls=tuple(manual_url),
+        beat_margin=beat_margin,
+    )
+    report = result["report"]
+    click.echo("✅ 媒体基准评分完成")
+    click.echo(f"   日期: {report['target_date']}")
+    if report.get("own_score") is not None:
+        click.echo(f"   AGI通识: {report['own_score']}/100")
+        click.echo(
+            "   媒体均值: "
+            f"{report['media_average']}/100 "
+            f"(有效样本 {report.get('media_effective_sample_count', 0)}/{report.get('media_total_sample_count', 0)})"
+        )
+        delta = report.get("own_delta_vs_media_avg")
+        click.echo(f"   差值: {delta:+.1f}" if delta is not None else "   差值: 样本不足")
+        top_delta = report.get("own_delta_vs_media_top")
+        click.echo(
+            f"   对媒体最高分: {top_delta:+.1f} "
+            f"({'已超过' if report.get('own_beats_media_top') else '未超过'})"
+            if top_delta is not None
+            else "   对媒体最高分: 样本不足"
+        )
+    else:
+        click.echo(
+            "   媒体均值: "
+            f"{report['media_average']}/100 "
+            f"(有效样本 {report.get('media_effective_sample_count', 0)}/{report.get('media_total_sample_count', 0)})"
+        )
+    notes = report.get("notes") or []
+    missing_sources = report.get("missing_sample_sources") or []
+    missing_effective_sources = report.get("missing_effective_sources") or []
+    if missing_sources:
+        click.echo(f"   缺失样本: {', '.join(missing_sources)}")
+    if missing_effective_sources:
+        click.echo(f"   无有效深度样本: {', '.join(missing_effective_sources)}")
+    if notes:
+        click.echo("   抓取备注:")
+        for note in notes:
+            click.echo(f"      - {note['source']}: {note['message']}")
+    click.echo(f"   报告: {result['benchmark_dir'] / 'benchmark.md'}")
+    click.echo(f"   JSON: {result['benchmark_dir'] / 'benchmark.json'}")
+    if require_all_sources and missing_sources:
+        raise click.ClickException(f"缺少媒体样本：{', '.join(missing_sources)}")
+    if require_beat_media and not report.get("own_beats_media_top"):
+        raise click.ClickException("AGI通识未高于有效媒体最高分，阻断后续发布")
+
+
 @main.command()
 @click.option("--csv", "csv_path", default=None, help="trending CSV 文件路径")
 @click.option("--category", default=None, help="按分类筛选")
@@ -65,7 +288,7 @@ def prepare(cfg: Config, video_id_or_url, model, whisper_model, no_whisper):
 @main.command()
 @click.argument("video_id")
 @click.option("--model", default=None, help="脚本生成模型")
-@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand / tech_explainer)")
+@click.option("--profile", default="default", help="质量档位 (default / commentary / creator_commentary / news_briefing / tutorial_general / anthropic_brand / tech_explainer)")
 @click.pass_obj
 def script(cfg: Config, video_id, model, profile):
     """Stage 3: AI 生成二创解说脚本"""
@@ -241,7 +464,7 @@ def assemble(cfg: Config, video_id):
 @click.option("--topic", required=True, help="主题名称 (如 'Claude Code技巧')")
 @click.option("--project-id", default=None, help="项目 ID (默认自动生成)")
 @click.option("--model", default=None, help="LLM 模型")
-@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand / tech_explainer)")
+@click.option("--profile", default="default", help="质量档位 (default / commentary / creator_commentary / news_briefing / tutorial_general / anthropic_brand / tech_explainer)")
 @click.option("--whisper-model", default="medium", help="Whisper 模型大小")
 @click.pass_obj
 def multi(cfg: Config, urls, topic, project_id, model, profile, whisper_model):
@@ -588,7 +811,7 @@ def scout_plan(cfg: Config, skip_notebooklm, duration, topic_index):
 @click.option("--topic-index", "-i", default=None, type=int, help="直接选择第 N 个话题")
 @click.option("--duration", "-d", default=240, type=int, help="目标视频时长秒数 (默认 240)")
 @click.option("--model", default=None, help="LLM 模型")
-@click.option("--profile", default="commentary", help="质量档位 (default / commentary / news_briefing / tutorial_general / anthropic_brand / tech_explainer)")
+@click.option("--profile", default="commentary", help="质量档位 (default / commentary / creator_commentary / news_briefing / tutorial_general / anthropic_brand / tech_explainer)")
 @click.option("--force-regenerate", is_flag=True, help="忽略已有 outline/script，强制重新生成")
 @click.option("--skip-download", is_flag=True, help="跳过视频下载（仅用已有 sources/）")
 @click.pass_obj
@@ -731,6 +954,44 @@ def scout_produce(cfg: Config, topic_index, duration, model, profile, force_rege
         quality_profile=profile,
         force_regenerate=force_regenerate,
     )
+
+
+@scout.command("auto-post")
+@click.option("--dry-run", is_flag=True, help="预览推文但不实际发布")
+@click.option("--force", is_flag=True, help="强制发布（忽略去重记录）")
+@click.pass_obj
+def scout_auto_post(cfg: Config, dry_run, force):
+    """自动热点发帖: 发现热点 → 选话题 → waterfall → 发到 X"""
+    from v2g.scout.auto_post import run_auto_post
+    run_auto_post(cfg, dry_run=dry_run, force=force)
+
+
+@scout.command("cron-setup")
+@click.option("--interval", "-i", default=2, type=int, show_default=True,
+              help="发帖间隔小时数")
+@click.option("--start", default=9, type=int, show_default=True,
+              help="每日开始时间（本地时，整点）")
+@click.option("--end", default=21, type=int, show_default=True,
+              help="每日结束时间（本地时，整点）")
+@click.option("--uninstall", is_flag=True, help="卸载定时任务")
+@click.pass_obj
+def scout_cron_setup(cfg: Config, interval, start, end, uninstall):
+    """安装/卸载 macOS launchd 自动发帖定时任务"""
+    from v2g.scout.auto_post import setup_cron
+    setup_cron(interval, start, end, uninstall)
+
+
+@scout.command("publish")
+@click.option("--file", "-f", "file_path", default=None, help="指定 waterfall 文件（默认用最新）")
+@click.option("--version", "-v", default="short", type=click.Choice(["short", "long"]),
+              help="短版3条 or 长版7条 (默认 short)")
+@click.option("--dry-run", is_flag=True, help="预览推文但不实际发布")
+@click.option("--force", is_flag=True, help="强制发布（忽略去重记录）")
+@click.pass_obj
+def scout_publish(cfg: Config, file_path, version, dry_run, force):
+    """将 waterfall 生成的 Twitter 内容发布到 X"""
+    from v2g.scout.x_publisher import run_publish
+    run_publish(cfg, file_path, version, dry_run, force)
 
 
 @scout.command("all")
@@ -916,7 +1177,7 @@ def intake_run_cmd(cfg: Config, project_id, dry_run):
 @click.argument("video_id_or_url")
 @click.option("--model", default=None, help="LLM 模型")
 @click.option("--whisper-model", default="medium", help="Whisper 模型大小")
-@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand / tech_explainer)")
+@click.option("--profile", default="default", help="质量档位 (default / commentary / creator_commentary / news_briefing / tutorial_general / anthropic_brand / tech_explainer)")
 @click.option("--auto", is_flag=True, default=False, help="全自动模式: 跳过人工审核，B类素材使用终端动画")
 @click.pass_obj
 def run(cfg: Config, video_id_or_url, model, whisper_model, profile, auto):
@@ -1004,7 +1265,7 @@ def config_list(cfg: Config):
 
 @main.command("eval")
 @click.argument("video_id")
-@click.option("--profile", default="default", help="质量档位 (default / tutorial_general / anthropic_brand / tech_explainer)")
+@click.option("--profile", default="default", help="质量档位 (default / commentary / creator_commentary / news_briefing / tutorial_general / anthropic_brand / tech_explainer)")
 @click.pass_obj
 def eval_script(cfg: Config, video_id, profile):
     """评估脚本质量（规则化检查，不消耗 LLM 额度）"""

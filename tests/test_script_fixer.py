@@ -165,6 +165,35 @@ def test_fix_script_normalizes_browser_content_legacy_fields(tmp_path: Path):
     assert browser["contentLines"][0] == "标题很猛，落地很虚"
 
 
+def test_fix_script_synthesizes_browser_content_from_instruction(tmp_path: Path):
+    script = {
+        "title": "测试",
+        "description": "测试",
+        "tags": ["ai", "video", "test"],
+        "segments": [
+            {
+                "id": 1,
+                "type": "body",
+                "material": "A",
+                "narration_zh": "看官方功能页里 agent mode 和 code review 这些原生能力。",
+                "component": "browser.default",
+                "recording_instruction": (
+                    "打开 GitHub Copilot 功能页，滚到 agent mode 和 code review 区域。 "
+                    "https://github.com/features/copilot"
+                ),
+            }
+        ],
+    }
+
+    fixed, logs = fix_script(script, tmp_path, ensure_rich_media=False)
+
+    assert any("browser_content synthesized" in log for log in logs)
+    browser = fixed["segments"][0]["browser_content"]
+    assert browser["url"] == "https://github.com/features/copilot"
+    assert browser["tabTitle"] == "github.com"
+    assert browser["contentLines"]
+
+
 def test_fix_script_promotes_dual_card_scene_data(tmp_path: Path):
     script = {
         "title": "测试",

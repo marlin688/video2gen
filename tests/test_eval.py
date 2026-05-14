@@ -282,3 +282,76 @@ def test_eval_flags_component_material_mismatch():
     assert "组件与素材语义一致" in failed_names
     blocking_names = [c["name"] for c in get_blocking_warnings(report)]
     assert "组件与素材语义一致" in blocking_names
+
+
+def test_creator_commentary_flags_slide_heavy_script():
+    script = {
+        "title": "主播锐评",
+        "description": "测试过多 slide",
+        "tags": ["ai", "commentary", "creator"],
+        "segments": [
+            _seg(1, "intro", "A", "开头内容。" * 6, component="slide.anthropic-stickies-intro"),
+            _seg(2, "body", "A", "第二段。" * 6, component="slide.anthropic-section-title"),
+            _seg(3, "body", "A", "第三段。" * 6, component="slide.tech-dark"),
+            _seg(4, "body", "A", "第四段。" * 6, component="slide.problem-statement"),
+            _seg(5, "body", "A", "第五段。" * 6, component="slide.chalk-board"),
+            _seg(6, "body", "A", "第六段。" * 6, component="slide.compare-table"),
+            _seg(7, "outro", "A", "结尾内容。" * 6, component="slide.anthropic-brand-outro"),
+        ],
+    }
+    report = eval_script(script, "creator", quality_profile="creator_commentary")
+    failed_names = [c["name"] for c in report["warning_failed"]]
+    assert "slide占比不过高" in failed_names
+    assert "真实证据镜头足够" in failed_names
+    assert "前60秒有证据镜头" in failed_names
+
+
+def test_creator_commentary_accepts_evidence_first_mix():
+    script = {
+        "title": "主播锐评",
+        "description": "测试证据优先结构",
+        "tags": ["ai", "commentary", "creator"],
+        "segments": [
+            _seg(1, "intro", "A", "开头内容。" * 8, component="slide.anthropic-stickies-intro"),
+            _seg(2, "body", "A", "看 pricing 页面。" * 6, component="browser.default", browser_content={"url": "https://example.com/pricing", "tabTitle": "Pricing", "pageTitle": "Pricing", "contentLines": ["Plan A", "Plan B"]}),
+            _seg(3, "body", "A", "看政策截图。" * 6, component="image-overlay.default", image_content={"image_path": "", "source_method": "search", "source_query": "AI privacy policy screenshot"}),
+            _seg(4, "body", "C", "看真实演示。" * 6, component="web-video.default", web_video={"search_query": "AI workflow demo", "fallback_component": "slide.tech-dark"}),
+            _seg(5, "body", "A", "看规则文件。" * 6, component="code-block.default", code_content={"fileName": "AI_USAGE_POLICY.md", "language": "markdown", "code": ["Allowed", "Blocked"]}),
+            _seg(6, "body", "B", "看录屏结果。" * 6, component="recording.default", recording_instruction="打开 docs 结果页"),
+            _seg(7, "body", "A", "看社交引用。" * 6, component="social-card.default", social_card={"platform": "twitter", "author": "OpenAI", "text": "Real workflow > AI slogan"}),
+            _seg(8, "body", "A", "最后总结。" * 6, component="slide.anthropic-callout"),
+            _seg(9, "outro", "A", "收尾内容。" * 8, component="slide.anthropic-brand-outro"),
+        ],
+    }
+    report = eval_script(script, "creator", quality_profile="creator_commentary")
+    failed_names = [c["name"] for c in report["warning_failed"]]
+    assert "slide占比不过高" not in failed_names
+    assert "真实证据镜头足够" not in failed_names
+    assert "前60秒有证据镜头" not in failed_names
+
+
+def test_creator_commentary_does_not_block_on_alternation_warnings():
+    script = {
+        "title": "主播锐评",
+        "description": "测试 creator commentary 的阻断项",
+        "tags": ["ai", "commentary", "creator"],
+        "segments": [
+            _seg(1, "intro", "A", "开头内容。" * 8, component="slide.anthropic-stickies-intro"),
+            _seg(2, "body", "C", "看真实动态。" * 6, component="web-video.default", web_video={"search_query": "AI workflow demo", "fallback_component": "slide.tech-dark"}),
+            _seg(3, "body", "A", "看政策截图。" * 6, component="image-overlay.default", image_content={"image_path": "", "source_method": "search", "source_query": "AI policy screenshot"}),
+            _seg(4, "body", "B", "看网页录屏。" * 6, component="recording.default", recording_instruction="打开 GitHub 页面 https://github.com/features/copilot"),
+            _seg(5, "body", "B", "继续看录屏。" * 6, component="recording.default", recording_instruction="打开隐私页面 https://openai.com/policies/privacy-policy"),
+            _seg(6, "body", "B", "第三段录屏。" * 6, component="recording.default", recording_instruction="打开文档页面 https://docs.sentry.io/product/issues/"),
+            _seg(7, "body", "A", "看规则文件。" * 6, component="code-block.default", code_content={"fileName": "AI_USAGE_POLICY.md", "language": "markdown", "code": ["Allowed", "Blocked"]}),
+            _seg(8, "outro", "A", "收尾内容。" * 8, component="slide.anthropic-brand-outro"),
+        ],
+    }
+
+    report = eval_script(script, "creator", quality_profile="creator_commentary")
+    failed_names = [c["name"] for c in report["warning_failed"]]
+    assert "素材类型交替" in failed_names
+    assert "无连续相同 schema" in failed_names
+
+    blocking_names = [c["name"] for c in get_blocking_warnings(report)]
+    assert "素材类型交替" not in blocking_names
+    assert "无连续相同 schema" not in blocking_names

@@ -152,13 +152,8 @@ def _make_http_client(provider: str, base_url: str = "",
     # 决定是否需要代理
     if provider in _NO_PROXY_PROVIDERS:
         proxy_url = None
-    elif base_url:
-        if _is_official_base_url(provider, base_url):
-            proxy_url = _read_proxy_url()
-        else:
-            # 自定义网关，本身就是代理，不需要系统代理
-            proxy_url = None
     else:
+        # openai / anthropic 等：自定义网关同样可能需要经过系统代理访问
         proxy_url = _read_proxy_url()
 
     return httpx.Client(
@@ -240,8 +235,36 @@ def _load_openai_oauth_session() -> dict[str, str] | None:
             "account_id": session.account_id,
             "source_path": auth_file,
         }
-    except (OpenAIAuthTokenFileError, OpenAIAuthRefreshError, OpenAIAuthError) as e:
+    except OpenAIAuthTokenFileError:
+        # auth.json schema 不匹配（如 Claude Code Codex 格式），静默跳过 OAuth 路径
+        return None
+    except (OpenAIAuthRefreshError, OpenAIAuthError) as e:
         raise click.ClickException(f"OpenAI OAuth 凭证不可用 ({auth_file}): {e}") from e
+
+
+def _read_codex_auth_api_key() -> str | None:
+    """从 Claude Code codex 格式的 auth.json 中读取可用的 API key 或 OAuth token。
+
+    兼容两种字段：
+    - OPENAI_API_KEY: 直接 sk-... key
+    - tokens.access_token: OAuth JWT bearer token
+    """
+    auth_file = _resolve_openai_auth_file()
+    if not auth_file:
+        return None
+    try:
+        import json as _json
+        data = _json.loads(Path(auth_file).read_text(encoding="utf-8"))
+        # 优先直接 API key
+        direct_key = (data.get("OPENAI_API_KEY") or "").strip()
+        if direct_key:
+            return direct_key
+        # 其次 OAuth access token
+        tokens = data.get("tokens") or {}
+        access = (tokens.get("access_token") or "").strip()
+        return access or None
+    except Exception:
+        return None
 
 
 # ── 统一调用入口 ──────────────────────────────────────────
@@ -601,6 +624,14 @@ def _call_gpt(system_prompt: str, user_message: str, model: str,
             return _codex_responses_once(oauth_session)
 
     # 2) GPT key 路由（OAuth 不可用时）
+    # 2a) 环境变量 GPT_API_KEY 优先
+    # 2b) 无 GPT_API_KEY 时从 auth.json 的 OPENAI_API_KEY 字段读取
+    if not gpt_api_key:
+        codex_key = _read_codex_auth_api_key()
+        if codex_key:
+            gpt_api_key = codex_key
+            gpt_base_url = gpt_base_url or ""  # 使用 OpenAI 默认 base_url
+
     if gpt_api_key:
         gpt_client_kwargs: dict = {
             "http_client": _make_http_client("openai", gpt_base_url),

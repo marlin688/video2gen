@@ -20,6 +20,9 @@ BLOCKING_WARNING_NAMES = frozenset({
     "素材类型交替",
     "视觉 schema 多样性",
     "组件与素材语义一致",
+    "slide占比不过高",
+    "真实证据镜头足够",
+    "前60秒有证据镜头",
     "无连续相同 schema",
     "无重复段落",
     "body段 A/B 交替",
@@ -55,7 +58,7 @@ def get_blocking_warnings(report: dict) -> list[dict]:
         if c.get("name") in BLOCKING_WARNING_NAMES
     ]
     profile = str(report.get("quality_profile") or "").strip().lower()
-    if profile in {"commentary", "news_briefing", "anthropic_brand"}:
+    if profile in {"commentary", "news_briefing", "anthropic_brand", "creator_commentary"}:
         non_blocking = {"素材类型交替", "body段 A/B 交替", "无连续相同 schema"}
         blocking = [c for c in blocking if c.get("name") not in non_blocking]
     return blocking
@@ -379,6 +382,53 @@ def eval_script(
         detail=f"当前 {web_video_count} 个 web-video 段落（建议 1-3 个，用真实动态画面降低 AI 感）",
         category="subjective",
     )
+
+    if profile.get("name") == "creator_commentary":
+        evidence_schemas = {
+            "browser", "recording", "source-clip", "social-card",
+            "image-overlay", "web-video", "code-block",
+        }
+        seg_schemas = [_seg_schema(s) for s in segments]
+        slide_count = sum(1 for schema in seg_schemas if schema == "slide")
+        slide_ratio = slide_count / max(len(segments), 1)
+        evidence_count = sum(1 for schema in seg_schemas if schema in evidence_schemas)
+        min_evidence = max(4, math.ceil(len(segments) * 0.3)) if segments else 0
+
+        check(
+            "slide占比不过高",
+            slide_ratio <= 0.35,
+            weight=2,
+            detail=f"slide={slide_count}/{len(segments)} ({slide_ratio:.0%})",
+            category="subjective",
+        )
+        check(
+            "真实证据镜头足够",
+            evidence_count >= min_evidence,
+            weight=2,
+            detail=f"evidence={evidence_count}/{len(segments)} (要求 ≥{min_evidence})",
+            category="subjective",
+        )
+
+        first_minute_duration = 60.0
+        elapsed = 0.0
+        first_minute_evidence = 0
+        for seg in segments:
+            schema = _seg_schema(seg)
+            if elapsed < first_minute_duration and schema in evidence_schemas:
+                first_minute_evidence += 1
+            # eval 这里没有 timing map，使用 narration 长度估算时长（约 4字/秒，最少 8 秒）
+            narration = str(seg.get("narration_zh") or "")
+            estimated = max(8.0, len(narration) / 4.0)
+            elapsed += estimated
+            if elapsed >= first_minute_duration:
+                break
+        check(
+            "前60秒有证据镜头",
+            first_minute_evidence >= 2,
+            weight=2,
+            detail=f"前60秒证据镜头 {first_minute_evidence} 段",
+            category="subjective",
+        )
 
     consecutive_schema = 0
     prev_schema = None

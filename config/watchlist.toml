@@ -1,0 +1,70 @@
+# Watchlist Monitor + Draft Agent
+#
+# 账号列表会经常变化，放在独立 TOML 里维护；密钥仍放 .env。
+# 如果要临时测试一批账号，也可以用:
+#   v2g scout watchlist --authors "sama,karpathy" --dry-run
+
+since_hours = 1
+min_likes = 0
+max_tweets = 120
+drafts_per_run = 3
+publish_count = 1
+
+keywords = [
+  "AI",
+  "agent",
+  "semiconductor",
+  "inference",
+  "datacenter",
+  "compute",
+  "earnings",
+]
+
+editorial_principle = "Karpathy / SemiAnalysis / Serenity 给你选题，Musk / Trump / Sacks 给你催化剂，财报和行业报告给你事实验证。"
+
+[groups]
+daily = [
+  "karpathy",
+  "aleabitoreddit",
+  "dylan522p",
+  "SemiAnalysis_",
+  "fabknowledge",
+  "GavinSBaker",
+  "DrJimFan",
+]
+
+trigger = [
+  "elonmusk",
+  "realDonaldTrump",
+  "sama",
+  "satyanadella",
+  "DavidSacks",
+  "LisaSu",
+  "nvidia",
+]
+
+context = [
+  "pmarca",
+  "naval",
+  "balajis",
+  "VitalikButerin",
+  "cz_binance",
+]
+
+[[few_shots]]
+name = "glass-substrate-production-window"
+signal = "Serenity / TrendForce 提到 glass substrate、SKC Absolics、H2 2026、AMAT、AMD/AWS testing。"
+bad = "很多人看 AI 基建只盯着 GPU 出货，但真正瓶颈可能前移到封装、玻璃基板和材料体系。AI 基建是一张供应链网络。"
+good = "很多人看 AI 基建还停留在 GPU 出货量。但这条真正值得看的信号是：glass substrate 开始进入 2026 下半年的量产窗口。如果 SKC Absolics 真能在 H2 2026 率先放量，AI 封装的讨论就不只是 CoWoS / HBM，而会继续前移到底层基板材料、AMAT 设备工艺、AMD/AWS 客户验证和量产爬坡。"
+
+[[few_shots]]
+name = "agent-runtime-grep-timeout"
+signal = "开源 AI 项目修复 grep timeout，涉及 agent 工具调用、代码库搜索、运行时稳定性。"
+bad = "开源 AI 最值得关注的未必是模型分数，而是竞争正在从谁训练出模型转向谁能把模型稳定跑起来。未来护城河会出现在基础设施层。"
+good = "这周开源 AI 里，我觉得最值得看的不是某个模型又刷了多少分，而是一个很小的工程细节：grep timeout。一旦 agent 真正开始调用工具、读代码库、跑命令、改文件，模型能力只是一部分。真正决定体验的是超时、重试、权限、上下文管理和失败恢复。模型负责聪明，runtime 负责靠谱。"
+
+[[few_shots]]
+name = "insufficient-signal-skip"
+signal = "某账号说 AI 基建未来很重要，没有公司、时间线、数据、订单、客户验证或产业链细节。"
+bad = "AI 基建未来很重要，基础设施越来越关键。"
+good = "recommended_action 应该是 skip。原因：信息过于泛化，没有具体公司、时间线、产业链映射、可验证数据或市场预期差，不适合生成推文。"

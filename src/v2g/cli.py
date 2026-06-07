@@ -593,6 +593,102 @@ def scout_twitter(cfg: Config, temperature, max_tweets):
     run_twitter_monitor(cfg, temperature=temperature, max_tweets=max_tweets)
 
 
+@scout.command("watchlist")
+@click.option("--config", "config_path", default=None,
+              help="Watchlist TOML 配置文件（默认 config/watchlist.toml 或 WATCHLIST_CONFIG）")
+@click.option("--authors", default=None,
+              help="临时覆盖账号列表，逗号/空格分隔；传入后忽略配置文件 groups")
+@click.option("--since-hours", default=None, type=int,
+              help="只看最近 N 小时（默认读取配置文件）")
+@click.option("--min-likes", default=None, type=int,
+              help="最低 likes 粗筛阈值（默认读取配置文件）")
+@click.option("--max-tweets", default=None, type=int,
+              help="最多抓取推文数（默认读取配置文件）")
+@click.option("--max-drafts", default=None, type=int,
+              help="最多生成草稿数（默认读取配置文件）")
+@click.option("--dry-run/--publish", default=True,
+              help="dry-run 只预览草稿；--publish 才真实发 X")
+@click.option("--publish-count", default=None, type=int,
+              help="真实发布时最多发布几条草稿（默认读取配置文件）")
+@click.option("--force", is_flag=True,
+              help="忽略 watchlist topic/source 去重和 x_publish 去重")
+@click.option("--yes", is_flag=True,
+              help="真实发布时跳过确认")
+@click.option("--no-mark-seen", is_flag=True,
+              help="不写入 watchlist 去重记录，便于调试")
+@click.pass_obj
+def scout_watchlist(
+    cfg: Config,
+    config_path,
+    authors,
+    since_hours,
+    min_likes,
+    max_tweets,
+    max_drafts,
+    dry_run,
+    publish_count,
+    force,
+    yes,
+    no_mark_seen,
+):
+    """Watchlist Monitor + Draft Agent: 定期监控大号并生成中文发推草稿"""
+    from v2g.scout.watchlist import run_watchlist
+
+    run_watchlist(
+        cfg,
+        authors=authors,
+        config_path=config_path,
+        since_hours=since_hours,
+        min_likes=min_likes,
+        max_tweets=max_tweets,
+        max_drafts=max_drafts,
+        dry_run=dry_run,
+        publish_count=publish_count,
+        force=force,
+        yes=yes,
+        mark_seen=not no_mark_seen,
+    )
+
+
+@scout.command("watchlist-cron-setup")
+@click.option("--interval", "-i", default=1, type=int, show_default=True,
+              help="监控间隔小时数")
+@click.option("--start", default=0, type=int, show_default=True,
+              help="每日开始时间（本地时，整点）")
+@click.option("--end", default=23, type=int, show_default=True,
+              help="每日结束时间（本地时，整点）")
+@click.option("--config", "config_path", default=None,
+              help="Watchlist TOML 配置文件（默认 config/watchlist.toml 或 WATCHLIST_CONFIG）")
+@click.option("--publish", is_flag=True,
+              help="定时任务真实发布；默认只生成 dry-run 草稿")
+@click.option("--publish-count", default=None, type=int,
+              help="真实发布时每次最多发布几条草稿（默认读取配置文件）")
+@click.option("--uninstall", is_flag=True, help="卸载定时任务")
+@click.pass_obj
+def scout_watchlist_cron_setup(
+    cfg: Config,
+    interval,
+    start,
+    end,
+    config_path,
+    publish,
+    publish_count,
+    uninstall,
+):
+    """安装/卸载 macOS launchd Watchlist 定时任务"""
+    from v2g.scout.watchlist import setup_watchlist_cron
+
+    setup_watchlist_cron(
+        interval,
+        start,
+        end,
+        uninstall,
+        config_path=config_path,
+        publish=publish,
+        publish_count=publish_count,
+    )
+
+
 @scout.command("article")
 @click.option("--urls", default=None, help="文章 URL (分号分隔)")
 @click.pass_obj
@@ -617,6 +713,23 @@ def scout_brief(cfg: Config, date_str):
         if date_str else date.today()
     )
     run_brief(cfg, today=target)
+
+
+@scout.command("chain")
+@click.argument("topic")
+@click.option("--date", "date_str", default=None,
+              help="指定日期 (YYYY-MM-DD)，默认今天")
+@click.pass_obj
+def scout_chain(cfg: Config, topic, date_str):
+    """产业链轮动型推文: 4 波结构 + 信息图 + 评论引导 (美股 ticker)"""
+    from datetime import date, datetime
+    from v2g.scout.chain import run_chain
+
+    target = (
+        datetime.strptime(date_str, "%Y-%m-%d").date()
+        if date_str else date.today()
+    )
+    run_chain(cfg, topic, today=target)
 
 
 @scout.command("ideation")
@@ -985,11 +1098,24 @@ def scout_produce(cfg: Config, topic_index, duration, model, profile, force_rege
 @scout.command("auto-post")
 @click.option("--dry-run", is_flag=True, help="预览推文但不实际发布")
 @click.option("--force", is_flag=True, help="强制发布（忽略去重记录）")
+@click.option("--yes", is_flag=True, help="跳过发布确认（定时任务/无人值守使用）")
+@click.option("--format", "publish_format", default="waterfall",
+              type=click.Choice(["waterfall", "chain"]),
+              help="发布格式: waterfall 内容瀑布 / chain 产业链推文")
+@click.option("--version", default="short", type=click.Choice(["short", "long"]),
+              help="发布版本: short 或 long")
 @click.pass_obj
-def scout_auto_post(cfg: Config, dry_run, force):
+def scout_auto_post(cfg: Config, dry_run, force, yes, publish_format, version):
     """自动热点发帖: 发现热点 → 选话题 → waterfall → 发到 X"""
     from v2g.scout.auto_post import run_auto_post
-    run_auto_post(cfg, dry_run=dry_run, force=force)
+    run_auto_post(
+        cfg,
+        dry_run=dry_run,
+        force=force,
+        yes=yes,
+        publish_format=publish_format,
+        version=version,
+    )
 
 
 @scout.command("cron-setup")
@@ -999,12 +1125,24 @@ def scout_auto_post(cfg: Config, dry_run, force):
               help="每日开始时间（本地时，整点）")
 @click.option("--end", default=21, type=int, show_default=True,
               help="每日结束时间（本地时，整点）")
+@click.option("--format", "publish_format", default="waterfall",
+              type=click.Choice(["waterfall", "chain"]),
+              help="发布格式: waterfall 内容瀑布 / chain 产业链推文")
+@click.option("--version", default="short", type=click.Choice(["short", "long"]),
+              help="发布版本: short 或 long")
 @click.option("--uninstall", is_flag=True, help="卸载定时任务")
 @click.pass_obj
-def scout_cron_setup(cfg: Config, interval, start, end, uninstall):
+def scout_cron_setup(cfg: Config, interval, start, end, publish_format, version, uninstall):
     """安装/卸载 macOS launchd 自动发帖定时任务"""
     from v2g.scout.auto_post import setup_cron
-    setup_cron(interval, start, end, uninstall)
+    setup_cron(
+        interval,
+        start,
+        end,
+        uninstall,
+        publish_format=publish_format,
+        version=version,
+    )
 
 
 @scout.command("publish")
@@ -1013,11 +1151,26 @@ def scout_cron_setup(cfg: Config, interval, start, end, uninstall):
               help="短版3条 or 长版7条 (默认 short)")
 @click.option("--dry-run", is_flag=True, help="预览推文但不实际发布")
 @click.option("--force", is_flag=True, help="强制发布（忽略去重记录）")
+@click.option("--yes", is_flag=True, help="跳过发布确认")
 @click.pass_obj
-def scout_publish(cfg: Config, file_path, version, dry_run, force):
+def scout_publish(cfg: Config, file_path, version, dry_run, force, yes):
     """将 waterfall 生成的 Twitter 内容发布到 X"""
     from v2g.scout.x_publisher import run_publish
-    run_publish(cfg, file_path, version, dry_run, force)
+    run_publish(cfg, file_path, version, dry_run, force, yes=yes)
+
+
+@scout.command("publish-chain")
+@click.option("--file", "-f", "file_path", default=None, help="指定 chain JSON/Markdown（默认用最新）")
+@click.option("--version", "-v", default="short", type=click.Choice(["short", "long"]),
+              help="short=单条短推，long=长推拆线程")
+@click.option("--dry-run", is_flag=True, help="预览推文但不实际发布")
+@click.option("--force", is_flag=True, help="强制发布（忽略去重记录）")
+@click.option("--yes", is_flag=True, help="跳过发布确认")
+@click.pass_obj
+def scout_publish_chain(cfg: Config, file_path, version, dry_run, force, yes):
+    """将 scout chain 生成的产业链推文发布到 X"""
+    from v2g.scout.x_publisher import run_publish_chain
+    run_publish_chain(cfg, file_path, version, dry_run, force, yes=yes)
 
 
 @scout.command("all")

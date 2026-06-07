@@ -4,6 +4,7 @@ import json
 import os
 from datetime import date
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 
 def _generate_daily_digest(cfg, vault: Path, today: date) -> None:
@@ -134,14 +135,24 @@ def _pick_next_topic(cfg, vault: Path, today: date) -> tuple[str, Path] | tuple[
     return None, None
 
 
-def run_auto_post(cfg, dry_run: bool = False, force: bool = False) -> None:
+def run_auto_post(
+    cfg,
+    dry_run: bool = False,
+    force: bool = False,
+    yes: bool = False,
+    publish_format: str = "waterfall",
+    version: str = "short",
+) -> None:
     """自动热点发帖主流程。"""
     import click
     from v2g.scout.obsidian import ObsidianWriter
-    from v2g.scout.waterfall import run_waterfall
-    from v2g.scout.x_publisher import run_publish
 
     click.echo("🤖 自动热点发帖")
+    publish_format = (publish_format or "waterfall").strip().lower()
+    if publish_format not in {"waterfall", "chain"}:
+        raise click.ClickException(f"未知发布格式: {publish_format}")
+    if version not in {"short", "long"}:
+        raise click.ClickException(f"未知发布版本: {version}")
 
     writer = ObsidianWriter(cfg.obsidian_vault_path)
     vault = writer.vault
@@ -164,15 +175,48 @@ def run_auto_post(cfg, dry_run: bool = False, force: bool = False) -> None:
 
     click.echo(f"   🎯 话题: {topic}\n")
 
+    if publish_format == "chain":
+        from v2g.scout.chain import run_chain
+        from v2g.scout.x_publisher import run_publish_chain
+
+        chain_path = run_chain(cfg, topic, today=today)
+        if not chain_path:
+            click.echo("   ⚠️ chain 生成失败")
+            return
+        click.echo()
+        run_publish_chain(
+            cfg,
+            str(chain_path),
+            version=version,
+            dry_run=dry_run,
+            force=force,
+            yes=yes,
+        )
+        return
+
     # 3. 生成 waterfall（以 ideation 文件为内容输入）
-    waterfall_path = run_waterfall(cfg, topic, file_path=str(ideation_file) if ideation_file else None)
+    from v2g.scout.waterfall import run_waterfall
+    from v2g.scout.x_publisher import run_publish
+
+    waterfall_path = run_waterfall(
+        cfg,
+        topic,
+        file_path=str(ideation_file) if ideation_file else None,
+    )
     if not waterfall_path:
         click.echo("   ⚠️ waterfall 生成失败")
         return
 
-    # 4. 发布短版 3 条
+    # 4. 发布短版/长版
     click.echo()
-    run_publish(cfg, str(waterfall_path), version="short", dry_run=dry_run, force=force)
+    run_publish(
+        cfg,
+        str(waterfall_path),
+        version=version,
+        dry_run=dry_run,
+        force=force,
+        yes=yes,
+    )
 
 
 # ──────────────────────────────────────────────────────────────
@@ -184,7 +228,18 @@ PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_LABEL}.plist"
 LOG_DIR = Path.home() / ".v2g"
 
 
-def _build_plist(v2g_bin: str, project_dir: str, hours: list[int]) -> str:
+def _plist_arg(value: str) -> str:
+    return f"        <string>{escape(str(value))}</string>"
+
+
+def _build_plist(
+    v2g_bin: str,
+    project_dir: str,
+    hours: list[int],
+    *,
+    publish_format: str = "waterfall",
+    version: str = "short",
+) -> str:
     intervals = "\n".join(
         f"        <dict>\n"
         f"            <key>Hour</key><integer>{h}</integer>\n"
@@ -192,6 +247,24 @@ def _build_plist(v2g_bin: str, project_dir: str, hours: list[int]) -> str:
         f"        </dict>"
         for h in hours
     )
+    args = [v2g_bin]
+    env_path = Path(project_dir) / ".env"
+    if env_path.exists():
+        args += ["--env", str(env_path)]
+    args += [
+        "scout",
+        "auto-post",
+        "--yes",
+        "--format",
+        publish_format,
+        "--version",
+        version,
+    ]
+    arg_lines = "\n".join(_plist_arg(a) for a in args)
+    project_dir_xml = escape(project_dir)
+    log_out_xml = escape(str(LOG_DIR / "auto-post.log"))
+    log_err_xml = escape(str(LOG_DIR / "auto-post-error.log"))
+    home_xml = escape(str(Path.home()))
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -202,13 +275,11 @@ def _build_plist(v2g_bin: str, project_dir: str, hours: list[int]) -> str:
 
     <key>ProgramArguments</key>
     <array>
-        <string>{v2g_bin}</string>
-        <string>scout</string>
-        <string>auto-post</string>
+{arg_lines}
     </array>
 
     <key>WorkingDirectory</key>
-    <string>{project_dir}</string>
+    <string>{project_dir_xml}</string>
 
     <key>StartCalendarInterval</key>
     <array>
@@ -216,16 +287,16 @@ def _build_plist(v2g_bin: str, project_dir: str, hours: list[int]) -> str:
     </array>
 
     <key>StandardOutPath</key>
-    <string>{LOG_DIR}/auto-post.log</string>
+    <string>{log_out_xml}</string>
     <key>StandardErrorPath</key>
-    <string>{LOG_DIR}/auto-post-error.log</string>
+    <string>{log_err_xml}</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
-        <string>{Path.home()}</string>
+        <string>{home_xml}</string>
     </dict>
 
     <key>RunAtLoad</key>
@@ -239,7 +310,14 @@ def _hours_for_interval(interval: int, start: int = 9, end: int = 21) -> list[in
     return list(range(start, end + 1, interval))
 
 
-def setup_cron(interval: int, start: int, end: int, uninstall: bool) -> None:
+def setup_cron(
+    interval: int,
+    start: int,
+    end: int,
+    uninstall: bool,
+    publish_format: str = "waterfall",
+    version: str = "short",
+) -> None:
     """安装或卸载 launchd 定时任务。"""
     import shutil
     import subprocess
@@ -257,7 +335,13 @@ def setup_cron(interval: int, start: int, end: int, uninstall: bool) -> None:
 
     project_dir = str(Path(__file__).parents[3])  # src/v2g/scout/ → repo root
     hours = _hours_for_interval(interval, start, end)
-    plist_content = _build_plist(v2g_bin, project_dir, hours)
+    plist_content = _build_plist(
+        v2g_bin,
+        project_dir,
+        hours,
+        publish_format=publish_format,
+        version=version,
+    )
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.write_text(plist_content, encoding="utf-8")

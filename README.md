@@ -15,6 +15,7 @@ AI 驱动的 YouTube 二创视频自动生成流水线。覆盖从**选题发现
 - **质量门控** — Pydantic 结构验证 + 规则评估（critical/warning/info 三级），critical 失败自动重试
 - **成本追踪** — 全流程 token 用量统计 + 可配置硬性上限（`V2G_MAX_TOKENS`）+ 降级事件记录
 - **Scout 自动化** — GitHub 趋势 + Hacker News 热帖 + Twitter + 文章监控，自动发现选题并输出到 Obsidian 知识库
+- **Watchlist 发推 Agent** — 定期监控重点 X 账号，按主题聚类生成中文草稿，默认 dry-run，支持去重和安全发布门禁
 - **内容分发** — 内容瀑布（视频→博客+Twitter+LinkedIn）+ 短视频再利用（30/60/90 秒脚本）
 
 ## 快速开始
@@ -86,6 +87,9 @@ v2g config
 | `OBSIDIAN_VAULT_PATH` | Obsidian vault 路径 | 可选，默认 `output/` |
 | `YOUTUBE_API_KEY` | YouTube Data API v3 | 可选，ideation 竞品分析用 |
 | `TWITTER_API_IO_KEY` | TwitterAPI.io 密钥 | 可选，Twitter 监控用 |
+| `WATCHLIST_CONFIG` | Watchlist 账号/策略配置文件路径 | 可选，默认 `config/watchlist.toml` |
+| `X_CONSUMER_KEY` / `X_CONSUMER_SECRET` | X OAuth 1.0a App 凭证 | 真实发推时必需 |
+| `X_ACCESS_TOKEN` / `X_ACCESS_TOKEN_SECRET` | X OAuth 1.0a 用户访问令牌 | 真实发推时必需 |
 
 ## 使用方式
 
@@ -173,6 +177,7 @@ v2g scout all                        # 一键运行全部：GitHub+HN+Twitter+di
 v2g scout github [--since 7]         # GitHub AI 趋势 (免费)
 v2g scout hn [--hours 24]            # Hacker News AI 热帖 (免费)
 v2g scout twitter [--temperature 0.5]# Twitter/X 监控 (需要 TWITTER_API_IO_KEY)
+v2g scout watchlist                  # 重点账号监控 + 中文发推草稿 (默认 dry-run)
 v2g scout article --urls "url1;url2" # 文章/公众号抓取 + LLM 摘要
 v2g scout ideation "话题"            # 竞品分析 + 5-9 个内容创意
 v2g scout ideation --from-daily      # 从每日汇总自动提取话题
@@ -189,7 +194,72 @@ v2g scout produce --skip-download    # 跳过视频下载
 # ---- 内容分发（一鱼多吃）----
 v2g scout waterfall "话题" -v VIDEO_ID   # 内容瀑布: → 博客 + Twitter 帖串 + LinkedIn
 v2g scout shorts "话题" -v VIDEO_ID      # 短视频再利用: → 30/60/90 秒脚本
+v2g scout chain "话题"                   # 产业链轮动型 X 推文草稿
+v2g scout publish --dry-run              # 预览最新 waterfall 推文，不真实发布
+v2g scout publish-chain --dry-run        # 预览最新产业链推文，不真实发布
 ```
+
+#### Watchlist Monitor + Draft Agent
+
+Watchlist 适合高频监控重点账号，生成“可发但先不发”的中文观点草稿。账号名单和内容策略维护在独立配置文件：
+
+```text
+config/watchlist.toml
+```
+
+运行依赖 `TWITTER_API_IO_KEY` 和可用的 `SCOUT_MODEL`。真实发推还需要 X OAuth 1.0a 的四个发布凭证。
+
+默认已按三组账号组织：
+
+- `daily`：每天必看，负责选题信号
+- `trigger`：事件触发，负责催化剂
+- `context`：叙事补充，负责长期框架
+
+`config/watchlist.toml` 还包含 `[[few_shots]]` 风格样例。草稿太像摘要、太短或判断不够时，优先改这里的 bad/good examples，让模型模仿“信号 → 判断 → 影响/下一步”的写法。
+
+常用命令：
+
+```bash
+# 默认 dry-run：抓取、去重、生成报告和草稿，不真实发推
+v2g scout watchlist
+
+# 调试时不写入去重记录，方便反复看同一批输入
+v2g scout watchlist --no-mark-seen --max-tweets 30 --max-drafts 2
+
+# 临时覆盖账号列表，不改配置文件
+v2g scout watchlist --authors "sama,karpathy,SemiAnalysis_" --since-hours 1
+
+# 真实发布需要显式 --publish；建议先长期 dry-run 调风格
+v2g scout watchlist --publish --publish-count 1 --yes
+```
+
+输出文件：
+
+```text
+{OBSIDIAN_VAULT_PATH}/scout/watchlist/YYYY-MM-DD-HHMM-watchlist.md
+{OBSIDIAN_VAULT_PATH}/scout/watchlist/YYYY-MM-DD-HHMM-watchlist.json
+```
+
+去重分三层：
+
+- `watchlist_tweet`：同一条源推文只处理一次
+- `watchlist_topic`：同一主题/观点短期内不重复生成
+- `x_publish` / `x_publish_attempt`：真实发推前后记录内容 hash，防止重复发布或部分失败后重发首推
+
+自动监控（macOS launchd）：
+
+```bash
+# 每小时生成 dry-run 草稿，不真实发布
+v2g scout watchlist-cron-setup -i 1
+
+# 每小时最多自动发布 1 条，通过发布门禁后才发
+v2g scout watchlist-cron-setup -i 1 --publish --publish-count 1
+
+# 卸载 watchlist 定时任务
+v2g scout watchlist-cron-setup --uninstall
+```
+
+真实发推还需要 `.env` 中配置 X OAuth 1.0a 的四个值，并确保 App 权限是 Read and Write。
 
 配合 cron 实现全自动：
 
@@ -249,6 +319,7 @@ v2g assets seed-wechat --urls-file wechat_urls.txt --limit 120 --per-article 10
 ```
 video2gen/
 ├── .env.example                # 环境变量模板
+├── config/watchlist.toml       # Watchlist 账号分组与内容策略
 ├── .venv/                      # Python 虚拟环境
 ├── src/v2g/                    # Python 后端
 │   ├── cli.py                  # CLI 入口 (20+ 子命令)
@@ -259,15 +330,15 @@ video2gen/
 │   ├── tts.py                  # 多引擎 TTS（VoxCPM / edge-tts / MiniMax / GPT-SoVITS）
 │   ├── schema.py               # Pydantic v2 结构验证（镜像 types.ts）
 │   ├── eval.py                 # 规则化质量评估
-│   ├── scout/                  # Scout 自动化 (14 模块)
-│   └── prompts/                # LLM 提示词模板 (17 个 .md)
+│   ├── scout/                  # Scout 自动化、Watchlist、内容分发与发布
+│   └── prompts/                # LLM 提示词模板
 ├── remotion-video/             # TypeScript 前端 (Remotion 4.x + React 19)
 │   ├── src/registry/           # 组件库（12 个视觉组件）
 │   ├── render.mjs              # 最终视频渲染
 │   └── preview.mjs             # 静帧预览
 ├── sources/                    # 下载的视频 + 字幕
 ├── output/                     # 项目工作目录 + 最终产出
-└── tests/                      # 测试 (eval + schema)
+└── tests/                      # 单元测试与 workflow 回归
 ```
 
 ## 组件库系统
